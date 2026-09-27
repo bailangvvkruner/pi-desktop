@@ -77,6 +77,7 @@ deb:
 
 nsis:
   artifactName: Pi-Desktop-Setup-${version}-${arch}.${ext}
+  include: build/installer.nsh
   oneClick: false
   allowToChangeInstallationDirectory: true
   perMachine: false

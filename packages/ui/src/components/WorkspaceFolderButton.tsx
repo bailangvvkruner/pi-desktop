@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
+import { isConversationWorkspace } from '../sidebarOrganization';
 import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
 
@@ -8,6 +9,8 @@ export function WorkspaceFolderButton({ cwd }: { cwd: string }) {
 	const { t } = useT();
 	const bridge = useChatStore((state) => state.bridge);
 	const navigationPending = useChatStore((state) => state.navigationPending);
+	const workspaces = useChatStore((state) => state.workspaces);
+	const conversationWorkspaces = useChatStore((state) => state.conversationWorkspaces);
 	const [opening, setOpening] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const request = useRef(0);
@@ -35,10 +38,11 @@ export function WorkspaceFolderButton({ cwd }: { cwd: string }) {
 		}
 	}
 
-	const label = t(opening ? 'chat.openingWorkspaceFolder' : 'chat.openWorkspaceFolder');
-	const projectName = cwd.split(/[\\/]/).filter(Boolean).pop() || cwd;
+	const isProject = workspaces.includes(cwd) && !isConversationWorkspace(cwd, conversationWorkspaces);
+	const projectName = isProject ? cwd.split(/[\\/]/).filter(Boolean).pop() || cwd : '';
+	const label = t(opening ? 'chat.openingWorkspaceFolder' : isProject ? 'chat.openWorkspaceFolder' : 'chat.openConversationFolder');
 	return <div className="pd-chat-workspace" onKeyDown={(event) => { if (event.key === 'Escape' && error) { event.stopPropagation(); setError(null); } }}>
-		<HoverTooltip title={projectName} align="start" disabled={Boolean(error) || !projectName}>
+		<HoverTooltip title={projectName || label} align="start" disabled={Boolean(error)}>
 			<button type="button" className="pd-icon-button pd-chat-workspace-button" aria-label={projectName ? `${label}: ${projectName}` : label} aria-busy={opening} disabled={!bridge || !cwd || navigationPending || opening} onClick={() => void openFolder()}><Icon name="folder" width="16" height="16" /></button>
 		</HoverTooltip>
 		{error && <div className="pd-chat-title-error pd-chat-workspace-error" role="alert">{t('chat.openWorkspaceFolderError', { message: error })}</div>}

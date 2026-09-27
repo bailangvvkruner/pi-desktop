@@ -21,8 +21,8 @@ function mountShell(storage, chatState = { appInfo: { platform: 'win32' } }) {
     setProperty: (key, value) => styles.set(key, value), removeProperty: (key) => styles.delete(key),
   } }, querySelector: () => null };
   const context = {
-    exports: {}, document, navigator: { userAgent: 'Windows' }, localStorage: storage,
-    window: { localStorage: storage, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), addEventListener() {}, removeEventListener() {} },
+    exports: {}, document, URLSearchParams, navigator: { userAgent: 'Windows' }, localStorage: storage,
+    window: { location: { search: '' }, localStorage: storage, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), addEventListener() {}, removeEventListener() {} },
     require: (specifier) => {
       if (specifier === 'react') return {
         useEffect: (callback) => effects.push(callback), useLayoutEffect: (callback) => effects.push(callback),

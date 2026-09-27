@@ -73,6 +73,42 @@ test('opening a folder for a new conversation forwards fresh intent; cancel leav
   assert.equal(useChatStore.getState().navigationPending, false);
 });
 
+test('forced retry persists a project after activation emitted its cwd but saving failed, without leaking the local flag', async () => {
+  const host = fixture();
+  const activate = host.bridge.switchWorkspace;
+  const refreshes = [];
+  const refreshGate = deferred();
+  host.bridge.switchWorkspace = async (cwd, options) => {
+    await activate(cwd, options);
+    if (host.calls.length === 1) throw new Error('Could not save workspace settings');
+  };
+  host.bridge.listWorkspaces = async () => { refreshes.push('projects'); return [home]; };
+  host.bridge.listSessions = async (cwd) => { refreshes.push(cwd); return refreshGate.promise; };
+
+  await assert.rejects(useChatStore.getState().switchWorkspace(home), /Could not save workspace settings/);
+  assert.equal(useChatStore.getState().cwd, home, 'the activation event can arrive before persistence fails');
+  assert.equal(useChatStore.getState().navigationPending, false);
+  assert.equal(useChatStore.getState().error, 'Could not save workspace settings');
+  assert.deepEqual(refreshes, []);
+  await useChatStore.getState().switchWorkspace(home);
+  assert.equal(host.calls.length, 1, 'ordinary same-project navigation remains a no-op');
+
+  const retry = useChatStore.getState().switchWorkspace(home, { force: true });
+  await settle();
+  assert.deepEqual(host.calls, [{ cwd: home, options: undefined }, { cwd: home, options: undefined }]);
+  assert.deepEqual(refreshes, ['projects', home]);
+  assert.equal(useChatStore.getState().navigationPending, true, 'retry waits for workspace/session refresh');
+  assert.equal(useChatStore.getState().error, null);
+  refreshGate.resolve([{ path: `${home}/saved.jsonl`, id: 'saved', firstMessage: 'Existing conversation', messageCount: 1 }]);
+  await retry;
+  assert.equal(useChatStore.getState().navigationPending, false);
+  assert.deepEqual(useChatStore.getState().workspaces, [home]);
+  assert.equal(useChatStore.getState().sessions[0].id, 'saved');
+
+  await useChatStore.getState().switchWorkspace(home, { force: true, fresh: false });
+  assert.deepEqual(host.calls.at(-1), { cwd: home, options: { fresh: false } }, 'only the IPC fresh option is forwarded');
+});
+
 test('a late folder selection cannot replace a newer navigation with a new conversation', async () => {
   const host = fixture();
   const picker = deferred();

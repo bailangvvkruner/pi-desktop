@@ -21,10 +21,11 @@ export const operationFeedback = {
 };
 
 /** The caller captures the operation's target before closing its menu. */
-export async function runWithFeedback(options: { id: string; title: string; run(): Promise<unknown>; success?: string | ((result: unknown) => string | null); canRetry?(): boolean }): Promise<boolean> {
+export async function runWithFeedback(options: { id: string; title: string; run(): Promise<unknown>; showPending?: boolean; success?: string | ((result: unknown) => string | null); canRetry?(): boolean }): Promise<boolean> {
 	if (running.has(options.id)) return false;
 	running.add(options.id);
-	operationFeedback.show({ id: options.id, title: options.title, kind: 'pending' });
+	if (options.showPending !== false) operationFeedback.show({ id: options.id, title: options.title, kind: 'pending' });
+	else operationFeedback.dismiss(options.id);
 	try {
 		const result = await options.run();
 		const success = typeof options.success === 'function' ? options.success(result) : options.success;

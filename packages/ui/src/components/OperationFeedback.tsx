@@ -1,5 +1,4 @@
 import { useEffect, useSyncExternalStore } from 'react';
-import { createPortal } from 'react-dom';
 import { operationFeedback, type OperationNotice } from '../operationFeedback';
 import { useT } from '../i18n';
 import { Icon } from './Icons';
@@ -22,5 +21,5 @@ function Notice({ notice }: { notice: OperationNotice }) {
 
 export function OperationFeedback() {
 	const notices = useSyncExternalStore(operationFeedback.subscribe, operationFeedback.getSnapshot, operationFeedback.getSnapshot);
-	return createPortal(<div className="pd-operation-feedback" aria-label="Notifications">{notices.map(notice => <Notice key={notice.id} notice={notice} />)}</div>, document.body);
+	return notices.length ? <div className="pd-operation-feedback" aria-label="Notifications">{notices.map(notice => <Notice key={notice.id} notice={notice} />)}</div> : null;
 }

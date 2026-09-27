@@ -54,8 +54,9 @@ test('downloads start only after the user clicks and install once ready', async 
   const service = createService();
   let shutdowns = 0;
   let installs = 0;
+  const installOptions = [];
   service.setBeforeInstall(async () => { shutdowns += 1; });
-  updater.quitAndInstall = () => { installs += 1; };
+  updater.quitAndInstall = (...args) => { installs += 1; installOptions.push(args); };
   updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.2.0' }); return {}; };
   updater.downloadUpdate = async () => {};
   try {
@@ -73,6 +74,7 @@ test('downloads start only after the user clicks and install once ready', async 
     assert.equal(service.getState().progressPercent, 100);
     assert.equal(shutdowns, 1);
     assert.equal(installs, 1);
+    assert.deepEqual(installOptions, [[true, true]], 'the accepted update installs silently and restarts the app');
     await service.install();
     assert.equal(service.getState().phase, 'installing');
     assert.equal(shutdowns, 1);
@@ -85,8 +87,9 @@ test('clicking during download installs once and ignores duplicate clicks and st
   const shutdown = deferred();
   let shutdowns = 0;
   let installs = 0;
+  const installOptions = [];
   service.setBeforeInstall(() => { shutdowns += 1; return shutdown.promise; });
-  updater.quitAndInstall = () => { installs += 1; };
+  updater.quitAndInstall = (...args) => { installs += 1; installOptions.push(args); };
   updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.2.0' }); return {}; };
   updater.downloadUpdate = async () => {};
   try {
@@ -112,6 +115,7 @@ test('clicking during download installs once and ignores duplicate clicks and st
     await flush();
     await service.install();
     assert.equal(installs, 1);
+    assert.deepEqual(installOptions, [[true, true]], 'silent installation starts only after shutdown finishes');
     assert.equal(shutdowns, 1);
   } finally { shutdown.resolve(); service.stop(); }
 });

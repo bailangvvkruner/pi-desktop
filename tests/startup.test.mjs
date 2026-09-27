@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { registerHooks } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 let harnessId = 0;
@@ -15,7 +18,7 @@ const stubs = {
     export const { agentService, updateService, registerIpc, defaultWorkspace, disposeServices, readCurrentDesktopSettings, isAgentWorkActive, saveCloseBehavior } = env;
   `,
   './appLocale': `export const getAppLocale = () => 'en-US';`,
-  './tray': `export const createAppTray = () => null; export const destroyAppTray = () => {};`,
+  './tray': `export const createAppTray = () => { globalThis.__startupTest.calls.trays += 1; }; export const destroyAppTray = () => {};`,
   './splash': `
     export const createSplashHtml = () => '<html>Splash</html>';
     export const createSplashErrorHtml = (message) => '<html>' + message + '</html>';
@@ -44,10 +47,10 @@ async function settle() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
-async function createStartupHarness(t, { workspaceError, initialization = deferred(), shutdown = async () => {}, closeBehavior = 'quit', busy = false, closeChoice = 1 } = {}) {
+async function createStartupHarness(t, { workspaceError, initialization = deferred(), shutdown = async () => {}, closeBehavior = 'quit', busy = false, closeChoice = 1, launchArgs, userData = 'test-user-data' } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const windows = [];
-  const calls = { init: [], startUpdates: 0, dispose: 0, quit: 0, errors: [], logs: [], registered: 0 };
+  const calls = { init: [], startUpdates: 0, dispose: 0, quit: 0, errors: [], logs: [], registered: 0, trays: 0, singleInstanceLocks: 0, paths: {}, windowMode: null };
   t.mock.method(console, 'error', (...args) => calls.logs.push(args));
   let rendererReady;
   let getDialogWindow;
@@ -73,7 +76,7 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
       windows.push(this);
     }
     loadURL(url) { this.url = url; return this.options.transparent ? Promise.resolve() : this.load.promise; }
-    loadFile(path) { this.url = path; return this.load.promise; }
+    loadFile(path, options) { this.url = path; this.query = options?.query; return this.load.promise; }
     isDestroyed() { return this.destroyed; }
     isVisible() { return this.visible; }
     isMinimized() { return false; }
@@ -87,9 +90,10 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
     reload() {}
   }
   const app = Object.assign(new EventEmitter(), {
-    getPath: () => 'test-user-data',
+    getPath: (name) => calls.paths[name] ?? userData,
+    setPath: (name, value) => { calls.paths[name] = value; },
     isPackaged: true,
-    requestSingleInstanceLock: () => true,
+    requestSingleInstanceLock: () => { calls.singleInstanceLocks += 1; return true; },
     whenReady: () => Promise.resolve(),
     setAppUserModelId: () => {},
     quit: () => { calls.quit += 1; },
@@ -100,6 +104,7 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
     handlers: new Map(),
   });
   globalThis.__startupTest = {
+    calls,
     app,
     BrowserWindow: TestWindow,
     ipcMain,
@@ -112,10 +117,11 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
     shell: { openExternal: async () => {} },
     registerIpc: (options) => {
       calls.registered += 1;
+      calls.windowMode = options?.windowMode;
       rendererReady = options?.onRendererReady;
       getDialogWindow = options?.getDialogWindow;
     },
-    defaultWorkspace: () => { if (workspaceError) throw workspaceError; return process.cwd(); },
+    defaultWorkspace: (initial) => { if (workspaceError) throw workspaceError; return initial ?? process.cwd(); },
     disposeServices: async () => { calls.dispose += 1; await shutdown(); },
     readCurrentDesktopSettings: () => ({ notificationsEnabled: true, closeBehavior }),
     isAgentWorkActive: async () => busy,
@@ -129,7 +135,16 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
   };
   harnessId += 1;
   t.after(() => { t.mock.timers.reset(); delete globalThis.__startupTest; });
-  await import(`../packages/desktop/src/main/index.ts?startup-test=${harnessId}`);
+  const originalArgv = process.argv;
+  const originalExitListeners = new Set(process.listeners('exit'));
+  try {
+    if (launchArgs) process.argv = [process.execPath, ...launchArgs];
+    await import(`../packages/desktop/src/main/index.ts?startup-test=${harnessId}`);
+  } finally {
+    process.argv = originalArgv;
+    const ownedExitListeners = process.listeners('exit').filter(listener => !originalExitListeners.has(listener));
+    t.after(() => { for (const listener of ownedExitListeners) { process.removeListener('exit', listener); listener(); } });
+  }
   await settle();
   const splash = windows[0];
   assert.ok(splash.options.transparent, 'the first window is the splash');
@@ -172,6 +187,34 @@ test('startup restores the agent in parallel and keeps the splash until the rend
   assert.equal(harness.calls.startUpdates, 1);
   await harness.rendererReady(main);
   assert.equal(main.showCount, 1, 'duplicate ready notifications do not reveal or restart services twice');
+});
+
+test('pai boot uses an isolated profile, opens a fresh cwd, and closes without a tray or updater', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-pai-startup-'));
+  const cwd = join(root, 'project');
+  await mkdir(cwd);
+  const harness = await createStartupHarness(t, { launchArgs: ['--pai', '--cwd', cwd], userData: root, closeBehavior: 'tray' });
+  t.after(async () => { await rm(root, { recursive: true, force: true, maxRetries: 4 }); });
+  const main = await harness.start();
+  assert.deepEqual(harness.calls.init, [[{ cwd, fresh: true }]]);
+  assert.equal(harness.calls.windowMode, 'pai');
+  assert.equal(harness.calls.singleInstanceLocks, 0, 'pai does not contend for the main application singleton');
+  assert.equal(harness.calls.trays, 0);
+  assert.equal(harness.calls.startUpdates, 0);
+  assert.ok(harness.calls.paths.userData.startsWith(join(root, 'pai-profiles')));
+  assert.equal(harness.calls.paths.sessionData, join(harness.calls.paths.userData, 'chromium'));
+  assert.deepEqual(main.query, { mode: 'pai' });
+  main.load.resolve(); main.emit('ready-to-show'); harness.initialization.resolve();
+  await harness.rendererReady(main);
+  let prevented = false;
+  main.emit('close', { preventDefault() { prevented = true; } });
+  await settle();
+  assert.equal(prevented, true);
+  assert.equal(harness.calls.quit, 1, 'pai exits even if the saved close behavior requests a tray');
+  harness.app.emit('before-quit', { preventDefault() {} });
+  await settle();
+  assert.equal(harness.calls.dispose, 1);
+  assert.equal(harness.calls.quit, 2);
 });
 
 test('renderer readiness only reveals its own main window after load and first paint', async (t) => {

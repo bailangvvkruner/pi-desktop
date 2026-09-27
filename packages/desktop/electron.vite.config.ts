@@ -11,7 +11,7 @@ const developmentCsp = {
 	transformIndexHtml(html: string): string {
 		return html.replace(
 			/(<meta\s+http-equiv="Content-Security-Policy"\s+content=")[^"]+("\s*\/?>)/,
-			(_match, before: string, after: string) => `${before}default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:${after}`,
+			(_match, before: string, after: string) => `${before}default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'self' data:; connect-src 'self' ws: wss:${after}`,
 		);
 	},
 };

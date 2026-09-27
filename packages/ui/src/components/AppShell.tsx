@@ -24,6 +24,8 @@ import { SearchButton } from './SearchButton';
 import { applyThemeColors, readColorPreferences, writeColorPreferences } from '../themeColors';
 import type { ModelManagementTarget } from '../modelManagement';
 import './shellMotion.css';
+import './paiWindow.css';
+import './notificationCenter.css';
 
 const NARROW_WINDOW_QUERY = '(max-width: 880px)';
 const MIN_SIDEBAR_WIDTH = 232;
@@ -55,6 +57,9 @@ function readWorkbenchOpen(): boolean {
 
 export function AppShell() {
 	const { t } = useT();
+	const windowMode = useChatStore((state) => state.appInfo?.windowMode);
+	const [paiLaunch] = useState(() => new URLSearchParams(window.location.search).get('mode') === 'pai');
+	const paiMode = windowMode === 'pai' || paiLaunch;
 	const navigation = useSessionNavigation();
 	const [sidebarOpen, setSidebarOpen] = useState(() => !window.matchMedia(NARROW_WINDOW_QUERY).matches);
 	const [projectRevealRequest, setProjectRevealRequest] = useState(0);
@@ -82,7 +87,7 @@ export function AppShell() {
 	const [workbenchResizing, setWorkbenchResizing] = useState(false);
 	const workbenchOverlay = viewportWidth <= 1100;
 	useEffect(() => { const resize = () => setViewportWidth(window.innerWidth); window.addEventListener('resize', resize); return () => window.removeEventListener('resize', resize); }, []);
-	useEffect(() => { writeStoredPreference('pi-desktop.workbench-width', String(workbenchWidth)); }, [workbenchWidth]);
+	useEffect(() => { if (!paiMode) writeStoredPreference('pi-desktop.workbench-width', String(workbenchWidth)); }, [paiMode, workbenchWidth]);
 	useEffect(() => { if (workbenchOpen && narrow) setSidebarOpen(false); }, [workbenchOpen, narrow]);
 	const resizeStart = useRef<{ x: number; width: number } | null>(null);
 	const workbenchToggleRef = useRef<HTMLButtonElement>(null);
@@ -168,8 +173,8 @@ export function AppShell() {
 	}, [colorPreferences]);
 
 	useEffect(() => {
-		writeStoredPreference('pi-desktop.sidebar-width', String(sidebarWidth));
-	}, [sidebarWidth]);
+		if (!paiMode) writeStoredPreference('pi-desktop.sidebar-width', String(sidebarWidth));
+	}, [paiMode, sidebarWidth]);
 
 	useEffect(() => {
 		if (sidebarOpen && !narrow) return;
@@ -178,12 +183,13 @@ export function AppShell() {
 	}, [sidebarOpen, narrow]);
 
 	useEffect(() => {
-		writeStoredPreference('pi-desktop.workbench-open', String(workbenchOpen));
-	}, [workbenchOpen]);
+		if (!paiMode) writeStoredPreference('pi-desktop.workbench-open', String(workbenchOpen));
+	}, [paiMode, workbenchOpen]);
 
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.defaultPrevented || event.isComposing) return;
+			if (paiMode) return;
 			if (matchesShortcut(event, bindingKeysFor('search')) || matchesShortcut(event, bindingKeysFor('commandPalette'))) {
 				if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
 				event.preventDefault();
@@ -197,7 +203,7 @@ export function AppShell() {
 		};
 		window.addEventListener('keydown', onKeyDown);
 		return () => window.removeEventListener('keydown', onKeyDown);
-	}, []);
+	}, [paiMode]);
 
 	async function selectSearchSession(result: UiSessionSearchResult) {
 		if (!await useChatStore.getState().selectSession(result.cwd, result.path)) return;
@@ -215,7 +221,7 @@ export function AppShell() {
 	}
 
 	const searchCommands: SearchCommand[] = [
-		{ id: 'new-session', label: t('sidebar.newSession'), icon: 'plus', keywords: 'new chat session 新建对话', run: async () => { const state = useChatStore.getState(); await (state.cwd ? state.newSession() : state.pickWorkspace()); setMainView('chat'); if (narrow) setSidebarOpen(false); } },
+		{ id: 'new-session', label: t('sidebar.newSession'), icon: 'plus', keywords: 'new chat session 新建对话', run: async () => { await useChatStore.getState().newSession(); setMainView('chat'); if (narrow) setSidebarOpen(false); } },
 		{ id: 'open-project', label: t('sidebar.openProject'), icon: 'folder', keywords: 'open folder workspace 项目 文件夹 工作区', run: async () => { await useChatStore.getState().pickWorkspace(); setMainView('chat'); } },
 		{ id: 'automations', label: t('sidebar.automation'), icon: 'automation', keywords: 'automation schedule recurring 自动化 定时 计划', run: () => { setMainView('automations'); if (narrow) setSidebarOpen(false); } },
 		{ id: 'plugins', label: t('sidebar.plugins'), icon: 'plugins', keywords: 'plugins extensions skills prompts 插件 扩展 技能 提示词', run: () => { setMainView('plugins'); if (narrow) setSidebarOpen(false); } },
@@ -254,9 +260,26 @@ export function AppShell() {
 		setSettingsOpen(true);
 	}
 	const headerControls = !sidebarOpen && !narrow ? <div className="pd-header-navigation"><HistoryNavigation {...history} /><SearchButton open={searchOpen} onClick={() => setSearchOpen(true)} /></div> : undefined;
+	const navigationPending = useChatStore((state) => state.navigationPending || state.sessionLoading);
+	const [notificationTarget, setNotificationTarget] = useState<HTMLDivElement | null>(null);
+	if (paiMode) return (
+		<ExtensionDialogHost chatVisible notificationTarget={notificationTarget}>
+			<div className={`pd-app-shell is-pai${isWindows ? ' is-frameless' : ''}${settingsOpen ? ' is-settings-open' : ''}`}>
+				<div className="pd-main-view">
+				<div className="pd-chat-view-host"><ChatView compact navigationError={navigation.error} onToggleSidebar={() => {}} onOpenModelManagement={openModelManagement} historyControls={<div className="pd-pai-controls">
+					<HoverTooltip title={t('sidebar.newSession')}><button className="pd-icon-button" type="button" disabled={navigationPending} aria-label={t('sidebar.newSession')} onClick={() => { void useChatStore.getState().newSession().catch(() => {}); }}><Icon name="plus" width="17" height="17" /></button></HoverTooltip>
+					<HoverTooltip title={t('sidebar.settings')}><button className="pd-icon-button pd-pai-settings" type="button" aria-label={t('sidebar.settings')} onClick={() => { setSettingsInitialPage('general'); setSettingsOpen(true); }}><Icon name="settings" width="17" height="17" /></button></HoverTooltip>
+				</div>} /></div>
+				<div className="pd-notification-center"><OperationFeedback /><div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
+				</div>
+				{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}
+				{isWindows && <WindowControls />}
+			</div>
+		</ExtensionDialogHost>
+	);
 
 	return (
-		<ExtensionDialogHost chatVisible={mainView === 'chat'}>
+		<ExtensionDialogHost chatVisible={mainView === 'chat'} notificationTarget={notificationTarget}>
 		<div className={`pd-app-shell flex${isWindows ? ' is-frameless' : ''}${settingsOpen || searchOpen ? ' is-settings-open' : ''}${sidebarResizing ? ' is-sidebar-resizing' : ''}${workbenchResizing ? ' is-workbench-resizing' : ''}`} style={{ '--pd-sidebar-width': `${sidebarWidth}px`, '--pd-workbench-width': `${clampWorkbenchWidth(workbenchWidth, viewportWidth)}px` } as CSSProperties}>
 			<button type="button" className={`pd-sidebar-scrim${narrow && sidebarOpen ? ' is-open' : ''}`} aria-label={t('app.closeSidebar')} aria-hidden={!narrow || !sidebarOpen} inert={!narrow || !sidebarOpen} tabIndex={-1} onClick={() => setSidebarOpen(false)} />
 			<Sidebar
@@ -279,17 +302,18 @@ export function AppShell() {
 				event.preventDefault();
 				setSidebarWidth((value) => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, value + (event.key === 'ArrowRight' ? 16 : -16))));
 			}} />}
+			<div className="pd-main-view">
 			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ChatView onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} historyControls={mainView === 'chat' ? headerControls : undefined} /></div>
 			{mainView === 'automations' && <AutomationPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} />}
 			{mainView === 'plugins' && <PluginsPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} />}
+			<div className="pd-notification-center"><OperationFeedback /><UpdateNotice /><div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
+			</div>
 			<button type="button" className={`pd-workbench-scrim${workbenchOpen && mainView === 'chat' ? ' is-open' : ''}`} aria-label={t('app.closeWorkbench')} aria-hidden={!workbenchOpen || mainView !== 'chat'} inert={!workbenchOpen || mainView !== 'chat'} tabIndex={-1} onClick={closeWorkbench} />
 			<WorkbenchSidePane open={workbenchOpen && mainView === 'chat'} modal={workbenchOverlay && !settingsOpen && !searchOpen} suspended={settingsOpen || searchOpen} width={clampWorkbenchWidth(workbenchWidth, viewportWidth)} onWidthChange={value => setWorkbenchWidth(clampWorkbenchWidth(value, viewportWidth))} onResizing={setWorkbenchResizing} onClose={closeWorkbench} openRequest={workbenchRequest} />
 			{mainView === 'chat' && <HoverTooltip title={t('app.workbench')}><button ref={workbenchToggleRef} type="button" className="pd-workbench-toggle pd-icon-button" aria-label={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')} aria-pressed={workbenchOpen} onClick={() => setWorkbenchOpen((value) => !value)}><Icon name="panelRight" width="17" height="17" /></button></HoverTooltip>}
 			{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}
 			{searchOpen && <SearchDialog commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} />}
 			{isWindows && <WindowControls />}
-			<UpdateNotice />
-			<OperationFeedback />
 			<FolderProjectDropZone onAdded={revealAddedProjects} />
 		</div>
 		</ExtensionDialogHost>

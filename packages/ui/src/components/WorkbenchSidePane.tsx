@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from 'react';
+import { createPortal } from 'react-dom';
 import type { WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitLogEntry, WorkspaceGitStatus } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
@@ -8,6 +9,7 @@ import { SegmentedIndicator } from './SegmentedIndicator';
 import { WorkbenchTextView } from './WorkbenchTextView';
 import { appendCommandOutput, commandOutput, groupGitEntries, type DiffSource } from '../workbenchReading';
 import { runWithFeedback } from '../operationFeedback';
+import { contextMenuPosition, type ContextMenuPoint } from '../contextMenuPosition';
 import { WorkbenchGitFeatures } from './WorkbenchGitFeatures';
 import { WorkspaceTerminalPane } from './WorkspaceTerminalPane';
 import './workbenchReading.css';
@@ -39,6 +41,8 @@ export function WorkbenchSidePane({ open, onClose, openRequest, modal = false, s
 	const [previewRatio, setPreviewRatio] = useState(() => { try { const ratio = Number(localStorage.getItem('pi-desktop.workbench-preview-ratio')); return ratio >= 25 && ratio <= 80 ? ratio : 54; } catch { return 54; } });
 	const [focusedPath, setFocusedPath] = useState<string | null>(null);
 	const [menuTarget, setMenuTarget] = useState<WorkspaceEntry | null>(null);
+	const [menuAnchor, setMenuAnchor] = useState<{ trigger: HTMLElement; point: ContextMenuPoint | null } | null>(null);
+	const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null);
 	const menuTrigger = useRef<HTMLElement | null>(null);
 	const restoreListFocus = useRef(false);
 	useEffect(() => { try { localStorage.setItem('pi-desktop.workbench-preview-ratio', String(previewRatio)); } catch {} }, [previewRatio]);
@@ -107,14 +111,35 @@ export function WorkbenchSidePane({ open, onClose, openRequest, modal = false, s
 		const focus = () => pane.current?.querySelector<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]')?.focus();
 		const higherDialog = () => [...document.querySelectorAll('[aria-modal="true"]')].some(element => element !== pane.current);
 		if (!higherDialog()) focus();
-		const contain = (event: FocusEvent) => { if (!higherDialog() && event.target instanceof Node && !pane.current?.contains(event.target)) focus(); };
-		const observer = new MutationObserver(() => { if (!higherDialog() && !pane.current?.contains(document.activeElement)) focus(); });
+		const containsFocus = (target: Node | null) => Boolean(target && (pane.current?.contains(target) || menu.current?.contains(target)));
+		const contain = (event: FocusEvent) => { if (!higherDialog() && event.target instanceof Node && !containsFocus(event.target)) focus(); };
+		const observer = new MutationObserver(() => { if (!higherDialog() && !containsFocus(document.activeElement)) focus(); });
 		if (pane.current) observer.observe(pane.current, { childList: true, subtree: true });
 		document.addEventListener('focusin', contain);
 		return () => { observer.disconnect(); document.removeEventListener('focusin', contain); };
 	}, [open, modal, suspended]);
 	useEffect(() => { setMenuTarget(null); setFocusedPath(null); setPreviewExpanded(false); }, [cwd, directory, tab]);
-	useEffect(() => { if (menuTarget) menu.current?.querySelector<HTMLElement>('button')?.focus(); }, [menuTarget]);
+	useEffect(() => { if (!open || suspended) setMenuTarget(null); }, [open, suspended]);
+	useLayoutEffect(() => {
+		if (!menuTarget || !menuAnchor || !open || suspended || !menu.current) return;
+		const element = menu.current;
+		const trigger = menuAnchor.trigger;
+		const place = () => {
+			const box = element.getBoundingClientRect();
+			const anchor = trigger.getBoundingClientRect();
+			const point = menuAnchor.point ?? { x: anchor.left, y: anchor.bottom + 5 };
+			const next = contextMenuPosition(point, box, { width: window.innerWidth, height: window.innerHeight });
+			setMenuPosition(previous => previous?.left === next.left && previous.top === next.top ? previous : next);
+		};
+		place();
+		const observer = new ResizeObserver(place);
+		observer.observe(element);
+		window.addEventListener('resize', place);
+		window.addEventListener('scroll', place, true);
+		return () => { observer.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
+	}, [menuTarget, menuAnchor, open, suspended]);
+	const menuPositioned = menuPosition !== null;
+	useLayoutEffect(() => { if (menuTarget && menuPositioned) menu.current?.querySelector<HTMLElement>('button')?.focus(); }, [menuTarget, menuPositioned]);
 	useEffect(() => { if (!menuTarget) return; const dismiss = (event: PointerEvent) => { if (event.target instanceof Node && !menu.current?.contains(event.target) && !menuTrigger.current?.contains(event.target)) setMenuTarget(null); }; document.addEventListener('pointerdown', dismiss); return () => document.removeEventListener('pointerdown', dismiss); }, [menuTarget]);
 	useLayoutEffect(() => { if (!listingLoading && restoreListFocus.current) { restoreListFocus.current = false; (fileList.current?.querySelector<HTMLElement>('[data-file-path]') ?? fileList.current)?.focus(); } }, [listingLoading, entries]);
 	function paneKeyDown(event: KeyboardEvent<HTMLElement>) {
@@ -129,6 +154,12 @@ export function WorkbenchSidePane({ open, onClose, openRequest, modal = false, s
 		}
 	}
 	function closeMenu() { setMenuTarget(null); menuTrigger.current?.focus(); }
+	function openMenu(entry: WorkspaceEntry, trigger: HTMLElement, point: ContextMenuPoint | null = null) {
+		menuTrigger.current = trigger;
+		setMenuPosition(null);
+		setMenuAnchor({ trigger, point });
+		setMenuTarget(entry);
+	}
 	function fileKeyDown(event: KeyboardEvent<HTMLDivElement>) {
 		if (event.target instanceof HTMLElement && event.target.closest('[role="menu"], .pd-workbench-file-menu-trigger')) return;
 		const index = Math.max(0, visibleFileEntries.findIndex(entry => entry.path === activePath));
@@ -139,7 +170,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, modal = false, s
 		else if (event.key === 'End') next = visibleFileEntries.length - 1;
 		else if (event.key === 'Enter' || event.key === 'ArrowRight') { const entry = visibleFileEntries[index]; if (entry) { event.preventDefault(); void openFile(entry); } return; }
 		else if (event.key === 'ArrowLeft' || event.key === 'Backspace') { if (directory) { event.preventDefault(); restoreListFocus.current = true; setDirectory(parentDirectory(directory)); setSelectedFile(null); } return; }
-		else if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') { event.preventDefault(); const entry = visibleFileEntries[index]; if (entry) { menuTrigger.current = document.activeElement as HTMLElement; setMenuTarget(entry); } return; }
+		else if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') { event.preventDefault(); const entry = visibleFileEntries[index]; if (entry && document.activeElement instanceof HTMLElement) openMenu(entry, document.activeElement); return; }
 		else return;
 		event.preventDefault(); const entry = visibleFileEntries[next]; if (entry) { setFocusedPath(entry.path); fileList.current?.querySelectorAll<HTMLButtonElement>('[data-file-path]')[next]?.focus(); }
 	}
@@ -455,13 +486,13 @@ export function WorkbenchSidePane({ open, onClose, openRequest, modal = false, s
 						<HoverTooltip title={t('workbench.refresh')}><button type="button" className="pd-icon-button" onClick={() => setListingRevision((value) => value + 1)} aria-label={t('workbench.refreshFiles')}><Icon name="refresh" width="15" height="15" /></button></HoverTooltip>
 					</div>
 					<div ref={fileList} className="pd-workbench-file-list" role="group" tabIndex={visibleFileEntries.length ? -1 : 0} aria-label={t('workbench.fileList')} onKeyDown={fileKeyDown}>
-						{visibleFileEntries.map((entry) => <div key={entry.path} className="pd-workbench-file-row"><HoverTooltip title={entry.path}><button type="button" data-file-path={entry.path} tabIndex={entry.path === activePath ? 0 : -1} className={`pd-workbench-entry${selectedFile === entry.path ? ' is-selected' : ''}`} onFocus={() => setFocusedPath(entry.path)} onClick={() => void openFile(entry)} onContextMenu={event => { event.preventDefault(); menuTrigger.current = event.currentTarget; setMenuTarget(entry); }}><Icon name={entry.kind === 'directory' ? 'folder' : 'file'} width="15" height="15" /><span>{entry.name}</span>{entry.kind === 'file' && <small>{readableSize(entry.size)}</small>}</button></HoverTooltip><button className="pd-workbench-file-menu-trigger" type="button" tabIndex={-1} aria-label={`${label('操作', 'Actions')}: ${entry.path}`} onClick={event => { menuTrigger.current = event.currentTarget.previousElementSibling as HTMLElement; setMenuTarget(entry); }}>…</button></div>)}
-						{menuTarget && <div ref={menu} className="pd-workbench-file-menu" role="menu" aria-label={menuTarget.path} onKeyDown={event => { event.stopPropagation(); const buttons = [...(menu.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])]; const index = buttons.indexOf(document.activeElement as HTMLButtonElement); if (event.key === 'Escape' || event.key === 'Tab') { if (event.key === 'Escape') event.preventDefault(); closeMenu(); } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus(); } }}>
+						{visibleFileEntries.map((entry) => <div key={entry.path} className="pd-workbench-file-row"><HoverTooltip title={entry.path}><button type="button" data-file-path={entry.path} tabIndex={entry.path === activePath ? 0 : -1} className={`pd-workbench-entry${selectedFile === entry.path ? ' is-selected' : ''}`} onFocus={() => setFocusedPath(entry.path)} onClick={() => void openFile(entry)} onContextMenu={event => { event.preventDefault(); openMenu(entry, event.currentTarget, event.button === 2 ? { x: event.clientX, y: event.clientY } : null); }}><Icon name={entry.kind === 'directory' ? 'folder' : 'file'} width="15" height="15" /><span>{entry.name}</span>{entry.kind === 'file' && <small>{readableSize(entry.size)}</small>}</button></HoverTooltip><button className="pd-workbench-file-menu-trigger" type="button" tabIndex={-1} aria-label={`${label('操作', 'Actions')}: ${entry.path}`} onClick={event => openMenu(entry, event.currentTarget)}>…</button></div>)}
+						{menuTarget && open && !suspended && createPortal(<div ref={menu} className="pd-workbench-file-menu" role="menu" aria-label={menuTarget.path} style={{ ...menuPosition, visibility: menuPositioned ? 'visible' : 'hidden' }} onKeyDown={event => { event.stopPropagation(); const buttons = [...(menu.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])]; const index = buttons.indexOf(document.activeElement as HTMLButtonElement); if (event.key === 'Escape' || event.key === 'Tab') { if (event.key === 'Escape') event.preventDefault(); closeMenu(); } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus(); } }}>
 							<strong>{menuTarget.path || cwd}</strong>
 							<button type="button" role="menuitem" onClick={() => { const path = `${cwd.replace(/[\\/]$/, '')}/${menuTarget.path}`; closeMenu(); void runWithFeedback({ id: `copy-path:${path}`, title: label('复制路径', 'Copy path'), run: () => navigator.clipboard.writeText(path), success: label('已复制路径', 'Path copied') }); }}>{label('复制路径', 'Copy path')}</button>
 							<button type="button" role="menuitem" onClick={() => { const path = menuTarget.path; closeMenu(); void openInEditor(path); }}>{t('workbench.openInEditor')}</button>
 							<button type="button" role="menuitem" onClick={() => { const path = menuTarget.path; closeMenu(); void revealPath(path); }}>{t('workbench.revealInFolder')}</button>
-						</div>}
+						</div>, document.body)}
 						{listingLoading && <div className="pd-workbench-empty">{t('workbench.loadingFolder')}</div>}
 						{listingError && <div className="pd-workbench-error" role="alert">{listingError}</div>}
 						{!listingLoading && !listingError && entries.length === 0 && <div className="pd-workbench-empty">{t('workbench.folderEmpty')}</div>}

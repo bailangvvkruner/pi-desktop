@@ -82,9 +82,8 @@ export default async function sidebarDragScenarios(review) {
   await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
   await review.viewport(1440, 1100);
   await review.reducedMotion(true);
-  await review.evaluate(`(${installSidebarDragFixture.toString()})();`);
-  await review.click('.pd-sidebar-list-heading .pd-section-actions button:first-child');
-  await review.waitFor(`document.querySelectorAll('.pd-session-item[data-session-path]').length === ${state}.rows.length && !document.querySelector('.pd-sidebar-list-heading button:disabled')`);
+  await review.reloadWithFixture(`(${installSidebarDragFixture.toString()})();`);
+  await review.waitFor(`document.querySelectorAll('.pd-session-item[data-session-path]').length === ${state}.rows.length`);
   const paths = await review.evaluate(`${state}.paths`);
   const row = id => `.pd-session-item[data-session-path=${q(paths[id])}]`;
   const heading = key => `.pd-sidebar-group-heading[data-drag-container=${q(key)}]`;
@@ -275,10 +274,7 @@ export default async function sidebarDragScenarios(review) {
 
   // Reload the owned renderer to prove the saved collapse state is actually read back.
   const saved = await review.evaluate(`({rows:${state}.rows,groups:${state}.groups})`);
-  await review.evaluate('location.reload(); void 0');
-  await review.waitFor('!window.__sidebarDragReview && window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
-  await review.evaluate(`(${installSidebarDragFixture.toString()})(${q(saved)});`);
-  await review.click('.pd-sidebar-list-heading .pd-section-actions button:first-child');
+  await review.reloadWithFixture(`(${installSidebarDragFixture.toString()})(${q(saved)});`);
   await review.waitFor(`document.querySelectorAll('.pd-sidebar-group-toggle').length===4 && Boolean(document.querySelector(${q(toggle('ungrouped'))}))`);
   await review.assert(`[...document.querySelectorAll('.pd-sidebar-group-toggle')].every(button=>button.getAttribute('aria-expanded')==='false')`, 'All groups, including Ungrouped, remain collapsed after renderer reload');
   await review.evaluate("document.documentElement.dataset.theme='light';document.documentElement.style.setProperty('--pd-ui-font-size','20px')");

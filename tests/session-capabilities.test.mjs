@@ -58,6 +58,7 @@ test('session stats, system rows, tree branches and export work through the serv
       assert.ok(stats.totalMessages >= stats.userMessages + stats.assistantMessages);
       assert.ok(stats.tokens.total > 0);
       assert.ok(stats.cost > 0);
+      assert.equal(stats.timing.durationMs, null, 'legacy sessions have usage but no fabricated timing');
     });
 
     await test('the tree marks the visible branch and switches leaves', async () => {

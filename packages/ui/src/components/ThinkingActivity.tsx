@@ -1,12 +1,10 @@
 import { useId, useLayoutEffect, useRef } from 'react';
 import type { UiMessage } from '@pidesktop/shared';
-import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { useT } from '../i18n';
 import { useDisclosureChoice } from '../conversationDisclosure';
 import { ActivityDisclosure, ActivityLabel } from './ActivityDisclosure';
 import { Icon } from './Icons';
-import { renderMarkdownPre } from './CodeBlock';
+import { ConversationMarkdown } from './ConversationMarkdown';
 
 export function ThinkingActivity({ message, defaultExpanded }: { message: UiMessage; defaultExpanded?: boolean }) {
 	const { t } = useT();
@@ -35,7 +33,7 @@ export function ThinkingActivity({ message, defaultExpanded }: { message: UiMess
 					<div ref={outputRef} className="pd-markdown pd-thinking-markdown" onScroll={() => {
 						const node = outputRef.current;
 						if (node) followsOutput.current = node.scrollHeight - node.scrollTop - node.clientHeight < 32;
-					}}><Markdown remarkPlugins={[remarkGfm]} components={{ pre: renderMarkdownPre }}>{thinking}</Markdown></div>
+					}}><ConversationMarkdown>{thinking}</ConversationMarkdown></div>
 					{message.thinkingTruncated && <p className="pd-activity-note">{t('message.thinking.truncated')}</p>}
 				</div>
 			</ActivityDisclosure>

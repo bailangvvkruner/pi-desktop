@@ -64,13 +64,25 @@ test('Pi thinking streams are bounded, coalesced, finalized, isolated, and resto
     assert.equal(service.getSnapshot().messages.at(-1).text, 'Answer');
 
     await session._handleAgentEvent({ type: 'message_start', message: assistant([]) });
-    await update('thinking_delta', [thinking(`${'x'.repeat(47_999)}😀tail`)]);
+    const longThinking = `OLD_START${'x'.repeat(47_990)}😀tail`;
+    await update('thinking_delta', [thinking(longThinking)]);
     const capped = service.getSnapshot().messages.at(-1);
-    assert.equal(capped.thinking.length, 47_999);
+    assert.equal(capped.thinking, longThinking.slice(-48_000), 'long thinking retains its latest text instead of freezing on the prefix');
+    assert.ok(capped.thinking.endsWith('😀tail'));
+    assert.ok(!capped.thinking.includes('OLD_START'));
     assert.equal(capped.thinkingTruncated, true);
-    const cancelled = assistant([thinking(`${'x'.repeat(47_999)}😀tail`)], 'aborted');
+    await update('thinking_delta', [thinking(`prefix😀${'x'.repeat(47_999)}`)]);
+    assert.equal(service.getSnapshot().messages.at(-1).thinking, 'x'.repeat(47_999), 'a tail boundary never leaves a dangling low surrogate');
+    const latestBlocks = [thinking(`${longThinking}\nNewest streamed reasoning`), redacted, thinking('Newest block 😀')];
+    const latestTail = `${longThinking}\nNewest streamed reasoning\n\nNewest block 😀`.slice(-48_000);
+    await update('thinking_delta', latestBlocks, 2);
+    assert.equal(service.getSnapshot().messages.at(-1).thinking, latestTail, 'new blocks continue replacing older content after the limit');
+    await new Promise((done) => setTimeout(done, 110));
+    assert.equal(events.findLast((event) => event.type === 'assistant-thinking').thinking, latestTail, 'the latest bounded content is still published over IPC');
+    const cancelled = assistant(latestBlocks, 'aborted');
     await session._handleAgentEvent({ type: 'message_end', message: cancelled });
     assert.equal(events.findLast((event) => event.type === 'assistant-end').thinkingStatus, 'interrupted');
+    assert.equal(events.findLast((event) => event.type === 'assistant-end').thinking, latestTail);
     assert.equal(service.getSnapshot().messages.at(-1).status, 'error');
 
     await session._handleAgentEvent({ type: 'message_start', message: assistant([]) });
@@ -129,7 +141,7 @@ test('Pi thinking streams are bounded, coalesced, finalized, isolated, and resto
     await service.init({ cwd: workspace, sessionPath: saved.getSessionFile() });
     assert.equal(service.getSnapshot().messages.at(-1).thinking, 'Background final');
     assert.equal(service.getSnapshot().messages.at(-1).thinkingStatus, 'done');
-    assert.ok(service.getSnapshot().messages.some((message) => message.thinkingTruncated && message.thinkingStatus === 'interrupted'));
+    assert.equal(service.getSnapshot().messages.find((message) => message.thinkingTruncated && message.thinkingStatus === 'interrupted')?.thinking, latestTail, 'restored history retains the same latest bounded content');
     assert.doesNotMatch(JSON.stringify(service.getSnapshot()), /opaque-signature|redacted-content|encrypted-payload/);
   } finally {
     await service?.dispose();

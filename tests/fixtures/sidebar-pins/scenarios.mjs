@@ -16,6 +16,7 @@ function installSidebarPinsFixture(saved) {
     groups: [{ id: 'pins-review', name: '自定义分组', sessionPaths: [rows[paths.Alpha][0].path, rows[paths.Bravo][0].path, rows[paths.Charlie][0].path] }],
     writes: [], navigation: [], failNext: false, deferNext: false,
   };
+  bridge.getDefaultWorkspace = async () => paths.home;
   bridge.listWorkspaces = async () => clone(state.workspaces);
   bridge.listSessions = async cwd => clone(rows[cwd] ?? []);
   bridge.listSessionGroups = async () => clone(state.groups);
@@ -51,9 +52,8 @@ export default async function sidebarPinsScenarios(review) {
   await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
   await review.viewport(1440, 1000);
   await review.reducedMotion(true);
-  await review.evaluate(`(${installSidebarPinsFixture.toString()})()`);
-  await review.click('.pd-sidebar-list-heading .pd-section-actions button:first-child');
-  await review.waitFor(`document.querySelectorAll('.pd-session-item[data-session-path]').length === 7 && !document.querySelector('.pd-sidebar-list-heading button:disabled')`);
+  await review.reloadWithFixture(`(${installSidebarPinsFixture.toString()})()`);
+  await review.waitFor(`document.querySelectorAll('.pd-session-item[data-session-path]').length === 7`);
   await review.click('[data-mode="project"]');
   const paths = await review.evaluate(`${state}.paths`);
   const project = name => `.pd-sidebar-group[data-project-path=${q(paths[name])}]`;
@@ -118,11 +118,8 @@ export default async function sidebarPinsScenarios(review) {
   await review.click(pinToggle);
   await review.assert(`!document.querySelector(${q(project('Alpha'))}) && ${prefs}.collapsed.includes('pinned') && ${prefs}.collapsed.includes(${q('project:' + paths.Alpha)})`, 'Collapsing the pinned section saves both container and project expansion state');
   const saved = await review.evaluate(`({ pinned: ${state}.pinned })`);
-  await review.evaluate('location.reload(); void 0');
-  await review.waitFor('!window.__sidebarPinsReview && window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
-  await review.evaluate(`(${installSidebarPinsFixture.toString()})(${q(saved)})`);
-  await review.click('.pd-sidebar-list-heading .pd-section-actions button:first-child');
-  await review.waitFor(`Boolean(document.querySelector(${q(pinToggle)})) && !document.querySelector('.pd-sidebar-list-heading button:disabled')`);
+  await review.reloadWithFixture(`(${installSidebarPinsFixture.toString()})(${q(saved)})`);
+  await review.waitFor(`Boolean(document.querySelector(${q(pinToggle)}))`);
   await review.assert(`document.querySelector(${q(pinToggle)}).getAttribute('aria-expanded') === 'false' && !document.querySelector(${q(project('Alpha'))})`, 'Reload restores the collapsed pinned section from preferences and project pins from persistence');
   await review.click(pinToggle);
   await review.assert(`${inPinned('Alpha')} && ${inPinned('Bravo')} && !(${expanded('Alpha')})`, 'Expanding the persisted pinned section preserves its independently collapsed project');

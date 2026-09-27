@@ -1,7 +1,7 @@
 {
   "name": "pi-desktop",
   "private": true,
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Desktop workbench for the Pi coding agent (Electron + React), inspired by ZCode's architecture",
   "license": "MIT",
   "type": "module",
@@ -12,6 +12,7 @@
   "scripts": {
     "dev": "pnpm --filter @pidesktop/desktop dev",
     "build": "pnpm --filter @pidesktop/desktop build",
+    "install:pai": "node scripts/install-pai.mjs",
     "pack:dir": "pnpm --filter @pidesktop/desktop pack:dir",
     "dist:win": "pnpm --filter @pidesktop/desktop dist:win",
     "dist:mac": "pnpm --filter @pidesktop/desktop dist:mac",

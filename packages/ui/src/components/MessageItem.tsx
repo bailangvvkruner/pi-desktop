@@ -1,15 +1,13 @@
 import type { UiAttachment, UiMessage } from '@pidesktop/shared';
 import { memo, useContext, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
 import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
 import { ThinkingActivity } from './ThinkingActivity';
 import { ActivityLabel } from './ActivityDisclosure';
-import { renderMarkdownPre } from './CodeBlock';
+import { ConversationMarkdown } from './ConversationMarkdown';
 import { MessageImages } from './MessageAttachments';
 import { useConversationCopy } from '../conversationCopy';
 import { operationFeedback } from '../operationFeedback';
@@ -210,7 +208,7 @@ const AssistantMessageItem = memo(function AssistantMessageItem({ message, highl
 			<div className="pd-message-column">
 				{showHeading && <div className="pd-assistant-heading"><span className="pd-assistant-mark">π</span><span>Pi</span></div>}
 				{hasThinking && !hideThinking && <ThinkingActivity message={message} defaultExpanded={thinkingExpanded} />}
-				{message.text && <div ref={bodyRef} data-message-body className="pd-markdown" onPointerUp={inspectSelection} onKeyUp={inspectSelection}><Markdown remarkPlugins={[remarkGfm]} components={{ pre: renderMarkdownPre }}>{message.text}</Markdown></div>}
+				{message.text && <div ref={bodyRef} data-message-body className="pd-markdown" onPointerUp={inspectSelection} onKeyUp={inspectSelection}><ConversationMarkdown>{message.text}</ConversationMarkdown></div>}
 				{selection && createPortal(<button type="button" className="pd-quote-selection" data-quote-for={message.id} style={{ position: 'fixed', zIndex: 60, ...selectionPosition }} onMouseDown={(event) => event.preventDefault()} onClick={quote}>{c('quote')}</button>, document.body)}
 				{!hidePending && message.status === 'streaming' && message.thinkingStatus !== 'streaming' && <span className="pd-response-pending" role="status"><ActivityLabel active>{t(message.text ? 'message.generating' : 'message.preparing')}</ActivityLabel></span>}
 				{message.status === 'error' && <div className="pd-message-interrupted">{message.errorMessage || t('message.interrupted')}</div>}

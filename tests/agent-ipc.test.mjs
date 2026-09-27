@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -8,7 +8,7 @@ import { test } from 'node:test';
 
 const stubs = {
   electron: `
-    export const app = { getPath: () => globalThis.__ipcUserData };
+    export const app = { getPath: () => globalThis.__ipcUserData, getVersion: () => '0.1.7-test' };
     export const Menu = { buildFromTemplate: () => ({}) };
     export const nativeImage = { createFromPath: () => ({ isEmpty: () => true }) };
     export const Tray = class {};
@@ -16,7 +16,7 @@ const stubs = {
       getAllWindows: () => globalThis.__ipcWindows ?? [],
       fromWebContents: (sender) => globalThis.__ipcWindows?.find((win) => win.webContents === sender),
     };
-    export const dialog = { showErrorBox: () => {} };
+    export const dialog = { showErrorBox: () => {}, showOpenDialog: (...args) => globalThis.__ipcOpenDialog(...args) };
     export const Notification = class { static isSupported() { return false; } on() { return this; } show() {} };
     export const ipcMain = { handle: (channel, handler) => globalThis.__ipcHandlers.set(channel, handler) };
   `,
@@ -222,6 +222,53 @@ test('switching workspaces waits for in-flight crash recovery and keeps the chos
   assert.equal(active, second);
   assert.equal(ipc.defaultWorkspace(), second);
   await ipc.disposeServices();
+});
+
+test('pai IPC exposes its mode, disables background features, and recovers only its own session', async (t) => {
+  const temp = await realpath(tmpdir());
+  const root = await mkdtemp(join(temp, 'pi-pai-ipc-'));
+  const cwd = join(root, 'project');
+  await mkdir(cwd);
+  const main = createIpcWindow();
+  globalThis.__ipcUserData = root;
+  globalThis.__ipcWindows = [main];
+  globalThis.__ipcHandlers = new Map();
+  const calls = [];
+  let agentEvent;
+  let recovered;
+  globalThis.__ipcAgent = {
+    onEvent(listener) { agentEvent = listener; }, onBackgroundActivity() {}, async dispose() {},
+    async init(options) { calls.push(options); recovered?.(); },
+    async listSessions() { throw new Error('pai recovery must not search for another instance\'s session'); },
+  };
+  const ipc = await import('../packages/desktop/src/main/ipc.ts?pai-mode');
+  const { IPC_CHANNELS: channels } = await import('../packages/shared/src/index.ts');
+  t.after(async () => {
+    await ipc.disposeServices();
+    assert.equal(dirname(root), temp);
+    await rm(root, { recursive: true, force: true });
+  });
+  ipc.registerIpc({ windowMode: 'pai', getDialogWindow: () => main });
+  assert.equal(ipc.defaultWorkspace(cwd), cwd);
+  const valid = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
+  const call = (channel, ...args) => globalThis.__ipcHandlers.get(channel)(valid, ...args);
+  assert.equal(call(channels.appInfo).windowMode, 'pai');
+  assert.deepEqual(call(channels.updateState), { phase: 'unavailable', unavailableReason: 'unsupported', currentVersion: '0.1.7-test' });
+  for (const channel of [channels.updateCheck, channels.updateInstall]) assert.throws(() => call(channel), /main Pi Desktop window/);
+  for (const channel of [channels.automationSnapshot, channels.automationSave, channels.automationSetEnabled, channels.automationDelete, channels.automationRun, channels.automationCancelRun]) {
+    assert.throws(() => call(channel), /main Pi Desktop window/);
+  }
+  call(channels.rendererReady);
+  let ready = new Promise(resolve => { recovered = resolve; });
+  globalThis.__ipcAgentUi.onHostCrash();
+  await ready;
+  assert.deepEqual(calls[0], { cwd, fresh: true }, 'an unpersisted pai session cannot adopt the latest global history');
+  const ownSession = join(cwd, 'own-session.jsonl');
+  agentEvent({ sequence: 1, event: { type: 'ready', cwd, sessionPath: ownSession } });
+  ready = new Promise(resolve => { recovered = resolve; });
+  globalThis.__ipcAgentUi.onHostCrash();
+  await ready;
+  assert.deepEqual(calls[1], { cwd, sessionPath: ownSession });
 });
 
 test('composer workspace selection creates a fresh session, including the first detach to home, while normal selection restores history', async (t) => {
@@ -530,13 +577,56 @@ test('folder-drop IPC registers projects atomically without activating or trusti
   assert.deepEqual(JSON.parse(await readFile(settingsPath, 'utf8')), settings, 'a failed batch cannot persist an earlier valid directory');
   assert.deepEqual(await add(valid, [file]), []);
   assert.deepEqual(await Promise.all([add(valid, [first, active, first]), add(valid, [second])]), [[first, active], [second]]);
-  assert.deepEqual(JSON.parse(await readFile(settingsPath, 'utf8')), { ...settings, workspaces: [active, first, second] });
+  assert.deepEqual(JSON.parse(await readFile(settingsPath, 'utf8')), { ...settings, workspaces: [active, first, second], explicitWorkspaces: [first, active, second] });
   assert.equal(switched, null);
   assert.equal(ipc.defaultWorkspace(), active);
   assert.deepEqual(await add(valid, [first]), [first], 'existing projects retain their registered identity');
   await assert.rejects(globalThis.__ipcHandlers.get(IPC_CHANNELS.workspaceSwitch)(valid, third), /未知工作区/);
   await globalThis.__ipcHandlers.get(IPC_CHANNELS.workspaceSwitch)(valid, first);
   assert.equal(switched, first, 'activation still uses the ordinary workspace transition');
+});
+
+test('project creation IPC registers a Documents project without activating a session and permits later selection', async (t) => {
+  const temp = await realpath(tmpdir());
+  const root = await mkdtemp(join(temp, 'pi-ipc-project-create-'));
+  const active = join(root, 'active');
+  await mkdir(active);
+  const settings = { cwd: active, workspaces: [active], pinnedWorkspaces: [active] };
+  const settingsPath = join(root, 'workspace.json');
+  await writeFile(settingsPath, JSON.stringify(settings));
+  const main = createIpcWindow();
+  globalThis.__ipcUserData = root;
+  globalThis.__ipcWindows = [main];
+  globalThis.__ipcHandlers = new Map();
+  let switched = null;
+  globalThis.__ipcAgent = {
+    onEvent() {}, onBackgroundActivity() {}, async dispose() {},
+    init: async () => assert.fail('creating a project cannot initialize an SDK session'),
+    switchWorkspace: async (cwd) => { switched = cwd; },
+    getSnapshot: async () => ({ cwd: switched ?? active, sessionPath: null }),
+  };
+  const ipc = await import('../packages/desktop/src/main/ipc.ts?project-create');
+  const { IPC_CHANNELS } = await import('../packages/shared/src/index.ts');
+  t.after(async () => {
+    await ipc.disposeServices();
+    assert.equal(dirname(root), temp);
+    await rm(root, { recursive: true, force: true });
+  });
+  ipc.registerIpc();
+  assert.equal(ipc.defaultWorkspace(), active);
+  const valid = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
+  const create = globalThis.__ipcHandlers.get(IPC_CHANNELS.workspaceCreateProject);
+  assert.equal(await globalThis.__ipcHandlers.get(IPC_CHANNELS.workspaceProjectsDirectory)(valid), join(root, 'Pi Desktop'));
+  assert.throws(() => create({ sender: main.webContents, senderFrame: {} }, 'bad-sender'), /Invalid renderer sender/);
+  await assert.rejects(create(valid, '../outside'), /项目名称/);
+  const cwd = await create(valid, '项目');
+  assert.equal(cwd, join(root, 'Pi Desktop', '项目'));
+  assert.equal(switched, null);
+  assert.deepEqual(JSON.parse(await readFile(settingsPath, 'utf8')), { ...settings, workspaces: [active, cwd], explicitWorkspaces: [cwd] });
+  assert.ok((await globalThis.__ipcHandlers.get(IPC_CHANNELS.agentListWorkspaces)(valid)).includes(cwd));
+  await assert.rejects(create(valid, '项目'), /已存在同名/);
+  await globalThis.__ipcHandlers.get(IPC_CHANNELS.workspaceSwitch)(valid, cwd);
+  assert.equal(switched, cwd);
 });
 
 test('the built-in workspace exposes unassigned conversations even when absent from saved projects', async (t) => {
@@ -570,4 +660,143 @@ test('the built-in workspace exposes unassigned conversations even when absent f
   assert.deepEqual(await list(valid, home), [{ id: 'home-session', path: sessionPath }]);
   await globalThis.__ipcHandlers.get(IPC_CHANNELS.agentUpdateSessionMeta)(valid, sessionPath, { pinned: true });
   assert.deepEqual(await list(valid, home), [{ id: 'home-session', path: sessionPath, pinned: true }], 'unassigned sessions retain authenticated metadata actions');
+});
+
+test('standalone conversations get independent folders and retain discoverable history after storage changes', async (t) => {
+  const temp = await realpath(tmpdir());
+  const root = await mkdtemp(join(temp, 'pi-ipc-conversation-storage-'));
+  const home = join(root, 'PiDesktopWorkspace');
+  const project = join(home, 'my-project');
+  const changedRoot = join(root, 'new-storage');
+  const pickedRoot = join(root, 'picked');
+  await Promise.all([mkdir(project, { recursive: true }), mkdir(pickedRoot)]);
+  const settingsPath = join(root, 'workspace.json');
+  await writeFile(settingsPath, JSON.stringify({ cwd: project, workspaces: [project], pinnedWorkspaces: [project] }));
+  await writeFile(join(root, 'desktop-settings.json'), JSON.stringify({ notificationsEnabled: false, closeBehavior: 'quit' }));
+  const main = createIpcWindow();
+  globalThis.__ipcUserData = root;
+  globalThis.__ipcWindows = [main];
+  globalThis.__ipcHandlers = new Map();
+  globalThis.__ipcOpenDialog = async (options) => {
+    assert.ok(options.properties.includes('openDirectory'));
+    assert.equal(options.defaultPath, home);
+    return { canceled: false, filePaths: [pickedRoot] };
+  };
+  const initialized = [];
+  let snapshot = { cwd: project, sessionPath: null };
+  globalThis.__ipcAgent = {
+    onEvent() {}, onBackgroundActivity() {}, async dispose() {},
+    async init(options) {
+      assert.equal(options.fresh, true);
+      assert.equal((await stat(options.cwd)).isDirectory(), true);
+      initialized.push(options.cwd);
+      snapshot = { cwd: options.cwd, sessionPath: null };
+    },
+    async switchWorkspace(cwd) { snapshot = { cwd, sessionPath: null }; },
+    async forgetWorkspace() {},
+    getSnapshot: async () => snapshot,
+    listSessions: async (cwd) => initialized.includes(cwd) ? [{ id: cwd, path: `${cwd}.jsonl` }] : [],
+  };
+  const ipc = await import('../packages/desktop/src/main/ipc.ts?conversation-storage');
+  const { IPC_CHANNELS } = await import('../packages/shared/src/index.ts');
+  t.after(async () => {
+    await ipc.disposeServices();
+    delete globalThis.__ipcOpenDialog;
+    assert.equal(dirname(root), temp);
+    await rm(root, { recursive: true, force: true });
+  });
+  ipc.registerIpc();
+  assert.equal(ipc.defaultWorkspace(), project);
+  const valid = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
+  const call = (channel, ...args) => globalThis.__ipcHandlers.get(channel)(valid, ...args);
+  assert.equal(call(IPC_CHANNELS.desktopSettingsGet).conversationStorageDirectory, home);
+  const beforePick = await readFile(settingsPath, 'utf8');
+  assert.equal(await call(IPC_CHANNELS.conversationStoragePick), pickedRoot);
+  assert.equal(await readFile(settingsPath, 'utf8'), beforePick, 'storage picker cannot register a project');
+  for (const options of [null, true, [], { cwd: 1 }]) assert.throws(() => call(IPC_CHANNELS.agentNewSession, options), /新对话选项无效/);
+  await assert.rejects(call(IPC_CHANNELS.agentNewSession, { cwd: pickedRoot }), /未知工作区/);
+
+  await call(IPC_CHANNELS.agentNewSession);
+  const first = initialized[0];
+  assert.equal(dirname(first), home);
+  await writeFile(join(first, 'keep.txt'), 'user-created content');
+  await Promise.all([call(IPC_CHANNELS.agentNewSession), call(IPC_CHANNELS.agentNewSession)]);
+  assert.equal(new Set(initialized).size, 3, 'parallel requests reserve different directories');
+  assert.ok(initialized.every(cwd => dirname(cwd) === home));
+  assert.equal(await readFile(join(first, 'keep.txt'), 'utf8'), 'user-created content');
+
+  for (const invalid of ['', 'relative-folder', 123, 'C:\0bad']) {
+    await assert.rejects(call(IPC_CHANNELS.desktopSettingsSet, { conversationStorageDirectory: invalid }), /绝对文件夹路径/);
+  }
+  const file = join(root, 'file.txt');
+  await writeFile(file, 'untouched');
+  await assert.rejects(call(IPC_CHANNELS.desktopSettingsSet, { conversationStorageDirectory: file }));
+  assert.equal(call(IPC_CHANNELS.desktopSettingsGet).conversationStorageDirectory, home);
+  const changed = await call(IPC_CHANNELS.desktopSettingsSet, { conversationStorageDirectory: changedRoot });
+  assert.equal(changed.conversationStorageDirectory, changedRoot);
+  assert.equal(changed.notificationsEnabled, false);
+  assert.equal(changed.closeBehavior, 'quit');
+  assert.equal(call(IPC_CHANNELS.workspaceDefault), changedRoot);
+  await call(IPC_CHANNELS.agentNewSession);
+  assert.equal(dirname(initialized.at(-1)), changedRoot);
+  const automatic = [...initialized];
+  const internal = await call(IPC_CHANNELS.workspaceListConversations);
+  assert.ok(automatic.every(cwd => internal.includes(cwd)));
+  assert.ok(internal.includes(home) && internal.includes(changedRoot));
+  assert.equal(internal.includes(project), false, 'an explicit project inside a storage root is still a project');
+  assert.equal(await ipc.isConversationWorkspace(first), true);
+  assert.equal(await ipc.isConversationWorkspace(project), false);
+  assert.ok((await call(IPC_CHANNELS.agentListWorkspaces)).includes(first));
+  assert.deepEqual(await call(IPC_CHANNELS.agentListSessions, first), [{ id: first, path: `${first}.jsonl` }]);
+  await call(IPC_CHANNELS.workspaceSwitch, first);
+  assert.equal(snapshot.cwd, first, 'old storage locations remain authorized after a setting change');
+
+  await call(IPC_CHANNELS.agentNewSession, { cwd: project });
+  assert.equal(initialized.at(-1), project);
+  assert.deepEqual(JSON.parse(await readFile(settingsPath, 'utf8')).conversationWorkspaces, automatic);
+  await call(IPC_CHANNELS.desktopSettingsSet, { conversationStorageDirectory: project });
+  assert.equal((await call(IPC_CHANNELS.workspaceListConversations)).includes(project), false,
+    'choosing an already registered project as storage cannot silently hide that project');
+  await call(IPC_CHANNELS.workspaceAddDropped, [home]);
+  assert.equal((await call(IPC_CHANNELS.workspaceListConversations)).includes(home), false,
+    'explicitly adding a storage root as a project preserves that deliberate choice');
+  await call(IPC_CHANNELS.workspaceSetPinned, []);
+  await call(IPC_CHANNELS.workspaceSwitch, automatic.at(-1));
+  await call(IPC_CHANNELS.workspaceRemove, project);
+  const persisted = JSON.parse(await readFile(settingsPath, 'utf8'));
+  assert.deepEqual(persisted.conversationWorkspaces, automatic, 'normal workspace writes preserve internal metadata');
+  assert.ok(persisted.conversationStorageDirectories.includes(home));
+  assert.equal(ipc.defaultWorkspace(), automatic.at(-1), 'startup restores the previous conversation folder');
+});
+
+test('first launch creates a private conversation directory and failed initialization preserves existing files', async (t) => {
+  const temp = await realpath(tmpdir());
+  const root = await mkdtemp(join(temp, 'pi-ipc-conversation-startup-'));
+  const main = createIpcWindow();
+  globalThis.__ipcUserData = root;
+  globalThis.__ipcWindows = [main];
+  globalThis.__ipcHandlers = new Map();
+  let failedDirectory;
+  globalThis.__ipcAgent = {
+    onEvent() {}, onBackgroundActivity() {}, async dispose() {},
+    async init({ cwd }) { failedDirectory = cwd; await writeFile(join(cwd, 'extension-output.txt'), 'preserve me'); throw new Error('extension initialization failed'); },
+  };
+  const ipc = await import('../packages/desktop/src/main/ipc.ts?conversation-startup');
+  const { IPC_CHANNELS } = await import('../packages/shared/src/index.ts');
+  t.after(async () => {
+    await ipc.disposeServices();
+    assert.equal(dirname(root), temp);
+    await rm(root, { recursive: true, force: true });
+  });
+  ipc.registerIpc();
+  const initial = ipc.defaultWorkspace();
+  assert.equal(dirname(initial), join(root, 'PiDesktopWorkspace'));
+  assert.equal((await stat(initial)).isDirectory(), true);
+  const valid = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
+  await assert.rejects(globalThis.__ipcHandlers.get(IPC_CHANNELS.agentNewSession)(valid), /initialization failed/);
+  assert.notEqual(failedDirectory, initial);
+  assert.equal(await readFile(join(failedDirectory, 'extension-output.txt'), 'utf8'), 'preserve me');
+  const persisted = JSON.parse(await readFile(join(root, 'workspace.json'), 'utf8'));
+  assert.equal(persisted.cwd, initial, 'failed activation does not replace startup restore target');
+  assert.ok(persisted.conversationWorkspaces.includes(failedDirectory), 'files from failed extensions remain registered and recoverable');
 });

@@ -1,0 +1,65 @@
+.pd-extension-notifications {
+	position: relative;
+	width: 100%;
+	padding-bottom: var(--stack-peek);
+	pointer-events: none;
+	-webkit-app-region: no-drag;
+}
+
+.pd-extension-notice {
+	position: relative;
+	display: flex;
+	align-items: start;
+	gap: 10px;
+	min-height: 44px;
+	max-height: min(320px, calc(100dvh - 112px));
+	padding: 12px 14px;
+	border: 1px solid var(--pd-border);
+	border-left: 3px solid var(--pd-brand);
+	border-radius: 12px;
+	background: var(--pd-surface);
+	color: var(--pd-text);
+	box-shadow: 0 8px 24px #0003;
+	font-size: var(--pd-font-caption);
+	line-height: 1.5;
+	overflow: auto;
+	overflow-wrap: anywhere;
+	pointer-events: auto;
+	transform-origin: top center;
+	transition: transform 180ms ease, opacity 180ms ease;
+}
+
+.pd-extension-notifications:not(.is-expanded) .pd-extension-notice:not(:first-child) {
+	position: absolute;
+	inset: 0 0 var(--stack-peek);
+	transform: translateY(calc(var(--notice-depth) * 12px)) scaleX(calc(1 - var(--notice-depth) * .045));
+	overflow: hidden;
+}
+
+.pd-extension-notifications:not(.is-expanded) .pd-extension-notice:not(:first-child) > * { opacity: 0; }
+.pd-extension-notifications:not(.is-expanded) .pd-extension-notice:nth-child(n + 4) { visibility: hidden; pointer-events: none; }
+.pd-extension-notice.is-warning { border-left-color: var(--pd-warning); }
+.pd-extension-notice.is-error { border-left-color: var(--pd-danger); }
+.pd-extension-notice > div { flex: 1; min-width: 0; }
+.pd-extension-notice strong { display: block; font-weight: 600; }
+.pd-extension-notice p { margin: 4px 0 0; color: var(--pd-text-subtle); white-space: pre-wrap; }
+.pd-extension-notice button { display: grid; flex: 0 0 auto; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
+.pd-extension-notice button:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-extension-notice button:focus-visible, .pd-extension-notifications:focus-visible { outline: 2px solid var(--pd-brand); outline-offset: 2px; }
+
+.pd-extension-notifications.is-expanded {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-height: calc(100dvh - 82px);
+	padding: 2px 6px 16px;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	pointer-events: auto;
+}
+
+.pd-extension-notifications.is-expanded .pd-extension-notice { flex: 0 0 auto; }
+
+@media (prefers-reduced-motion: reduce) {
+	.pd-extension-notice { transition: none; }
+}

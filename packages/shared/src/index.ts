@@ -1,6 +1,8 @@
 import type { ManagementFeaturesBridge } from './managementFeatures';
 import type { PluginUpdatesBridge } from './pluginUpdates';
 import type { McpFeaturesBridge } from './mcpFeatures';
+import type { ResultFilesBridge } from './resultFiles';
+export * from './resultFiles.ts';
 export * from './pluginUpdates.ts';
 export * from './mcpFeatures.ts';
 export * from './managementFeatures.ts';
@@ -63,6 +65,8 @@ export const IPC_CHANNELS = {
   agentSearchSessions: 'agent:search-sessions',
   agentSwitchSession: 'agent:switch-session',
   agentListWorkspaces: 'agent:list-workspaces',
+  workspaceListConversations: 'workspace:list-conversations',
+  conversationStoragePick: 'conversation-storage:pick',
   agentUpdateSessionMeta: 'agent:update-session-meta',
   sessionDelete: 'session:delete',
   appCommand: 'app:command',
@@ -91,6 +95,8 @@ export const IPC_CHANNELS = {
   agentListExtensions: 'agent:list-extensions',
   agentSetExtensionEnabled: 'agent:set-extension-enabled',
   workspacePick: 'workspace:pick',
+  workspaceProjectsDirectory: 'workspace:projects-directory',
+  workspaceCreateProject: 'workspace:create-project',
   workspaceAddDropped: 'workspace:add-dropped',
   workspaceSwitch: 'workspace:switch',
   workspaceDefault: 'workspace:default',
@@ -101,6 +107,9 @@ export const IPC_CHANNELS = {
   workspaceListEntries: 'workspace:list-entries',
   workspaceSearchFiles: 'workspace:search-files',
   workspaceReadFile: 'workspace:read-file',
+  resultFileOpen: 'result-file:open',
+  resultFileReveal: 'result-file:reveal',
+  resultFilePreview: 'result-file:preview',
   contextRead: 'context:read',
   workspaceGitStatus: 'workspace:git-status',
   workspaceGitDiff: 'workspace:git-diff',
@@ -380,7 +389,7 @@ export interface UiMessage {
   /** Only provider-exposed thinking text; signatures and redacted blocks stay in the SDK. */
   thinking?: string;
   thinkingStatus?: UiThinkingStatus;
-  /** True when exposed thinking exceeded the renderer payload limit. */
+  /** True when older exposed thinking was omitted to keep the latest text within the renderer payload limit. */
   thinkingTruncated?: boolean;
   status: 'streaming' | 'done' | 'error';
   errorMessage?: string;
@@ -579,6 +588,14 @@ export interface UiSessionStats {
   totalMessages: number;
   tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
   cost: number;
+  /** Observed task durations on the full selected branch; absent for older hosts. */
+  timing?: {
+    sampledAt: number;
+    /** Sum of task time, excluding idle gaps; null if any history lacks timing. */
+    durationMs: number | null;
+    running: boolean;
+    latestRun: { id: string; durationMs: number | null; outputTokens: number; running: boolean } | null;
+  };
 }
 
 /** One node of the session entry tree; branches appear as children. */
@@ -712,6 +729,7 @@ export interface AppInfo {
   nodeVersion: string;
   electronVersion: string;
   platform: string;
+  windowMode?: 'full' | 'pai';
 }
 
 // 'available' = an update was found but nothing downloads until the user consents.
@@ -769,12 +787,13 @@ export interface UiSaveInstructionResult {
 export interface UiDesktopSettings {
   notificationsEnabled: boolean;
   closeBehavior: 'tray' | 'quit';
+  conversationStorageDirectory: string;
 }
 
 /** Main → renderer commands (tray menu, notification clicks). */
 export type UiAppCommand = { type: 'new-session' } | { type: 'switch-session'; path: string; cwd?: string };
 
-export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge {
+export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge, ResultFilesBridge {
   getPersonalization(): Promise<UiInstructionDocument[]>;
   saveInstruction(request: UiSaveInstructionRequest): Promise<UiSaveInstructionResult>;
   getPluginCatalog(cwd: string): Promise<UiPluginCatalog>;
@@ -811,6 +830,12 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   closeWindow(): Promise<void>;
   /** Opens a native directory picker. Returns null when cancelled. */
   pickWorkspace(): Promise<string | null>;
+  /** Picks a standalone-conversation storage folder without registering a project. */
+  pickConversationStorageDirectory(): Promise<string | null>;
+  /** Default parent directory for projects created by name. */
+  getProjectsDirectory(): Promise<string>;
+  /** Creates and registers a project directory without switching conversations. */
+  createProject(name: string): Promise<string>;
   /** Accepts native File objects; registers their directories without switching conversations. Regular files are ignored. */
   addDroppedWorkspaces(files: unknown[]): Promise<string[]>;
   openWorkspaceFolder(cwd: string): Promise<void>;
@@ -851,6 +876,8 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   /** (Re-)creates the agent session bound to a working directory. */
   initAgent(cwd: string): Promise<void>;
   listWorkspaces(): Promise<string[]>;
+  /** Internal conversation folders and storage roots, excluded from visible projects. */
+  listConversationWorkspaces(): Promise<string[]>;
   /** Restores the workspace's last session, or opens a fresh conversation when requested. */
   switchWorkspace(cwd: string, options?: { fresh?: boolean }): Promise<void>;
   getDefaultWorkspace(): Promise<string>;
@@ -905,7 +932,8 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   /** Edit, remove, or steer-early a queued instruction while the agent is busy (Codex-style queue management). */
   updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void>;
   abort(): Promise<void>;
-  newSession(): Promise<void>;
+  /** Omitted cwd creates an independent folder under the configured storage directory. */
+  newSession(options?: { cwd?: string }): Promise<void>;
   onExtensionDialog(listener: (request: UiExtensionDialogRequest) => void): () => void;
   onExtensionDialogClosed(listener: (id: string) => void): () => void;
   getPendingExtensionDialogs(): Promise<UiExtensionDialogRequest[]>;

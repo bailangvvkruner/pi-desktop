@@ -52,6 +52,24 @@ test('operation errors outlive their menu and retry the captured target with ded
   assert.equal(operationFeedback.getSnapshot().some(item => item.id === 'slow'), false);
 });
 
+test('quiet operations suppress pending notices while preserving failures, retries, and deduplication', async () => {
+  let finish, fail;
+  const operation = { id: 'quiet-session', title: 'New session', showPending: false, run: () => new Promise((resolve, reject) => { finish = resolve; fail = reject; }) };
+  const request = runWithFeedback(operation);
+  assert.equal(operationFeedback.getSnapshot().some(item => item.id === operation.id), false);
+  assert.equal(await runWithFeedback(operation), false);
+  fail(new Error('Cannot create conversation'));
+  assert.equal(await request, false);
+  const notice = operationFeedback.getSnapshot().find(item => item.id === operation.id);
+  assert.equal(notice.kind, 'error');
+  assert.equal(notice.detail, 'Cannot create conversation');
+  const retry = notice.retry();
+  assert.equal(operationFeedback.getSnapshot().some(item => item.id === operation.id), false);
+  finish();
+  await retry;
+  assert.equal(operationFeedback.getSnapshot().some(item => item.id === operation.id), false);
+});
+
 test('model image compatibility reflects catalog metadata and preserves unknown capability', () => {
   assert.equal(imageCapability({ input: ['text', 'image'] }), 'supported');
   assert.equal(imageCapability({ input: ['text'] }), 'unsupported');

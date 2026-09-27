@@ -1,0 +1,4 @@
+.pd-pai-controls { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
+.pd-app-shell.is-pai .pd-chat-header { padding-left: 12px; }
+.pd-app-shell.is-pai.is-frameless .pd-chat-header { padding-right: 116px; }
+.pd-app-shell.is-pai .pd-chat-header-actions { min-width: 0; }

@@ -64,12 +64,18 @@ export function sidebarWorkspaceKey(path: string): string {
 }
 
 /** The default working directory holds conversations that have no selected project. */
-export function sidebarProjectPaths(workspaces: readonly string[], defaultWorkspace: string | null): string[] {
+export function isConversationWorkspace(workspace: string, conversationWorkspaces: readonly string[]): boolean {
+  const key = sidebarWorkspaceKey(workspace);
+  return conversationWorkspaces.some(path => sidebarWorkspaceKey(path) === key);
+}
+
+export function sidebarProjectPaths(workspaces: readonly string[], defaultWorkspace: string | null, conversationWorkspaces: readonly string[] = []): string[] {
   const defaultKey = defaultWorkspace === null ? null : sidebarWorkspaceKey(defaultWorkspace);
+  const hidden = new Set(conversationWorkspaces.map(sidebarWorkspaceKey));
   const seen = new Set<string>();
   return workspaces.filter((workspace) => {
     const key = sidebarWorkspaceKey(workspace);
-    if (key === defaultKey || seen.has(key)) return false;
+    if (key === defaultKey || hidden.has(key) || seen.has(key)) return false;
     seen.add(key);
     return true;
   });

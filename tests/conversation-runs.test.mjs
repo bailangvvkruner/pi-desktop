@@ -50,6 +50,10 @@ test('real SDK preserves whole runs across token waits, tool turns, follow-up co
   assert.equal(events.find(event => event.type === 'assistant-start').runId, finished.runs[1].id, 'background assistant events do not leak into the foreground');
   assert.equal(events.find(event => event.type === 'user-message').runId, runId);
   assert.deepEqual(f.service.getHistoryPage(0, 1).runs, [finished.runs[0]]);
+  const stats = f.service.getSessionStats();
+  assert.equal(stats.timing.durationMs, finished.runs.reduce((sum, run) => sum + run.finishedAt - run.startedAt, 0));
+  assert.equal(stats.timing.latestRun.id, finished.runs[1].id);
+  assert.equal(stats.timing.latestRun.outputTokens, 1, 'latest task speed excludes previous tool turns');
   assert.doesNotMatch(JSON.stringify(f.service.getSessionTree()), /pi-desktop:conversation-run/);
   assert.equal((await readFile(path, 'utf8')).split('\n').filter(line => line.includes('pi-desktop:conversation-run-v1')).length, 4);
   await f.service.dispose(); f.service = new f.AgentService(); await f.service.init({ cwd: f.cwd, sessionPath: path });

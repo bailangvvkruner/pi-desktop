@@ -23,9 +23,44 @@ test('compact activity components preserve accessible details and support a pare
   try {
     const { ToolActivityItem, ToolActivityPanel } = await server.ssrLoadModule('/src/components/ToolActivity.tsx');
     const { ThinkingActivity } = await server.ssrLoadModule('/src/components/ThinkingActivity.tsx');
+    const { ConversationTurn } = await server.ssrLoadModule('/src/components/ConversationTurn.tsx');
+    const { buildConversationTimeline } = await server.ssrLoadModule('/src/conversationTimeline.ts');
     const { createDisclosureStore } = await server.ssrLoadModule('/src/conversationDisclosure.tsx');
     const render = (Component, props) => renderToStaticMarkup(createElement(Component, props));
     const read = { id: 'read-1', order: 1, tool: 'read', title: 'read(src/main.ts)', status: 'done', detail: 'retained file contents', files: ['src/main.ts'] };
+
+    await context.test('running turns render thinking and prose together until the whole run settles', () => {
+      const run = { id: 'live', status: 'running', startedAt: 1000, finishedAt: null };
+      const messages = [{ id: 'live-a', order: 1, runId: 'live', role: 'assistant', text: 'Checking the source.', thinking: 'Inspect lifecycle boundaries.', thinkingStatus: 'done', status: 'streaming' }];
+      const renderTurn = (currentMessages, currentRun, activities = [], legacyRunning = false) => render(ConversationTurn, {
+        entry: buildConversationTimeline(currentMessages, activities, currentRun ? [currentRun] : [])[0],
+        messages: currentMessages, activities, run: currentRun, legacyRunning,
+        highlightedId: null, findIds: new Set(), query: '', reveal: null, canRegenerateId: null,
+      });
+      const assertLiveProcess = html => {
+        assert.match(html, /pd-turn-summary[^>]*aria-expanded="true"/);
+        assert.match(html, /pd-turn-process/);
+        assert.match(html, /Inspect lifecycle boundaries\./);
+        assert.match(html, /is-process-message[^>]*data-message-id="live-a"/);
+        assert.match(html, /Checking the source\./);
+        assert.doesNotMatch(html, /pd-turn-answer/);
+      };
+      assertLiveProcess(renderTurn(messages, run));
+      const ended = [{ ...messages[0], status: 'done' }];
+      assertLiveProcess(renderTurn(ended, run));
+      assertLiveProcess(renderTurn(ended, run, [{ ...read, order: 2, runId: run.id }]));
+      assertLiveProcess(renderTurn(messages.map(({ runId, ...message }) => message), undefined, [], true));
+      const finalMessages = [...ended, { id: 'live-final', order: 3, runId: run.id, role: 'assistant', text: 'Final result.', status: 'done' }];
+      assertLiveProcess(renderTurn(finalMessages, run));
+      for (const status of ['completed', 'cancelled', 'failed', 'interrupted']) {
+        const settled = renderTurn(finalMessages, { ...run, status, finishedAt: 3000 });
+        assert.match(settled, /pd-turn-summary[^>]*aria-expanded="false"/);
+        assert.match(settled, /pd-turn-answer[\s\S]*data-message-id="live-final"[\s\S]*Final result\./);
+      }
+      const directReply = renderTurn([{ id: 'plain', order: 0, role: 'assistant', text: 'Direct reply.', status: 'streaming' }], undefined, [], true);
+      assert.match(directReply, /pd-turn-process[\s\S]*Direct reply\./);
+      assert.doesNotMatch(directReply, /pd-turn-answer/);
+    });
 
     await context.test('conversation choices survive row subscriptions while phases, scopes and unrelated rows stay isolated', () => {
       const store = createDisclosureStore();

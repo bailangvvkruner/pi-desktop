@@ -11,8 +11,9 @@ function installComposerProjectsFixture() {
     firstMessage: '已有历史：' + name, modified: '2026-09-27T00:00:00Z', messageCount: 2,
   }]));
   const state = window.__composerProjectsReview = {
-    paths, history, navigation: [], completed: 0, newSessions: 0, picks: [], nextPick: null,
-    drafts: new Map(), draftReads: [], inputEvents: [],
+    paths, history, navigation: [], completed: 0, newSessions: 0, picks: [], nextPick: null, conversationWorkspaces: [],
+    drafts: new Map(), draftReads: [], inputEvents: [], submitted: [],
+    deferNextNavigation: false, pendingNavigation: null,
   };
   const mock = (name, implementation) => {
     bridge[name] = async (...args) => {
@@ -21,7 +22,7 @@ function installComposerProjectsFixture() {
     };
   };
   state.publish = (cwd, fresh) => {
-    if (!history[cwd]) throw new Error('Unknown fixture workspace: ' + cwd);
+    if (!fresh && !history[cwd]) throw new Error('Unknown fixture workspace: ' + cwd);
     const row = history[cwd], id = fresh ? 'new-' + (++state.newSessions) : row.id;
     const messages = fresh ? [] : [
       { id: row.id + '-user', order: 0, role: 'user', text: row.firstMessage, status: 'done' },
@@ -36,9 +37,18 @@ function installComposerProjectsFixture() {
     fixture.emitAgent({ ...clone(fixture.snapshot), type: 'ready' });
     fixture.emitAgent({ type: 'status', status: 'idle' });
   };
-  const navigate = async (kind, cwd, fresh) => {
-    const call = { kind, cwd, fresh: Boolean(fresh) };
+  const navigate = async (kind, cwd, fresh, options) => {
+    const call = { kind, cwd, fresh: Boolean(fresh), options: clone(options) };
     state.navigation.push(call);
+    if (state.deferNextNavigation) {
+      state.deferNextNavigation = false;
+      try {
+        await new Promise((resolve, reject) => { state.pendingNavigation = { resolve, reject }; });
+      } catch (error) {
+        call.error = error.message;
+        throw error;
+      } finally { state.pendingNavigation = null; }
+    }
     // Omitting fresh really restores nonempty history, reproducing the reported regression.
     state.publish(cwd, Boolean(fresh));
     await Promise.resolve();
@@ -46,12 +56,21 @@ function installComposerProjectsFixture() {
     state.completed++;
   };
   mock('getDefaultWorkspace', () => paths.home);
-  mock('listWorkspaces', () => Object.values(paths));
+  mock('listWorkspaces', () => [...Object.values(paths), ...state.conversationWorkspaces]);
+  mock('listConversationWorkspaces', () => [paths.home, ...state.conversationWorkspaces]);
   mock('listSessions', cwd => history[cwd] ? [clone(history[cwd])] : []);
   mock('listSessionGroups', () => []);
   mock('listPinnedWorkspaces', () => []);
   mock('switchWorkspace', (cwd, options) => navigate('workspace', cwd, options?.fresh));
-  mock('newSession', () => navigate('new-session', fixture.snapshot.cwd, true));
+  mock('newSession', options => {
+    const cwd = options?.cwd ?? paths.home + '/conversation-' + (state.conversationWorkspaces.length + 1);
+    if (!options?.cwd) state.conversationWorkspaces.push(cwd);
+    return navigate('new-session', cwd, true, options);
+  });
+  mock('submitInput', request => {
+    state.submitted.push({ ...clone(request), cwd: fixture.snapshot.cwd });
+    return { id: request.id, state: 'accepted' };
+  });
   mock('pickWorkspace', () => {
     const picked = state.nextPick;
     state.nextPick = null;
@@ -81,11 +100,13 @@ function installComposerProjectsFixture() {
 export default async function composerProjectsScenarios(review) {
   const state = 'window.__composerProjectsReview', snapshot = 'window.__modelReview.snapshot';
   const input = '.pd-composer-shell > textarea', chip = '.pd-context-chip[aria-label="切换项目"]';
+  const clear = '.pd-context-project-clear[aria-label="不使用项目"]';
   const menu = '.pd-sidebar-popover[role="menu"]';
   const q = JSON.stringify;
   const blank = `Boolean(document.querySelector('.pd-main.is-empty .pd-empty-state')) && !document.querySelector('.pd-message-row') && !document.querySelector('.pd-session-loading')`;
   async function readyBlank(name, completed, message) {
-    await review.waitFor(`${state}.completed === ${completed} && ${snapshot}.cwd === ${state}.paths[${q(name)}] && ${blank} && document.querySelector(${q(chip)})?.textContent.trim() === ${q(name)} && document.querySelector(${q(input)})?.disabled === false && ${state}.draftReads.includes(JSON.stringify([${snapshot}.cwd, ${snapshot}.sessionPath]))`);
+    const target = name === 'standalone' ? `${state}.conversationWorkspaces.at(-1)` : `${state}.paths[${q(name)}]`;
+    await review.waitFor(`${state}.completed === ${completed} && ${snapshot}.cwd === ${target} && ${blank} && document.querySelector(${q(chip)})?.textContent.trim() === ${q(name === 'standalone' ? '选择项目' : name)} && document.querySelector(${q(input)})?.disabled === false && ${state}.draftReads.includes(JSON.stringify([${snapshot}.cwd, ${snapshot}.sessionPath]))`);
     await review.settle();
     await review.assert(`${blank} && ${snapshot}.messages.length === 0 && ${snapshot}.sessionId.startsWith('new-') && document.querySelector(${q(input)}).value === ''`, message);
   }
@@ -101,19 +122,40 @@ export default async function composerProjectsScenarios(review) {
   await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-new-session"))');
   await review.viewport(1440, 1000);
   await review.reducedMotion(true);
-  await review.evaluate(`(${installComposerProjectsFixture.toString()})()`);
+  await review.reloadWithFixture(`(${installComposerProjectsFixture.toString()})()`);
   await review.waitFor(`document.querySelector('.pd-message-list')?.textContent.includes('已有历史：project-a') && !document.querySelector('.pd-new-session').disabled`);
 
-  await review.click('.pd-new-session');
-  await readyBlank('project-a', 1, 'New conversation clears the previously visible project history');
+  await review.click('[data-mode="project"]');
+  await review.click('.pd-sidebar-group[data-project-path="C:/composer-projects/project-a"] .pd-group-more:not([aria-haspopup])');
+  await readyBlank('project-a', 1, 'Project New conversation clears the previously visible project history');
+  await review.assert(`${state}.navigation[0].options.cwd === ${state}.paths['project-a']`, 'Project-level creation passes its explicit directory to newSession');
+  await review.waitFor(`Boolean(document.querySelector(${q(clear)}))`);
+  await review.assert(`(() => { const clear = document.querySelector(${q(clear)}), chip = document.querySelector(${q(chip)}); return !clear.disabled && clear.getBoundingClientRect().right <= chip.getBoundingClientRect().left && Boolean(clear.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING); })()`, 'The direct no-project button is visible to the left of the project selector');
   await openMenu();
-  await review.clickText(menu + ' [role="menuitem"]', '不使用项目');
-  await readyBlank('home', 2, 'Removing the project keeps a new blank conversation even when home has an existing conversation');
-  await review.assert(`${state}.navigation[1].fresh && ${snapshot}.sessionId !== ${state}.history[${state}.paths.home].id`, 'The home selection requests a fresh session instead of restoring the home history');
+  await review.assert(`[...document.querySelectorAll(${q(menu + ' [role="menuitem"]')})].some(item => item.textContent.trim() === '不使用项目')`, 'The project menu retains its no-project action alongside the direct removal button');
+  await review.key('Escape');
+  const retryDraft = '退出项目失败时，保留这段尚未发送的内容。';
+  await typeDraft(retryDraft, 'The project conversation holds an editable draft before removing its project');
+  await review.evaluate(`${state}.beforeFailure = { cwd: ${snapshot}.cwd, sessionId: ${snapshot}.sessionId, sessionPath: ${snapshot}.sessionPath }; ${state}.deferNextNavigation = true`);
+  await review.click(clear);
+  await review.waitFor(`Boolean(${state}.pendingNavigation) && document.querySelector(${q(clear)})?.disabled === true && document.querySelector(${q(chip)})?.disabled === true && document.querySelector(${q(input)})?.disabled === true`);
+  await review.key('Enter');
+  await review.assert(`${state}.navigation.length === 2 && ${state}.completed === 1 && ${state}.submitted.length === 0 && ${snapshot}.sessionId === ${state}.beforeFailure.sessionId && document.querySelector(${q(input)}).value === ${q(retryDraft)}`, 'Pending removal disables project actions and input, prevents repeated navigation, and retains the current draft');
+  await review.evaluate(`${state}.pendingNavigation.reject(new Error('模拟项目切换失败'))`);
+  await review.waitFor(`document.querySelector('.pd-context-chip-error')?.textContent.includes('模拟项目切换失败') && document.querySelector(${q(clear)})?.disabled === false && document.querySelector(${q(input)})?.disabled === false`);
+  await review.assert(`${snapshot}.cwd === ${state}.beforeFailure.cwd && ${snapshot}.sessionId === ${state}.beforeFailure.sessionId && ${snapshot}.sessionPath === ${state}.beforeFailure.sessionPath && !document.querySelector('.pd-message-row') && document.querySelector(${q(input)}).value === ${q(retryDraft)} && !document.querySelector('.pd-send-button').disabled`, 'A failed removal keeps the project, session, and unsent draft and releases the controls for retry');
+  await review.screenshot('composer-projects-detach-failed-retry');
+  await review.click(clear);
+  await readyBlank('standalone', 2, 'Removing the project creates a blank conversation in a new independent folder despite existing root history');
+  await review.assert(`${state}.navigation.at(-1).kind === 'new-session' && !${state}.navigation.at(-1).options?.cwd && ${snapshot}.cwd !== ${state}.paths.home && ${snapshot}.sessionId !== ${state}.history[${state}.paths.home].id && !document.querySelector(${q(clear)}) && document.querySelectorAll('.pd-composer-context .pd-context-chip').length === 1`, 'The direct removal opens a fresh independent session, hides the removal and branch buttons, and displays only the project selector');
   await typeDraft('不使用项目后，可以正常输入新对话。', 'The detached new conversation accepts typing and enables Send');
   await review.screenshot('composer-projects-detached-new-conversation');
+  await review.click('.pd-send-button');
+  await review.waitFor(`${state}.submitted.length === 1 && document.querySelector(${q(input)})?.value === ''`);
+  await review.assert(`${state}.submitted[0].cwd === ${state}.conversationWorkspaces.at(-1) && ${state}.submitted[0].sessionId === ${snapshot}.sessionId && ${state}.submitted[0].text === '不使用项目后，可以正常输入新对话。'`, 'Sending without a project submits the text to the fresh independent conversation');
 
   await openMenu();
+  await review.assert(`[...document.querySelectorAll(${q(menu + ' [role="menuitemradio"]')})].length === 2 && ![...document.querySelectorAll(${q(menu + ' .pd-context-menu-main')})].some(item => item.textContent.trim() === 'home' || item.textContent.includes('conversation-'))`, 'The refreshed menu lists only explicit projects without exposing the storage root or automatic conversation directories');
   await review.clickText(menu + ' .pd-context-menu-main', 'project-b');
   await readyBlank('project-b', 3, 'Selecting another existing project keeps the new-conversation page');
   await typeDraft('切换项目后仍可正常新建对话。', 'An existing project with history still provides an editable fresh conversation');
@@ -139,6 +181,7 @@ export default async function composerProjectsScenarios(review) {
   await review.assert(`${state}.inputEvents.length >= 4 && ${state}.inputEvents.every(event => event.trusted)`, 'All composer edits were produced by trusted keyboard input');
   await review.record('composer-project-navigation', `${state}.navigation`);
   await review.record('composer-project-folder-results', `${state}.picks`);
+  await review.record('composer-project-submitted-inputs', `${state}.submitted`);
   await review.screenshot('composer-projects-folder-cancel-preserves-draft');
 }
 
@@ -148,6 +191,7 @@ if (process.argv.includes('--check')) {
   await composerProjectsScenarios({
     evaluate: async expression => compile(expression), waitFor: async expression => compile(expression),
     assert: async expression => compile(expression), record: async (_name, expression) => compile(expression),
+    reloadWithFixture: async expression => compile(expression),
     click: async () => {}, clickText: async () => {}, fill: async () => {}, key: async () => {},
     settle: async () => {}, screenshot: async () => {}, viewport: async () => {}, reducedMotion: async () => {},
   });

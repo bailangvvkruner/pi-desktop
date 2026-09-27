@@ -88,6 +88,7 @@ import { createPersonalizationService } from './personalization.ts';
 import { AttachmentStore } from './attachmentStore.ts';
 import { DurableInputQueue } from './inputQueue.ts';
 import { ConversationRunTracker, isConversationRunEntry, latestUnassociatedRunId, readConversationRuns, selectConversationRuns } from './conversationRuns.ts';
+import { sessionTiming } from './sessionMetrics.ts';
 import { requireInputQueueScope, type UiInputQueue, type UiInputQueueScope, type UiInputQueueMutation, type UiInputReceipt, type UiSubmitInput } from '../../shared/src/inputFeatures.ts';
 import type { ModelTestRequest, ProjectDefaultsWrite } from '../../shared/src/managementFeatures.ts';
 import { ModelTestService } from './modelTest.ts';
@@ -361,6 +362,7 @@ class SingleAgentService {
 				cacheRead: stats.tokens.cacheRead, cacheWrite: stats.tokens.cacheWrite, total: stats.tokens.total,
 			},
 			cost: stats.cost,
+			timing: sessionTiming(session.sessionManager.getBranch(), this.conversationRuns?.active ?? null),
 		};
 	}
 
@@ -2700,16 +2702,16 @@ function assistantThinking(message: MessageLike, thinkingStatus: UiThinkingStatu
 		if (part?.type !== 'thinking' || part.redacted || typeof part.thinking !== 'string') continue;
 		found = true;
 		const separator = thinking && part.thinking ? '\n\n' : '';
-		const available = MAX_THINKING_CHARS - thinking.length;
-		if (separator.length + part.thinking.length > available) {
-			const prefix = (separator + part.thinking.slice(0, available)).slice(0, available);
-			thinking += prefix;
-			// Avoid leaving a cut UTF-16 surrogate in IPC text.
-			if (/[\uD800-\uDBFF]$/.test(thinking)) thinking = thinking.slice(0, -1);
+		if (thinking.length + separator.length + part.thinking.length > MAX_THINKING_CHARS) {
+			// Keep the latest exposed text so a long-running stream keeps moving.
+			// Slice large blocks before joining to keep the projection allocation bounded.
+			thinking = part.thinking.length >= MAX_THINKING_CHARS
+				? part.thinking.slice(-MAX_THINKING_CHARS)
+				: (thinking + separator + part.thinking).slice(-MAX_THINKING_CHARS);
+			// The retained suffix must not start halfway through a UTF-16 pair.
+			if (/^[\uDC00-\uDFFF]/.test(thinking)) thinking = thinking.slice(1);
 			thinkingTruncated = true;
-			break;
-		}
-		thinking += separator + part.thinking;
+		} else thinking += separator + part.thinking;
 	}
 	return found ? { thinking, thinkingStatus, thinkingTruncated } : undefined;
 }

@@ -2,7 +2,7 @@ import type { Locale } from './i18n';
 
 const en = {
 	running: 'Running', waiting: 'Needs attention', 'waiting-input': 'Waiting for input', 'waiting-approval': 'Waiting for approval', failed: 'Failed', unread: 'Unread',
-	refreshing: 'Refreshing…', loadFailed: 'Could not load conversations', retry: 'Retry',
+	loadFailed: 'Could not load conversations', retry: 'Retry',
 	trashTitle: 'Move conversation to trash?', trashHint: 'The conversation will be moved to the app’s trash. Its project files will not be deleted.',
 	trash: 'Move to trash', deleting: 'Moving…', deleted: 'Conversation moved to trash', cancel: 'Cancel',
 	latestRun: 'Latest run', neverRun: 'No runs yet', resultFilter: 'Run result', allResults: 'All results',
@@ -12,7 +12,7 @@ const en = {
 };
 const zh: typeof en = {
 	running: '运行中', waiting: '待处理', 'waiting-input': '等待输入', 'waiting-approval': '等待授权', failed: '失败', unread: '未读',
-	refreshing: '正在刷新…', loadFailed: '无法加载会话', retry: '重试',
+	loadFailed: '无法加载会话', retry: '重试',
 	trashTitle: '将会话移入回收站？', trashHint: '会话将移入应用回收站，不会删除项目文件。',
 	trash: '移入回收站', deleting: '正在移动…', deleted: '会话已移入回收站', cancel: '取消',
 	latestRun: '最近运行', neverRun: '尚未运行', resultFilter: '运行结果', allResults: '全部结果',

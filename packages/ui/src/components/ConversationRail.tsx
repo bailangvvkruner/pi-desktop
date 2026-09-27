@@ -173,7 +173,7 @@ export const ConversationRail = memo(function ConversationRail({ messages, getSc
 	useEffect(() => {
 		if (itemIds.length < MIN_ITEMS) return;
 		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.defaultPrevented || event.isComposing) return;
+			if (event.defaultPrevented || event.isComposing || document.querySelector('[role="dialog"][aria-modal="true"], dialog[open]')) return;
 			const isPrev = matchesShortcut(event, bindingKeysFor('previousTurn'));
 			const isNext = matchesShortcut(event, bindingKeysFor('nextTurn'));
 			if (!isPrev && !isNext) return;

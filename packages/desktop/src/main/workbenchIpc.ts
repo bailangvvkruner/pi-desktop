@@ -2,9 +2,23 @@ import { dialog, shell } from 'electron';
 import { IPC_CHANNELS } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
 import { WorkbenchService } from './workbenchService';
+import { ResultFileService } from './resultFileService';
 import { broadcastToRenderers, handleRendererInvoke, requireRendererSender } from './rendererIpc';
 
 export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchService {
+	const resultFiles = new ResultFileService(getWorkspace);
+	handleRendererInvoke(IPC_CHANNELS.resultFileOpen, (event, target: unknown) => resultFiles.openResultFile(target, (path) => {
+		requireRendererSender(event);
+		return shell.openPath(path);
+	}));
+	handleRendererInvoke(IPC_CHANNELS.resultFileReveal, (event, target: unknown) => resultFiles.revealResultFile(target, (path) => {
+		requireRendererSender(event);
+		shell.showItemInFolder(path);
+	}));
+	handleRendererInvoke(IPC_CHANNELS.resultFilePreview, (event, target: unknown) => resultFiles.previewResultFile(target).then(preview => {
+		requireRendererSender(event);
+		return preview;
+	}));
 	const service = new WorkbenchService(getWorkspace, (event) => {
 		broadcastToRenderers(IPC_CHANNELS.workspaceCommandEvent, event);
 	});

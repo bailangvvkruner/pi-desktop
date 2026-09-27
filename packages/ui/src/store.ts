@@ -56,6 +56,9 @@ interface ChatState {
 	settingsError: string | null;
 	cwd: string;
 	workspaces: string[];
+	/** Internal conversation folders remain searchable without becoming projects. */
+	conversationWorkspaces: string[];
+	defaultWorkspace: string | null;
 	sessionsByWorkspace: Record<string, UiSessionSummary[]>;
 	workspaceSessionRequests: Record<string, WorkspaceSessionRequest>;
 	sessionRuntimes: Record<string, UiSessionRuntimeState>;
@@ -88,7 +91,8 @@ interface ChatState {
 	loadOlderMessages(pageSize?: number): Promise<boolean>;
 	refreshWorkspaces(): Promise<void>;
 	refreshWorkspaceSessions(cwd: string): Promise<void>;
-	switchWorkspace(cwd: string, options?: { fresh?: boolean }): Promise<void>;
+	/** force retries a failed activation/persistence step even after the agent has emitted the target cwd. */
+	switchWorkspace(cwd: string, options?: { fresh?: boolean; force?: boolean }): Promise<void>;
 	removeWorkspace(cwd: string): Promise<void>;
 	updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
 	/** Moves a conversation to the app trash after a confirmation; active sessions switch away first (3.3). */
@@ -116,7 +120,7 @@ interface ChatState {
 	/** Edit, remove, or steer-early a queued instruction while the agent is busy (Codex-style queue management). */
 	updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void>;
 	abort(): Promise<void>;
-	newSession(): Promise<void>;
+	newSession(options?: { cwd?: string }): Promise<void>;
 	pickWorkspace(options?: { fresh?: boolean }): Promise<void>;
 }
 
@@ -199,6 +203,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	settingsError: null,
 	cwd: '',
 	workspaces: [],
+	conversationWorkspaces: [],
+	defaultWorkspace: null,
 	sessionsByWorkspace: {},
 	workspaceSessionRequests: {},
 	sessionRuntimes: {},
@@ -604,10 +610,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		const request = ++workspacesRequest;
 		const navigationRequest = get().navigationRequestId;
 		try {
-			const workspaces = await bridge.listWorkspaces();
+			const [workspaces, automaticDirectories, defaultWorkspace] = await Promise.all([
+				bridge.listWorkspaces(),
+				bridge.listConversationWorkspaces?.() ?? null,
+				bridge.getDefaultWorkspace?.() ?? null,
+			]);
+			const conversationWorkspaces = automaticDirectories ?? (defaultWorkspace ? [defaultWorkspace] : []);
 			if (get().bridge !== bridge || request !== workspacesRequest) return;
 			const current = get().cwd;
-			set({ workspaces: current && !workspaces.includes(current) ? [current, ...workspaces] : workspaces });
+			set({ workspaces: current && !workspaces.includes(current) ? [current, ...workspaces] : workspaces, conversationWorkspaces, defaultWorkspace });
 		} catch (error) {
 			if (request === workspacesRequest && currentSessionNavigation(bridge, navigationRequest)) set({ error: errorMessage(error) });
 		}
@@ -617,10 +628,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 	async switchWorkspace(cwd, options) {
 		const bridge = get().bridge;
-		if (!bridge || !cwd || (cwd === get().cwd && !get().navigationPending && !options?.fresh)) return;
+		if (!bridge || !cwd || (cwd === get().cwd && !get().navigationPending && !options?.fresh && !options?.force)) return;
 		const request = beginSessionNavigation();
 		try {
-			await bridge.switchWorkspace(cwd, options);
+			await bridge.switchWorkspace(cwd, options?.fresh === undefined ? undefined : { fresh: options.fresh });
 			if (!currentSessionNavigation(bridge, request)) return;
 			await Promise.all([get().refreshWorkspaces(), get().refreshWorkspaceSessions(cwd)]);
 		} catch (error) {
@@ -633,11 +644,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		const bridge = get().bridge;
 		if (!bridge || !cwd) return;
 		if (cwd === get().cwd) {
-			// Removing the active project first falls back to the home workspace;
-			// switchWorkspace reports its own failures and aborts the removal.
-			const home = await bridge.getDefaultWorkspace();
-			if (get().bridge !== bridge) return;
-			await get().switchWorkspace(home);
+			// Keep the next conversation separate from the project being removed.
+			await get().newSession();
 		}
 		try {
 			await bridge.removeWorkspace(cwd);
@@ -674,7 +682,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		set({ error: null });
 		try {
 			// The main process rejects deleting the open session; switch to a fresh one first.
-			if (get().sessionPath === path) await bridge.newSession();
+			if (get().sessionPath === path) await get().newSession();
 			await bridge.deleteSession(path);
 			set((state) => ({
 				sessionsByWorkspace: Object.fromEntries(Object.entries(state.sessionsByWorkspace)
@@ -973,14 +981,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		}
 	},
 
-	async newSession() {
+	async newSession(options) {
 		const bridge = get().bridge;
 		if (!bridge) return;
 		const request = beginSessionNavigation();
 		try {
-			await bridge.newSession();
+			await bridge.newSession(options);
 			if (!currentSessionNavigation(bridge, request)) return;
-			await get().refreshSessions();
+			await Promise.all([get().refreshWorkspaces(), get().refreshSessions()]);
 		} catch (error) {
 			if (currentSessionNavigation(bridge, request)) set({ error: errorMessage(error) });
 			throw error;

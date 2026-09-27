@@ -1,0 +1,60 @@
+.pd-project-create-dialog {
+  box-sizing: border-box;
+  width: min(650px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 26px;
+  overflow: auto;
+  border: 1px solid var(--pd-border-soft);
+  border-radius: 24px;
+  background: var(--pd-surface);
+  color: var(--pd-text);
+  box-shadow: var(--pd-shadow-dialog);
+  font-family: inherit;
+  font-size: var(--pd-font-base);
+  -webkit-app-region: no-drag;
+}
+.pd-project-create-dialog::backdrop { background: var(--pd-overlay); }
+.pd-project-create-dialog > form { min-width: 0; margin: 0; }
+.pd-project-create-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 18px; }
+.pd-project-create-dialog h2 { margin: 0; font-size: calc(var(--pd-font-base) + 10px); font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }
+.pd-project-create-dialog header > button { display: grid; flex: 0 0 30px; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
+.pd-project-create-dialog header > button:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-project-create-name { display: flex; align-items: center; gap: 14px; width: 100%; min-width: 0; min-height: 50px; padding: 0 16px; border: 1px solid var(--pd-border); border-radius: 13px; background: var(--pd-surface-muted); }
+.pd-project-create-name:focus-within { border-color: var(--pd-focus-border); }
+.pd-project-create-name > svg, .pd-project-create-name > span { flex: 0 0 auto; color: var(--pd-text-subtle); }
+.pd-project-create-name > span { display: flex; align-items: center; }
+.pd-project-create-name input { display: block; flex: 1; width: 100%; min-width: 0; min-height: 48px; padding: 0; border: 0; border-radius: 0; outline: 0; background: transparent; color: var(--pd-text); font: inherit; font-size: calc(var(--pd-font-base) + 2px); }
+.pd-project-create-name input::placeholder { color: var(--pd-text-subtle); }
+.pd-project-create-name input:focus-visible { outline: 0; }
+.pd-project-create-source-label { display: block; margin: 18px 0 10px; color: var(--pd-text); font-size: calc(var(--pd-font-base) + 1px); font-weight: 600; line-height: 1.5; }
+.pd-project-create-source { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-width: 0; min-height: 130px; padding: 22px 18px; border: 1px solid var(--pd-border); border-radius: 12px; }
+.pd-project-create-source-picker { position: relative; display: inline-flex; align-items: center; max-width: 100%; min-width: 0; }
+.pd-project-create-source-picker select { appearance: none; width: 100%; min-width: 0; max-width: 100%; min-height: 32px; padding: 3px 28px 3px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--pd-text-subtle); font: inherit; font-size: calc(var(--pd-font-base) + 1px); font-weight: 550; line-height: 1.5; text-overflow: ellipsis; cursor: pointer; }
+.pd-project-create-source-picker select:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-project-create-source-picker select option { background: var(--pd-surface); color: var(--pd-text); }
+.pd-project-create-source-picker > svg { position: absolute; right: 8px; flex-shrink: 0; color: var(--pd-text-subtle); pointer-events: none; }
+.pd-project-create-path, .pd-project-create-hint { max-width: 100%; margin: 0; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); line-height: 1.6; text-align: center; overflow-wrap: anywhere; }
+.pd-project-create-path { white-space: pre-wrap; }
+.pd-project-create-hint { color: var(--pd-text-weak); }
+.pd-project-create-choose, .pd-project-create-directory-error button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; max-width: 100%; min-height: 32px; padding: 4px 12px; border: 0; border-radius: 18px; background: var(--pd-surface-hover); color: var(--pd-text); font: inherit; font-size: var(--pd-font-caption); line-height: 1.5; overflow-wrap: anywhere; cursor: pointer; }
+.pd-project-create-choose > svg { flex-shrink: 0; }
+.pd-project-create-choose:hover:not(:disabled), .pd-project-create-directory-error button:hover:not(:disabled) { background: var(--pd-selected); }
+.pd-project-create-directory-error { display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 100%; color: var(--pd-danger); font-size: var(--pd-font-caption); line-height: 1.6; text-align: center; overflow-wrap: anywhere; }
+.pd-project-create-directory-error p { margin: 0; }
+.pd-project-create-error { margin: 14px 0 0; color: var(--pd-danger); font-size: var(--pd-font-caption); line-height: 1.6; overflow-wrap: anywhere; }
+.pd-project-create-dialog footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 14px; margin-top: 32px; }
+.pd-project-create-dialog footer > button { min-height: 40px; max-width: 100%; padding: 8px 20px; border: 0; border-radius: 12px; font: inherit; font-size: calc(var(--pd-font-base) + 1px); line-height: 1.5; overflow-wrap: anywhere; cursor: pointer; }
+.pd-project-create-cancel { background: transparent; color: var(--pd-text-subtle); }
+.pd-project-create-cancel:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
+.pd-project-create-submit { background: var(--pd-brand); color: var(--pd-brand-ink); }
+.pd-project-create-submit:hover:not(:disabled) { background: var(--pd-brand-hover); }
+.pd-project-create-dialog :is(button, select, input):disabled { cursor: default; opacity: .5; }
+@media (max-width: 480px) {
+  .pd-project-create-dialog { padding: 22px 18px; border-radius: 20px; }
+  .pd-project-create-dialog h2 { font-size: calc(var(--pd-font-base) + 7px); }
+  .pd-project-create-source { padding: 18px 12px; }
+  .pd-project-create-dialog footer { gap: 8px; margin-top: 26px; }
+  .pd-project-create-dialog footer > button { padding-inline: 16px; }
+}

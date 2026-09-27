@@ -11,7 +11,7 @@ const electronStub = `
     getAllWindows: () => [],
   };
   export const dialog = { showMessageBox: async (_window, options) => globalThis.__testDialog(options) };
-  export const shell = { openPath: async path => globalThis.__testOpenPath(path) };
+  export const shell = { openPath: async path => globalThis.__testOpenPath(path), showItemInFolder: path => globalThis.__testRevealPath(path) };
   export const ipcMain = { handle: (channel, handler) => globalThis.__testHandlers.set(channel, handler) };
 `;
 registerHooks({
@@ -27,6 +27,7 @@ registerHooks({
 globalThis.__testUserData = join(tmpdir(), `pi-desktop-workbench-ipc-${process.pid}-unused`);
 globalThis.__testHandlers = new Map();
 const { registerWorkbenchIpc } = await import('../packages/desktop/src/main/workbenchIpc.ts');
+const { ResultFileService } = await import('../packages/desktop/src/main/resultFileService.ts');
 const { IPC_CHANNELS } = await import('../packages/shared/src/index.ts');
 
 test('workbench command requires main-frame native confirmation and checks the workspace again', async () => {
@@ -101,5 +102,32 @@ test('every workbench IPC rejects child frames, foreign senders and destroyed wi
   for (const [channel, handler] of globalThis.__testHandlers) {
     await assert.rejects(async () => handler({ sender: webContents, senderFrame: mainFrame }), /requesting window/, channel);
   }
+  await service.dispose();
+});
+
+test('result file IPC rechecks the renderer after resolution and before native dispatch or preview delivery', async t => {
+  const mainFrame = {};
+  let destroyed = false;
+  const webContents = { mainFrame, isDestroyed: () => destroyed };
+  const win = { webContents, isDestroyed: () => destroyed };
+  globalThis.__testWindow = win;
+  const service = registerWorkbenchIpc(() => 'C:\\project');
+  const event = { sender: webContents, senderFrame: mainFrame };
+  const nativeCalls = [];
+  globalThis.__testOpenPath = async path => { nativeCalls.push(path); return ''; };
+  globalThis.__testRevealPath = path => nativeCalls.push(path);
+  for (const [channel, method] of [[IPC_CHANNELS.resultFileOpen, 'openResultFile'], [IPC_CHANNELS.resultFileReveal, 'revealResultFile'], [IPC_CHANNELS.resultFilePreview, 'previewResultFile']]) {
+    const original = ResultFileService.prototype[method];
+    t.after(() => { ResultFileService.prototype[method] = original; });
+    ResultFileService.prototype[method] = async (_target, dispatch) => {
+      await Promise.resolve();
+      destroyed = true;
+      return dispatch ? dispatch('C:\\project\\file.txt') : { kind: 'text', path: 'C:\\project\\file.txt', text: 'preview' };
+    };
+    destroyed = false;
+    await assert.rejects(globalThis.__testHandlers.get(channel)(event, { cwd: 'C:\\project', path: 'file.txt' }), /requesting window/);
+    ResultFileService.prototype[method] = original;
+  }
+  assert.deepEqual(nativeCalls, []);
   await service.dispose();
 });

@@ -6,7 +6,7 @@
 function installSidebarFolderDropFixture() {
   const fixture = window.__modelReview, bridge = window.piDesktop;
   const clone = value => structuredClone(value);
-  // Keep the bootstrap default path: the sidebar reads this once on mount.
+  // Keep the bootstrap path as historical conversations without a project.
   const paths = { home: fixture.snapshot.cwd, Alpha: 'C:\\folder-drop-review\\Alpha', Bravo: 'C:\\folder-drop-review\\Bravo', Added: 'C:\\folder-drop-review\\Added', Mixed: 'C:\\folder-drop-review\\Mixed' };
   const row = (id, cwd, name, extra = {}) => ({ id, path: cwd + '\\' + id + '.jsonl', name, firstMessage: name, modified: '2026-09-27T00:00:00Z', messageCount: 2, ...extra });
   const rows = {
@@ -17,7 +17,7 @@ function installSidebarFolderDropFixture() {
   const state = window.__sidebarFolderDropReview = {
     paths, rows, workspaces: [paths.home, paths.Alpha, paths.Bravo], pinned: [paths.Bravo],
     groups: [{ id: 'folder-review-group', name: '自定义分组', sessionPaths: [rows[paths.Alpha][0].path] }],
-    navigation: [], drops: [], reads: [], dragEvents: [], attachments: [], newSessions: 0,
+    navigation: [], drops: [], reads: [], dragEvents: [], attachments: [], newSessions: 0, conversationWorkspaces: [],
   };
   const mock = (name, implementation) => {
     bridge[name] = async (...args) => {
@@ -34,11 +34,18 @@ function installSidebarFolderDropFixture() {
     fixture.emitAgent({ type: 'status', status: 'idle' });
   };
   mock('getDefaultWorkspace', () => paths.home);
+  mock('listConversationWorkspaces', () => [paths.home, ...state.conversationWorkspaces]);
   mock('listWorkspaces', () => { state.reads.push('workspaces'); return clone(state.workspaces); });
   mock('listSessions', cwd => { state.reads.push(cwd); return clone(state.rows[cwd] ?? []); });
   mock('listSessionGroups', () => clone(state.groups));
   mock('listPinnedWorkspaces', () => clone(state.pinned));
-  mock('newSession', () => { state.navigation.push({ kind: 'new-session' }); state.publish(fixture.snapshot.cwd, true); });
+  mock('newSession', options => {
+    const cwd = options?.cwd ?? paths.home + '\\conversation-' + (state.newSessions + 1);
+    if (!options?.cwd) state.conversationWorkspaces.push(cwd);
+    if (!state.workspaces.includes(cwd)) state.workspaces.push(cwd);
+    state.navigation.push({ kind: 'new-session', cwd, options: clone(options) });
+    state.publish(cwd, true);
+  });
   mock('switchWorkspace', (cwd, options) => { state.navigation.push({ kind: 'workspace', cwd }); state.publish(cwd, options?.fresh); });
   mock('switchSession', path => { state.navigation.push({ kind: 'session', path }); });
   mock('addDroppedWorkspaces', async files => {
@@ -109,9 +116,8 @@ export default async function sidebarFolderDropScenarios(review) {
   await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
   await review.viewport(1440, 1000);
   await review.reducedMotion(true);
-  await review.evaluate(`(${installSidebarFolderDropFixture.toString()})()`);
-  await review.click('.pd-sidebar-list-heading .pd-section-actions button:first-child');
-  await review.waitFor(`!document.querySelector('.pd-sidebar-list-heading button:disabled') && document.querySelectorAll('.pd-session-item[data-session-path]').length === 4`);
+  await review.reloadWithFixture(`(${installSidebarFolderDropFixture.toString()})()`);
+  await review.waitFor(`document.querySelectorAll('.pd-session-item[data-session-path]').length === 4`);
   await review.assert(`${noMetadata} && ${uniqueRows}`, 'Conversation rows have no timestamp or project subtitle and remain unique in custom-group mode');
   await review.assert(`document.querySelector(${q('[data-section-key="group:folder-review-group"]')})?.textContent.includes('Alpha 项目对话') && document.querySelector('[data-section-key=pinned]')?.textContent.includes('没有项目的置顶对话')`, 'Custom grouping and pinned conversations remain available');
   await review.click('[data-mode="project"]');
@@ -123,6 +129,7 @@ export default async function sidebarFolderDropScenarios(review) {
 
   await review.click('.pd-new-session');
   await review.waitFor(`${state}.newSessions === 1 && Boolean(document.querySelector(${q(unassigned + ' .pd-session-row[aria-current="page"]')}))`);
+  await review.assert(`${snapshot}.cwd === ${state}.conversationWorkspaces[0] && ${snapshot}.cwd !== ${state}.paths.home && !${state}.navigation.at(-1).options?.cwd && ${projectOrder}.length === 2`, 'Global New conversation creates a separate directory without adding an explicit project');
   await review.assert(`document.querySelector(${q(unassigned + ' .pd-session-row[aria-current="page"] strong')}).textContent === document.querySelector('.pd-new-session').getAttribute('aria-label') && ${noMetadata}`, 'A new conversation without a project appears under Unassigned with no secondary metadata');
   await review.fill(composer + ' > textarea', '添加项目时保留当前对话和这段草稿。');
   await review.screenshot('sidebar-unassigned-and-compact-conversation-rows');

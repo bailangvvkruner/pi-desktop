@@ -2,10 +2,14 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
 import { managementCopy } from '../managementCopy';
+import { useChatStore } from '../store';
+import { isConversationWorkspace } from '../sidebarOrganization';
 
 export function SessionTrashDialog({ title, workspace, onDelete, onClose }: { title: string; workspace: string; onDelete(): Promise<void>; onClose(deleted: boolean): void }) {
 	const { locale } = useT();
 	const copy = managementCopy(locale);
+	const conversationWorkspaces = useChatStore(state => state.conversationWorkspaces);
+	const showWorkspace = !isConversationWorkspace(workspace, conversationWorkspaces);
 	const id = useId();
 	const dialog = useRef<HTMLDialogElement>(null);
 	const lock = useRef(false);
@@ -26,7 +30,7 @@ export function SessionTrashDialog({ title, workspace, onDelete, onClose }: { ti
 		finally { lock.current = false; if (mounted.current) setBusy(false); }
 	}
 	return createPortal(<dialog ref={dialog} className="pd-session-trash-dialog" aria-labelledby={id} aria-describedby={`${id}-hint`} onCancel={(event) => { event.preventDefault(); if (!lock.current) close(false); }}>
-		<h2 id={id}>{copy.trashTitle}</h2><strong>{title}</strong><p className="pd-session-trash-workspace">{workspace}</p><p id={`${id}-hint`}>{copy.trashHint}</p>
+		<h2 id={id}>{copy.trashTitle}</h2><strong>{title}</strong>{showWorkspace && <p className="pd-session-trash-workspace">{workspace}</p>}<p id={`${id}-hint`}>{copy.trashHint}</p>
 		{error && <p role="alert" className="pd-session-trash-error">{error}</p>}
 		<footer><button autoFocus type="button" disabled={busy} onClick={() => close(false)}>{copy.cancel}</button><button type="button" className="is-danger" disabled={busy} onClick={() => void submit()}>{busy ? copy.deleting : error ? copy.retry : copy.trash}</button></footer>
 	</dialog>, document.body);

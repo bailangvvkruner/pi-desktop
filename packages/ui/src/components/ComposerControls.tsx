@@ -293,7 +293,6 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 				{levels.map((level: UiThinkingLevel) => <button key={level} data-picker-option type="button" role="menuitemradio" aria-checked={thinking === level} disabled={!canChange} onClick={() => void choose(() => setThinkingLevel(level))}><span>{t(`composer.thinking.${level}`)}</span>{thinking === level && <span aria-hidden="true">✓</span>}</button>)}
 			</div>}
 			{error && <p className="pd-composer-picker-error" role="alert">{error}</p>}
-			{status !== 'idle' && <p className="pd-composer-picker-hint">{t('composer.pickerBusy')}</p>}
 		</div>, document.body)}
 	</div>;
 }

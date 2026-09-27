@@ -54,9 +54,9 @@ export function entryContainsMessage(entry: ConversationTimelineEntry, id: strin
   return entry.kind === 'message' ? entry.id === id : entry.entries.some(item => item.kind === 'message' && item.id === id);
 }
 
-/** A reply followed by tools is commentary. Only the last response stays outside the process. */
-export function turnAnswer(entry: ConversationTurnEntry, messages: UiMessage[]): UiMessage | undefined {
-  if (!entry.lastForRun) return undefined;
+/** Live replies stay with their thinking until the whole run identifies its final answer. */
+export function turnAnswer(entry: ConversationTurnEntry, messages: UiMessage[], running = false): UiMessage | undefined {
+  if (running || !entry.lastForRun) return undefined;
   const last = entry.entries.at(-1);
   if (last?.kind !== 'message') return undefined;
   const message = messages[last.index];

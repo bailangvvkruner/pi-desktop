@@ -27,8 +27,8 @@ function mountSearch() {
   let cursor = 0;
   const jsx = (type, props) => { const node = { type, props }; nodes.push(node); return node; };
   const context = {
-    exports: {}, navigator: { userAgent: 'Windows' }, localStorage: { getItem: () => null },
-    window: { innerWidth: 1440, matchMedia: () => ({ matches: false }) },
+    exports: {}, URLSearchParams, navigator: { userAgent: 'Windows' }, localStorage: { getItem: () => null },
+    window: { location: { search: '' }, innerWidth: 1440, matchMedia: () => ({ matches: false }) },
     require: (specifier) => {
       if (specifier === 'react') return {
         useEffect() {}, useLayoutEffect() {}, useRef: (value) => ({ current: value }),

@@ -167,8 +167,21 @@ try {
   await send('Page.addScriptToEvaluateOnNewDocument', { source: `(${installModelSettingsFixture.toString()})(${JSON.stringify({ locale: option('--locale', 'zh-CN'), theme: option('--theme', 'dark') })});` });
   await send('Page.navigate', { url: `${origin}/` });
   const mouse = { x: 0, y: 0, down: false };
+  let scenarioScript, fixtureReload = 0;
   const review = {
     evaluate, waitFor, settle,
+    // Install bridge overrides before React mounts, so setup never depends on
+    // a product refresh control to re-read workspaces, groups, and project pins.
+    reloadWithFixture: async (source) => {
+      assert(typeof source === 'string' && !mouse.down, 'Invalid fixture reload');
+      if (scenarioScript) await send('Page.removeScriptToEvaluateOnNewDocument', { identifier: scenarioScript });
+      const revision = ++fixtureReload;
+      ({ identifier: scenarioScript } = await send('Page.addScriptToEvaluateOnNewDocument', { source: `${source}\nwindow.__reviewFixtureReload = ${revision};` }));
+      await send('Page.reload');
+      await waitFor(`window.__reviewFixtureReload === ${revision} && window.__modelReview?.ready === true && Boolean(document.querySelector('.pd-sidebar-mode, .pd-app-shell.is-pai'))`);
+      await settle();
+      logs.steps.push({ fixtureReload: revision });
+    },
     rightClick: async (x, y) => {
       assert(Number.isFinite(x) && Number.isFinite(y) && !mouse.down, 'Invalid context-menu click');
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 });

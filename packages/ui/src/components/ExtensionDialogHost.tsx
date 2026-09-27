@@ -4,6 +4,7 @@ import type { UiExtensionDialogRequest } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { Icon } from './Icons';
+import { ExtensionNotifications } from './ExtensionNotifications';
 import './extensionRequests.css';
 
 const ExtensionDialogContext = createContext<ReactNode>(null);
@@ -21,24 +22,13 @@ function mergeRequests(current: UiExtensionDialogRequest[], incoming: UiExtensio
 	return [...byId.values()];
 }
 
-function NotificationToast({ request, onDismiss }: { request: UiExtensionDialogRequest; onDismiss(id: string): void }) {
-	const { t } = useT();
-	const dismiss = useRef(onDismiss);
-	dismiss.current = onDismiss;
-	useEffect(() => {
-		const timer = window.setTimeout(() => dismiss.current(request.id), request.timeout && request.timeout > 0 ? request.timeout : 6000);
-		return () => window.clearTimeout(timer);
-	}, [request.id, request.timeout]);
-	return <div className={`pd-extension-notice is-${request.notificationType ?? 'info'}`} role={request.notificationType === 'error' ? 'alert' : 'status'}><div><strong>{request.title}</strong>{request.message && <p>{request.message}</p>}</div><button type="button" onClick={() => onDismiss(request.id)} aria-label={t('extension.noticeClose', { title: request.title })}><Icon name="close" width="15" height="15" /></button></div>;
-}
-
 /** Mount inside the composer so requests take up normal layout space above it. */
 export function ExtensionDialogSlot() {
 	const card = useContext(ExtensionDialogContext);
 	return card ? <div className="pd-extension-slot">{card}</div> : null;
 }
 
-export function ExtensionDialogHost({ children, chatVisible }: { children: ReactNode; chatVisible: boolean }) {
+export function ExtensionDialogHost({ children, chatVisible, notificationTarget }: { children: ReactNode; chatVisible: boolean; notificationTarget: HTMLElement | null }) {
 	const { t } = useT();
 	const bridge = useChatStore((s) => s.bridge);
 	const [queue, setQueue] = useState({ bridge, requests: [] as UiExtensionDialogRequest[] });
@@ -237,7 +227,7 @@ export function ExtensionDialogHost({ children, chatVisible }: { children: React
 
 	return <ExtensionDialogContext.Provider value={chatVisible && !modalTarget ? card : null}>
 		{children}
-		{notices.length > 0 && createPortal(<div className="pd-extension-notifications" aria-label={t('extension.notifications')}>{notices.map((request) => <NotificationToast key={request.id} request={request} onDismiss={dismissNotice} />)}</div>, document.body)}
+		{notices.length > 0 && notificationTarget && createPortal(<ExtensionNotifications requests={notices} onDismiss={dismissNotice} />, notificationTarget)}
 		{card && modalTarget && createPortal(<div className="pd-extension-modal-slot">{card}</div>, modalTarget)}
 		{card && !modalTarget && !chatVisible && createPortal(<div className="pd-extension-fallback-slot">{card}</div>, document.body)}
 	</ExtensionDialogContext.Provider>;

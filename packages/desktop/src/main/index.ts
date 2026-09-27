@@ -7,6 +7,28 @@ import { IPC_CHANNELS } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
 import { createSplashErrorHtml, createSplashHtml } from './splash';
 import { createAppTray, destroyAppTray } from './tray';
+import { parseDesktopLaunch, rendererLaunchUrl, reservePaiProfile, validatePaiWorkspace, type DesktopLaunch, type PaiProfile } from './desktopLaunch.ts';
+
+let paiProfile: PaiProfile | null = null;
+const launch: DesktopLaunch = (() => {
+	try {
+		const parsed = parseDesktopLaunch(process.argv);
+		if (parsed.windowMode === 'full') return parsed;
+		const cwd = validatePaiWorkspace(parsed.cwd);
+		paiProfile = reservePaiProfile(app.getPath('userData'));
+		// Must be configured before app.ready creates Chromium's default session.
+		app.setPath('userData', paiProfile.userData);
+		app.setPath('sessionData', paiProfile.sessionData);
+		return { windowMode: 'pai', cwd };
+	} catch (error) {
+		dialog.showErrorBox('Pi Desktop', error instanceof Error ? error.message : String(error));
+		app.exit(1);
+		return { windowMode: 'full' };
+	}
+})();
+// Electron/agent shutdown completes before the process exits. Keep the lease
+// until then so another pai cannot open a profile still used by this instance.
+if (paiProfile) process.once('exit', () => paiProfile?.release());
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 let ipc: typeof import('./ipc') | null = null;
@@ -58,12 +80,12 @@ function showStartupError(splash: BrowserWindow, error: unknown): void {
 
 function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => void): BrowserWindow {
 	const win = new BrowserWindow({
-		width: 1280,
-		height: 820,
+		width: launch.windowMode === 'pai' ? 920 : 1280,
+		height: launch.windowMode === 'pai' ? 780 : 820,
 		minWidth: 680,
 		minHeight: 520,
 		backgroundColor: '#111216',
-		title: 'Pi Desktop',
+		title: launch.windowMode === 'pai' ? 'pai' : 'Pi Desktop',
 		// Match ZCode's Windows chrome: the renderer draws the title bar and controls.
 		// Keep the native title bar on macOS and Linux.
 		frame: process.platform !== 'win32',
@@ -157,7 +179,8 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 		closeDialogOpen = true;
 		void (async () => {
 			try {
-				const settings = ipc ? ipc.readCurrentDesktopSettings() : { notificationsEnabled: true, closeBehavior: 'tray' as const };
+				const settings = launch.windowMode === 'pai' ? { closeBehavior: 'quit' as const }
+					: ipc ? ipc.readCurrentDesktopSettings() : { notificationsEnabled: true, closeBehavior: 'tray' as const };
 				const busy = ipc ? await ipc.isAgentWorkActive() : false;
 				const english = getAppLocale() === 'en-US';
 				if (!busy) {
@@ -201,7 +224,7 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 		})();
 	};
 	win.on('close', (event) => {
-		if (process.platform !== 'win32' || readyToQuit) return;
+		if (process.platform !== 'win32' && launch.windowMode !== 'pai' || readyToQuit) return;
 		event.preventDefault();
 		requestClose();
 	});
@@ -248,8 +271,8 @@ function createWindow(onReady?: () => void, onLoadError?: (error: unknown) => vo
 
 	// electron-vite dev serves the renderer from the HMR server.
 	const load = !app.isPackaged && process.env.ELECTRON_RENDERER_URL
-		? win.loadURL(process.env.ELECTRON_RENDERER_URL)
-		: win.loadFile(join(here, '../renderer/index.html'));
+		? win.loadURL(rendererLaunchUrl(process.env.ELECTRON_RENDERER_URL, launch))
+		: win.loadFile(join(here, '../renderer/index.html'), { query: launch.windowMode === 'pai' ? { mode: 'pai' } : {} });
 	void load.then(() => {
 		loaded = true;
 		reveal();
@@ -263,28 +286,29 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 		const module = await import('./ipc');
 		if (startupCancelled || splash.isDestroyed()) return;
 		ipc = module;
-		updateService = module.updateService;
+		updateService = launch.windowMode === 'full' ? module.updateService : null;
 		module.registerIpc({
+			windowMode: launch.windowMode,
 			onRendererReady: (win) => pendingWindowReveals.get(win)?.(),
 			getDialogWindow: () => {
 				const focused = BrowserWindow.getFocusedWindow();
 				return focused && rendererWindows.has(focused) ? focused : [...rendererWindows][0];
 			},
 		});
-		const workspace = module.defaultWorkspace();
+		const workspace = module.defaultWorkspace(launch.windowMode === 'pai' ? launch.cwd : undefined);
 		mkdirSync(workspace, { recursive: true });
-		module.updateService.setBeforeInstall(async () => {
+		updateService?.setBeforeInstall(async () => {
 			if (ipc) await ipc.disposeServices();
 			readyToQuit = true;
 		});
-		module.updateService.start();
+		updateService?.start();
 		const mainWindow = createWindow(() => {
 			mainRevealed = true;
 			if (!splash.isDestroyed()) splash.close();
 		}, (error) => showStartupError(splash, error));
 		// Load the UI and Pi history concurrently, keeping the logo until React
 		// acknowledges a committed conversation (or a required extension dialog).
-		void module.agentService.init({ cwd: workspace }).catch((error: unknown) => {
+		void module.agentService.init({ cwd: workspace, ...(launch.windowMode === 'pai' ? { fresh: true } : {}) }).catch((error: unknown) => {
 			recordDiagnostic({ stage: 'startup', action: 'agent-init', outcome: 'failure' });
 			console.error('Pi agent failed to initialize:', error);
 			if (startupCancelled || mainRevealed) return;
@@ -297,7 +321,7 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 	}
 }
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
+const hasSingleInstanceLock = launch.windowMode === 'pai' || app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
 	app.quit();
 } else {
@@ -312,14 +336,14 @@ if (!hasSingleInstanceLock) {
 	if (process.platform === 'win32') {
 		app.setAppUserModelId('dev.pidesktop.app');
 		Menu.setApplicationMenu(null);
-		createAppTray({
+		if (launch.windowMode === 'full') createAppTray({
 			showMainWindow,
 			quitApp: () => app.quit(),
 			getStatus: async () => {
 				if (!ipc) return null;
 				try {
 					const snapshot = await ipc.agentService.getSnapshot();
-					return { running: snapshot.status === 'busy', project: snapshot.cwd ? basename(snapshot.cwd) : '' };
+					return { running: snapshot.status === 'busy', project: snapshot.cwd && !(await ipc.isConversationWorkspace(snapshot.cwd)) ? basename(snapshot.cwd) : '' };
 				} catch { return null; }
 			},
 			getRecentSessions: async () => {
@@ -394,7 +418,7 @@ if (!hasSingleInstanceLock) {
 }
 
 app.on('window-all-closed', () => {
-	if (process.platform !== 'darwin') app.quit();
+	if (process.platform !== 'darwin' || launch.windowMode === 'pai') app.quit();
 });
 
 let readyToQuit = false;

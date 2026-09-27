@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { contextMenuPosition, type ContextMenuPoint } from '../contextMenuPosition';
 
 // Popovers mark the <html> element so drag regions (frameless title areas)
 // can stop swallowing mouse events while a menu is open — otherwise clicks
@@ -7,8 +8,8 @@ import { createPortal } from 'react-dom';
 let openPopoverCount = 0;
 
 /** A measured, keyboard-accessible menu shared by the sidebar controls. */
-export function SidebarPopover({ anchor, trigger = anchor, label, dialog = false, placement = 'bottom', children, onClose }: {
-	anchor: HTMLElement; trigger?: HTMLElement; label: string; dialog?: boolean; placement?: 'bottom' | 'top'; children: ReactNode; onClose(): void;
+export function SidebarPopover({ anchor, trigger = anchor, point, label, dialog = false, placement = 'bottom', children, onClose }: {
+	anchor: HTMLElement; trigger?: HTMLElement; point?: ContextMenuPoint; label: string; dialog?: boolean; placement?: 'bottom' | 'top'; children: ReactNode; onClose(): void;
 }) {
 	const ref = useRef<HTMLDivElement>(null);
 	const closeRef = useRef(onClose);
@@ -29,7 +30,7 @@ export function SidebarPopover({ anchor, trigger = anchor, label, dialog = false
 		const place = () => {
 			const rect = anchor.getBoundingClientRect();
 			const box = menu.getBoundingClientRect();
-			const next = {
+			const next = point ? contextMenuPosition(point, box, { width: window.innerWidth, height: window.innerHeight }) : {
 				left: Math.max(8, Math.min(rect.right - box.width, window.innerWidth - box.width - 8)),
 				top: placement === 'top'
 					? Math.max(8, Math.min(rect.top - box.height - 5, window.innerHeight - box.height - 8))
@@ -42,11 +43,11 @@ export function SidebarPopover({ anchor, trigger = anchor, label, dialog = false
 		observer.observe(menu);
 		window.addEventListener('resize', place);
 		return () => { observer.disconnect(); window.removeEventListener('resize', place); };
-	}, [anchor, placement]);
+	}, [anchor, placement, point?.x, point?.y]);
 	const positioned = position !== null;
 	useLayoutEffect(() => {
 		if (positioned) ref.current?.querySelector<HTMLElement>('input, button:not(:disabled)')?.focus();
-	}, [positioned, anchor, trigger]);
+	}, [positioned, anchor, trigger, point?.x, point?.y]);
 	useEffect(() => {
 		const outside = (event: Event) => {
 			const target = event.target as Node;

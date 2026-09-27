@@ -11,7 +11,7 @@ export function installModelSettingsFixture(options = {}) {
     calls: [], unexpected: [], ready: false, errors: [], providers,
     delays: {}, failures: {}, pending: {},
     discovery: { models: [{ id: 'discovered-model', name: '新发现模型', contextWindow: 128000, maxTokens: 8192, input: ['text'], reasoning: false }, { id: 'metadata-missing', name: '需要核对能力的模型' }], warnings: ['模拟目录：不连接真实供应商'] },
-    desktopSettings: { notificationsEnabled: false, closeBehavior: 'quit' },
+    desktopSettings: { notificationsEnabled: false, closeBehavior: 'quit', conversationStorageDirectory: 'C:\\Users\\review\\PiDesktopWorkspace' },
     snapshot: { sequence: 0, status: 'idle', model: 'gpt-review', modelName: 'GPT Review', modelProvider: 'openai', thinkingLevel: 'medium', availableThinkingLevels: ['off', 'low', 'medium', 'high'], contextUsage: null, cwd: 'C:\\renderer-review\\project', sessionId: 'model-review-session', sessionPath: 'C:\\renderer-review\\session.jsonl', messages: [], activities: [], queuedCount: 0, queuedMessages: [], fileChanges: [], historyTotal: 0, error: null },
   };
   const listeners = new Map();
@@ -35,10 +35,12 @@ export function installModelSettingsFixture(options = {}) {
   };
   const methods = {
     getAgentSnapshot: () => clone(state.snapshot),
+    getSessionStats: () => clone(state.sessionStats ?? { sessionId: state.snapshot.sessionId, userMessages: 0, assistantMessages: 0, toolCalls: 0, toolResults: 0, totalMessages: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, cost: 0, timing: { sampledAt: Date.now(), durationMs: state.snapshot.messages.length ? null : 0, running: false, latestRun: null } }),
     getAppInfo: () => ({ appVersion: '0.1.5-review', nodeVersion: '24', electronVersion: 'renderer-fixture', platform: 'win32' }),
     notifyRendererReady: () => { state.ready = true; },
     setAppLocale: () => {},
     listWorkspaces: () => [state.snapshot.cwd],
+    listConversationWorkspaces: async () => [await window.piDesktop.getDefaultWorkspace()],
     getDefaultWorkspace: () => state.snapshot.cwd,
     listSessions: () => [],
     listPinnedWorkspaces: () => [],
@@ -48,6 +50,7 @@ export function installModelSettingsFixture(options = {}) {
     getUpdateState: () => ({ phase: 'unavailable', unavailableReason: 'development', currentVersion: '0.1.5-review' }),
     getDesktopSettings: () => clone(state.desktopSettings),
     setDesktopSettings: (patch) => clone(Object.assign(state.desktopSettings, patch)),
+    pickConversationStorageDirectory: () => null,
     listSlashCommands: () => [],
     getWorkspaceBranches: () => ({ isRepository: true, current: 'review-fixture', detached: false, branches: ['review-fixture'] }),
     getWorkspaceGitStatus: () => ({ isRepository: true, branch: 'review-fixture', entries: [], truncated: false }),

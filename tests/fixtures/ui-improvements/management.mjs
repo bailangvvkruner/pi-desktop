@@ -1,8 +1,12 @@
 // Real renderer interactions with in-memory bridge responses; no desktop or network operations.
 export default async function managementScenarios(review) {
+  async function openSessionMenu() {
+    const point = await review.evaluate(`(() => { const row = document.querySelector('.pd-session-item:first-child .pd-session-row'); row.scrollIntoView({ block: 'nearest' }); const rect = row.getBoundingClientRect(); return { x: rect.left + Math.min(40, rect.width / 2), y: rect.top + rect.height / 2 }; })()`);
+    await review.rightClick(point.x, point.y);
+  }
   await review.waitFor('window.__modelReview?.ready === true');
   await review.viewport(1440, 1000);
-  await review.evaluate(`(() => {
+  await review.reloadWithFixture(`(() => {
     const fixture = window.__modelReview, bridge = window.piDesktop;
     const clone = value => structuredClone(value);
     const cwd = fixture.snapshot.cwd, second = 'C:/renderer-review/second-project';
@@ -34,7 +38,6 @@ export default async function managementScenarios(review) {
     window.__managementReview=state;
   })()`);
   await review.click('[data-mode="project"]');
-  await review.click('.pd-sidebar-list-heading .pd-section-actions button:first-child');
   await review.waitFor("document.querySelectorAll('[data-session-path]').length===2 && Boolean(document.querySelector('.pd-workspace-list-error'))");
   await review.assert("!document.querySelector('.pd-workspace-list-error').textContent.includes('加载中')", 'Failed workspace stops loading and exposes a local retry');
   await review.evaluate('window.__managementReview.failWorkspace=false');
@@ -51,13 +54,13 @@ export default async function managementScenarios(review) {
   await review.click('.pd-sidebar-group:first-child .pd-sidebar-group-toggle');
   await review.evaluate("window.__managementReview.runtime(window.__managementReview.firstPath,'failed','模拟后台任务失败')");
 
-  await review.click('.pd-session-item:first-child .pd-session-more');
+  await openSessionMenu();
   await review.click('.pd-sidebar-menu-danger');
   await review.waitFor("Boolean(document.querySelector('.pd-session-trash-dialog[open]'))");
   await review.assert("document.querySelector('.pd-session-trash-dialog').textContent.includes('后台审查会话') && document.querySelector('.pd-session-trash-workspace').textContent===window.__managementReview.cwd", 'Trash dialog retains the exact title and workspace');
   await review.key('Escape');
   await review.assert("!document.querySelector('.pd-session-trash-dialog') && window.__managementReview.deletes.length===0", 'Esc cancels without a deletion request');
-  await review.click('.pd-session-item:first-child .pd-session-more');
+  await openSessionMenu();
   await review.click('.pd-sidebar-menu-danger');
   await review.click('.pd-session-trash-dialog button.is-danger');
   await review.key('Enter');

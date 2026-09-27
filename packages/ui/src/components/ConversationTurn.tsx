@@ -40,7 +40,7 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
   // An explicit choice during execution does not override automatic folding on completion.
   const [choice, setChoice] = useDisclosureChoice(`turn:${entry.id}:${phase}`);
   const consumeReveal = useDisclosureRequest(`turn:${entry.id}`);
-  const answer = turnAnswer(entry, messages);
+  const answer = turnAnswer(entry, messages, running);
   const ownMessages = entry.entries.flatMap(item => item.kind === 'message' ? [messages[item.index]!] : []);
   const ownTools = entry.entries.flatMap(item => item.kind === 'tools' ? item.indices.map(index => activities[index]!) : []);
   const processMessages = ownMessages.filter(message => message.id !== answer?.id);
@@ -77,8 +77,8 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
           if (item.kind === 'tools') return <ToolActivityPanel key={`tools:${item.id}`} sourceActivities={activities} indices={item.indices} inline />;
           const message = messages[item.index]!;
           if (message.id === answer?.id && !message.thinking && !message.thinkingStatus) return null;
-          // Keep the thinking component in the same keyed position while the
-          // response gains text or becomes commentary before a tool call.
+          // Thinking and live prose share a stable position throughout the run.
+          // Only the final answer moves out when the whole run has settled.
           return <div key={message.id}>
             {(message.thinking || message.thinkingStatus) && <div data-thinking-for={message.id}><ThinkingActivity message={message} defaultExpanded /></div>}
             {message.id !== answer?.id && <MessageItem message={message} process hideThinking showHeading={false} hidePending highlighted={highlightedId === message.id} findMatch={findIds.has(message.id)} />}

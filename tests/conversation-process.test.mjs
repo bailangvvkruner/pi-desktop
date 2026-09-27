@@ -20,6 +20,45 @@ test('one run keeps commentary and tools together, with only its last response a
   assert.equal(turnAnswer(buildConversationTimeline(messages.slice(0, 2), tools, [run('run1')])[1], messages), undefined);
 });
 
+test('live prose stays in the process through assistant-end and tools until the whole run settles', () => {
+  const store = useChatStore.getState;
+  const answer = () => {
+    const { messages, activities, runs } = store();
+    const entry = buildConversationTimeline(messages, activities, runs).at(-1);
+    return turnAnswer(entry, messages, runs.find(run => run.id === entry.runId)?.status === 'running');
+  };
+  store().handleEvent({ type: 'run', run: run('live', 'running') });
+  store().handleEvent({ type: 'user-message', id: 'u', order: 0, runId: 'live', text: 'Review' });
+  store().handleEvent({ type: 'assistant-start', id: 'plan', order: 1, runId: 'live' });
+  store().handleEvent({ type: 'assistant-thinking', id: 'plan', thinking: 'Inspect the source', thinkingStatus: 'streaming' });
+  store().handleEvent({ type: 'assistant-delta', id: 'plan', delta: 'Checking files' });
+  assert.equal(answer(), undefined, 'first text token must not escape its thinking group');
+  store().handleEvent({ type: 'assistant-end', id: 'plan', text: 'Checking files' });
+  assert.equal(answer(), undefined, 'assistant-end is not a run completion');
+  store().handleEvent({ type: 'tool', activity: { id: 'read', runId: 'live', order: 2, tool: 'read', title: 'Read source', status: 'done' } });
+  assert.equal(answer(), undefined);
+  store().handleEvent({ type: 'assistant-start', id: 'final', order: 3, runId: 'live' });
+  store().handleEvent({ type: 'assistant-delta', id: 'final', delta: 'Fixed' });
+  assert.equal(answer(), undefined, 'the last streaming reply also belongs to the running process');
+  store().handleEvent({ type: 'assistant-end', id: 'final', text: 'Fixed' });
+  assert.equal(answer(), undefined);
+  store().handleEvent({ type: 'run', run: run('live') });
+  assert.equal(answer().id, 'final', 'only the settled final response is shown outside the process');
+});
+
+test('legacy live replies use the same grouping and terminal replies remain visible', () => {
+  const messages = [message('u', 0, 'user', 'Old'), message('a', 1, 'assistant', 'Reply')];
+  const entry = buildConversationTimeline(messages, [], [])[1];
+  assert.equal(turnAnswer(entry, messages, true), undefined);
+  assert.equal(turnAnswer(entry, messages, false).id, 'a');
+  for (const status of ['completed', 'cancelled', 'failed', 'interrupted']) {
+    const terminalMessages = [message('u', 0, 'user', 'Check', 'terminal'), { ...message('a', 1, 'assistant', '', 'terminal'), status: 'error', errorMessage: 'Stopped' }];
+    const terminalRun = run('terminal', status);
+    const terminalEntry = buildConversationTimeline(terminalMessages, [], [terminalRun])[1];
+    assert.equal(turnAnswer(terminalEntry, terminalMessages, terminalRun.status === 'running').id, 'a');
+  }
+});
+
 test('steering stays visible in place and a queued next run has independent grouping and timing', () => {
   const messages = [message('u', 0, 'user', 'Review', 'a'), message('plan', 1, 'assistant', 'Inspect', 'a'),
     message('steer', 3, 'user', 'Also check tests', 'a'), message('answer', 4, 'assistant', 'Done', 'a'),

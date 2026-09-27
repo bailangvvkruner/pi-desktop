@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } fr
 import { createPortal } from 'react-dom';
 import type { UiAutomation, UiAutomationInput, UiAutomationRun, UiAutomationSchedule, UiAutomationSnapshot, UiModelSummary, UiThinkingLevel } from '@pidesktop/shared';
 import { useChatStore } from '../store';
+import { sidebarProjectPaths } from '../sidebarOrganization';
 import { useT, type Locale, type Translate } from '../i18n';
 import { managementCopy } from '../managementCopy';
 import { automationRuns } from '../managementState';
@@ -135,10 +136,12 @@ export function AutomationPage({ onToggleSidebar, onOpenSession, headerControls 
 	const bridge = useChatStore((state) => state.bridge);
 	const cwd = useChatStore((state) => state.cwd);
 	const storedWorkspaces = useChatStore((state) => state.workspaces);
+	const conversationWorkspaces = useChatStore((state) => state.conversationWorkspaces);
 	const storedModels = useChatStore((state) => state.models);
 	const [snapshot, setSnapshot] = useState(EMPTY);
 	const [models, setModels] = useState(storedModels);
 	const [workspaces, setWorkspaces] = useState(storedWorkspaces);
+	const projects = sidebarProjectPaths(workspaces, null, conversationWorkspaces);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -189,7 +192,7 @@ export function AutomationPage({ onToggleSidebar, onOpenSession, headerControls 
 	}
 	function create(template?: 'review' | 'summary' | 'tests') {
 		setEditorError(null);
-		setEditor({ name: template ? t(`automation.template.${template}.name`) : '', prompt: template ? t(`automation.template.${template}.prompt`) : '', cwd: cwd || workspaces[0] || '', model: null, thinkingLevel: null, schedule: { kind: 'weekly', days: WEEKDAYS, time: '09:00' }, timeZone: localZone(), enabled: true });
+		setEditor({ name: template ? t(`automation.template.${template}.name`) : '', prompt: template ? t(`automation.template.${template}.prompt`) : '', cwd: projects.includes(cwd) ? cwd : projects[0] || '', model: null, thinkingLevel: null, schedule: { kind: 'weekly', days: WEEKDAYS, time: '09:00' }, timeZone: localZone(), enabled: true });
 	}
 	async function openRun(run: UiAutomationRun) {
 		if (!run.sessionPath || run.status === 'running' || busyRef.current) return;
@@ -224,7 +227,7 @@ export function AutomationPage({ onToggleSidebar, onOpenSession, headerControls 
 			</>}
 			<p className="pd-automation-local-note"><Icon name="clock" width="14" height="14" />{t('automation.localHint')}</p>
 		</div></div>
-		{editor && <AutomationEditor initial={editor} workspaces={workspaces} models={models} error={editorError} busy={busy} onClose={() => setEditor(null)} onSave={(input) => bridge && void perform(() => bridge.saveAutomation(input), () => setEditor(null), true)} />}
+		{editor && <AutomationEditor initial={editor} workspaces={projects} models={models} error={editorError} busy={busy} onClose={() => setEditor(null)} onSave={(input) => bridge && void perform(() => bridge.saveAutomation(input), () => setEditor(null), true)} />}
 		{deleteTarget && <Modal title={t('automation.delete')} busy={busy} onClose={() => setDeleteTarget(null)} className="pd-automation-confirm"><div className="pd-automation-form-body"><p>{t('automation.deleteConfirm', { name: deleteTarget.name })}</p>{error && <p className="pd-automation-error" role="alert">{error}</p>}</div><footer><button type="button" className="pd-automation-button" disabled={busy} onClick={() => setDeleteTarget(null)}>{t('automation.cancel')}</button><button type="button" className="pd-automation-button is-danger" disabled={busy || !bridge} onClick={() => bridge && void perform(() => bridge.deleteAutomation(deleteTarget.id), () => setDeleteTarget(null))}>{t('automation.delete')}</button></footer></Modal>}
 		{historyId && <Modal title={historyTask ? t('automation.taskHistory', { name: historyTask.name }) : t('automation.history')} onClose={() => setHistoryId(null)} busy={busy} className="pd-automation-history-dialog"><div className="pd-automation-history-body" ref={historyBody}><label className="pd-automation-history-filter">{copy.resultFilter}<select value={historyFilter} onChange={(event) => { setHistoryFilter(event.target.value as typeof historyFilter); setSelectedRunId(null); }}><option value="all">{copy.allResults}</option>{(['running', 'retrying', 'skipped', 'succeeded', 'failed', 'cancelled', 'interrupted'] as const).map((value) => <option key={value} value={value}>{t(`automation.status.${value}`)}</option>)}</select></label>{error && <p className="pd-automation-error" role="alert">{error}</p>}{historyTask && <p className="pd-automation-history-prompt">{historyTask.prompt}</p>}{!history.length ? <div className="pd-automation-empty"><Icon name="clock" width="26" height="26" /><h3>{t('automation.noRuns')}</h3><p>{t('automation.noRunsHint')}</p></div> : history.map((run) => <article className={`pd-automation-run${selectedRunId === run.id ? ' is-selected' : ''}`} data-run-id={run.id} tabIndex={-1} key={run.id}><div className="pd-automation-run-heading"><span className={`pd-automation-status is-${run.status}`}><i />{t(`automation.status.${run.status}`)}</span><span>{dateLabel(run.startedAt, locale)}</span><span>{t(run.trigger === 'manual' ? 'automation.manual' : 'automation.scheduled')}</span></div><h3>{run.name}</h3><p>{t('automation.attempts', { count: run.attempts ?? 1 })}{run.scheduledAt && ` · ${t('automation.scheduled')}: ${dateLabel(run.scheduledAt, locale)}`}{run.retryAt && ` · ${t('automation.status.retrying')}: ${dateLabel(run.retryAt, locale)}`}</p>{run.summary && <p className="pd-automation-run-summary">{run.summary}</p>}{run.error && <p className="pd-automation-run-error">{run.error}</p>}<div className="pd-automation-run-actions"><span title={run.cwd}>{pathLeaf(run.cwd)}{run.finishedAt && ` · ${t('automation.finished', { time: dateLabel(run.finishedAt, locale) })}`}</span>{(run.status === 'running' || run.status === 'retrying') ? <button type="button" className="pd-automation-button" disabled={busy || !bridge} onClick={() => bridge && void perform(() => bridge.cancelAutomationRun(run.id))}><Icon name="square" width="12" height="12" />{t('automation.stop')}</button> : run.sessionPath && <button type="button" className="pd-automation-button" onClick={() => void openRun(run)} disabled={busy}>{t('automation.openConversation')}<Icon name="arrowRight" width="14" height="14" /></button>}</div></article>)}</div></Modal>}
 	</main>;

@@ -7,6 +7,7 @@ import { SidebarPopover } from './SidebarPopover';
 import { SessionInfoPanel } from './SessionInfoPanel';
 import { SessionTreePanel } from './SessionTreePanel';
 import { runWithFeedback } from '../operationFeedback';
+import { isConversationWorkspace } from '../sidebarOrganization';
 
 /**
  * zcode-style ellipsis menu behind the chat title: rename plus the same
@@ -16,6 +17,8 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit
 	const { t, locale } = useT();
 	const session = useChatStore((s) => (sessionPath ? s.sessions.find((item) => item.path === sessionPath) : undefined));
 	const updateSessionMeta = useChatStore((s) => s.updateSessionMeta);
+	const conversationWorkspaces = useChatStore((s) => s.conversationWorkspaces);
+	const folderLabel = t(isConversationWorkspace(cwd, conversationWorkspaces) ? 'chat.openConversationFolder' : 'chat.menuOpenWorkspace');
 	const [anchor, setAnchor] = useState<HTMLElement | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
 	const [panel, setPanel] = useState<'stats' | 'tree' | null>(null);
@@ -41,7 +44,7 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit
 		const bridge = useChatStore.getState().bridge;
 		if (!bridge || !cwd) return;
 		const target = cwd;
-		void runWithFeedback({ id: `open-folder:${target}`, title: t('chat.menuOpenWorkspace'), run: () => bridge.openWorkspaceFolder(target) });
+		void runWithFeedback({ id: `open-folder:${target}`, title: folderLabel, run: () => bridge.openWorkspaceFolder(target) });
 	}
 
 	function openInVsCode() {
@@ -101,7 +104,7 @@ export function ChatHeaderMenu({ title, sessionPath, cwd, onRename, onOpenCommit
 			{item(t('chat.menuExportHtml'), () => void exportAs('html'))}
 			{item(t('chat.menuExportJsonl'), () => void exportAs('jsonl'))}
 			<hr />
-			{item(t('chat.menuOpenWorkspace'), () => { close(); openFolder(); }, !cwd)}
+			{item(folderLabel, () => { close(); openFolder(); }, !cwd)}
 			{item(t('chat.menuOpenInVsCode'), () => { close(); openInVsCode(); }, !cwd)}
 			{item(t('chat.menuCommit'), () => { close(); onOpenCommit(); }, !cwd)}
 			{notice && <p className="pd-sidebar-menu-note">{notice}</p>}

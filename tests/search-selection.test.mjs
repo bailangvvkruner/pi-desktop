@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import vm from 'node:vm';
+import * as sidebarOrganization from '../packages/ui/src/sidebarOrganization.ts';
 
 const desktopRequire = createRequire(new URL('../packages/desktop/package.json', import.meta.url));
 const typescript = desktopRequire('typescript');
@@ -54,7 +55,8 @@ function mountSearch(bridge) {
       };
       if (specifier === 'react/jsx-runtime') return { jsx, jsxs: jsx };
       if (specifier === 'react-dom') return { createPortal: (node) => node };
-      if (specifier === '../store') return { useChatStore: (select) => select({ bridge, cwd: 'C:/project', workspaces: ['C:/project'] }) };
+      if (specifier === '../store') return { useChatStore: (select) => select({ bridge, cwd: 'C:/project', workspaces: ['C:/project'], conversationWorkspaces: [] }) };
+      if (specifier === '../sidebarOrganization') return sidebarOrganization;
       if (specifier === '../i18n') return { useT: () => ({ t: (key) => key, locale: 'en-US' }) };
       if (specifier === './Icons') return { Icon: 'Icon' };
       return {};

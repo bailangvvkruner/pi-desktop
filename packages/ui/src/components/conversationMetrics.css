@@ -1,0 +1,17 @@
+.pd-conversation-metrics { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 5px 0; min-height: 21px; margin-top: 7px; color: var(--pd-text-subtle); font-family: var(--pd-font-mono, ui-monospace, SFMono-Regular, Consolas, monospace); font-size: 11px; line-height: 1.4; font-variant-numeric: tabular-nums; }
+.pd-conversation-metrics .pd-metric-group { display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-inline-start: 1px solid var(--pd-border-strong); white-space: nowrap; border-radius: 0; }
+.pd-conversation-metrics > :first-child .pd-metric-group, .pd-conversation-metrics > .pd-metric-group:first-child { border-inline-start: 0; }
+.pd-metric-speed { color: light-dark(#366da5, #9dc7f5); }
+.pd-metric-input { color: light-dark(#16768f, #7ccee7); }
+.pd-metric-output { color: light-dark(#8c50a6, #c799e8); }
+.pd-metric-cache { color: light-dark(#697347, #b5c296); }
+.pd-metric-duration { color: light-dark(#68639c, #b5b0df); }
+.pd-metrics-settings-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.pd-metrics-setting { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 12px; border: 1px solid var(--pd-border-soft); border-radius: 8px; background: var(--pd-surface); color: var(--pd-text); text-align: start; font-size: var(--pd-font-caption); }
+.pd-metrics-setting:hover { background: var(--pd-surface-hover); }
+.pd-metrics-switch { flex: 0 0 auto; width: 28px; height: 16px; border-radius: 12px; background: var(--pd-border-strong); padding: 2px; transition: background 150ms; }
+.pd-metrics-switch::after { content: ''; display: block; width: 12px; height: 12px; border-radius: 50%; background: var(--pd-bg); transition: transform 150ms; }
+.pd-metrics-setting[aria-checked=true] .pd-metrics-switch { background: var(--pd-text); }
+.pd-metrics-setting[aria-checked=true] .pd-metrics-switch::after { transform: translateX(12px); }
+@media (max-width: 520px) { .pd-metrics-settings-options { grid-template-columns: 1fr; } .pd-conversation-metrics .pd-metric-group { padding: 0 7px; } }
+@media (prefers-reduced-motion: reduce) { .pd-metrics-switch, .pd-metrics-switch::after { transition: none; } }

@@ -5,7 +5,7 @@
 function installComposerControlsHarness() {
   const fixture = window.__modelReview, bridge = window.piDesktop;
   const clone = value => structuredClone(value);
-  const state = window.__composerControls = { calls: [], failAbort: 0, deferAbort: false, pendingAbort: null, pendingAborts: new Map() };
+  const state = window.__composerControls = { calls: [], failAbort: 0, deferAbort: false, pendingAbort: null, pendingAborts: new Map(), failSubmit: 0, deferSubmit: false, pendingSubmit: null };
   state.scope = () => ({ cwd: fixture.snapshot.cwd, sessionPath: fixture.snapshot.sessionPath, sessionId: fixture.snapshot.sessionId });
   state.scopeKey = scope => JSON.stringify([scope.cwd, scope.sessionPath, scope.sessionId]);
   state.baseScope = state.scope();
@@ -32,7 +32,16 @@ function installComposerControlsHarness() {
     fixture.emitAgent({ ...clone(fixture.snapshot), type: 'ready' });
     state.setStatus(status);
   };
-  bridge.submitInput = async request => { state.log('submit', request); return { id: request.id, state: 'accepted' }; };
+  bridge.submitInput = async request => {
+    state.log('submit', request);
+    if (state.failSubmit) { state.failSubmit--; throw new Error('模拟发送失败，请重试。'); }
+    if (state.deferSubmit) {
+      state.deferSubmit = false;
+      await new Promise(resolve => { state.pendingSubmit = resolve; });
+      state.pendingSubmit = null;
+    }
+    return { id: request.id, state: 'accepted' };
+  };
   bridge.newSession = async () => {
     state.log('new-session', state.scope());
     await new Promise((resolve, reject) => { state.pendingNavigation = { resolve, reject }; });
@@ -79,6 +88,14 @@ export default async function composerControlsScenarios(review) {
     await review.waitFor(`${c}.calls.some(call => call.name === 'submit' && call.request.text === ${JSON.stringify(text)}) && document.querySelector('${textarea}').value === ''`);
     await review.assert(`${c}.calls.filter(call => call.name === 'submit').at(-1).request.behavior === ${JSON.stringify(behavior)}`, `Keyboard submission uses ${behavior}: ${text}`);
   };
+  const clickSendAndAssert = async (text, behavior) => {
+    await review.fill(textarea, text);
+    await singleAction('send');
+    await review.evaluate(`${c}.abortsBeforeSend = ${c}.calls.filter(call => call.name === 'abort').length`);
+    await review.click(send);
+    await review.waitFor(`${c}.calls.some(call => call.name === 'submit' && call.request.text === ${JSON.stringify(text)}) && document.querySelector('${textarea}').value === '' && !!document.querySelector('${stop}')`);
+    await review.assert(`${c}.calls.filter(call => call.name === 'submit').at(-1).request.behavior === ${JSON.stringify(behavior)} && ${c}.calls.filter(call => call.name === 'abort').length === ${c}.abortsBeforeSend`, `Primary busy send uses ${behavior}, preserves the running task and restores stop after clearing: ${text}`);
+  };
 
   await review.waitFor('window.__modelReview?.ready === true');
   await review.reducedMotion(true);
@@ -92,50 +109,69 @@ export default async function composerControlsScenarios(review) {
   await review.waitFor(`Boolean(document.querySelector('${send}'))`);
   await review.assert(`${c}.calls.filter(call => call.name === 'abort').length === 1 && !${c}.calls.some(call => call.name === 'submit') && document.querySelector('${send}').disabled`, 'Stopping an empty composer calls abort once and restores disabled idle send');
 
-  await review.fill(textarea, '停止时保留这段草稿，不应被提交。');
   await review.evaluate(`${c}.ready()`);
   await review.waitFor(`Boolean(document.querySelector('${stop}'))`);
-  await singleAction('stop');
+  await review.fill(textarea, '任务进行中也可以点击发送。');
+  await singleAction('send');
+  await review.assert(`!document.querySelector('${send}').disabled && document.querySelector('${send}').getAttribute('aria-label') === '发送' && !!document.querySelector('${send} svg path') && !document.querySelector('${send} svg rect')`, 'Typing while busy replaces the stop square with an enabled, labelled send arrow');
   await review.screenshot('composer-busy-draft-dark-1440');
+  await review.fill(textarea, '');
+  await singleAction('stop');
+  await review.fill(textarea, '   ');
+  await singleAction('stop');
+  await review.fill(textarea, '发送失败后保留这段草稿。');
+  await review.evaluate(`${c}.failSubmit = 1`);
+  await review.click(send);
+  await review.waitFor(`document.body.textContent.includes('模拟发送失败，请重试。') && !document.querySelector('${send}')?.disabled`);
+  await review.assert(`document.querySelector('${textarea}').value === '发送失败后保留这段草稿。' && ${c}.calls.filter(call => call.name === 'submit').length === 1 && ${c}.calls.filter(call => call.name === 'abort').length === 1`, 'Failed busy send preserves the draft and enabled send control without stopping the task');
+  await review.evaluate(`${c}.deferSubmit = true`);
+  await review.click(send);
+  await review.waitFor(`${c}.pendingSubmit !== null`);
+  await review.assert(`document.querySelector('${send}').disabled && document.querySelector('${send}').getAttribute('aria-busy') === 'true' && document.querySelector('${textarea}').value === '发送失败后保留这段草稿。'`, 'A pending send retry stays an arrow, disables duplicate submission and keeps its draft until accepted');
+  await review.evaluate(`${c}.pendingSubmit()`);
+  await review.waitFor(`Boolean(document.querySelector('${stop}')) && document.querySelector('${textarea}').value === ''`);
+  await review.assert(`(() => { const submits = ${c}.calls.filter(call => call.name === 'submit'); return submits.length === 2 && submits[0].request.id === submits[1].request.id && submits.every(call => call.request.behavior === 'followUp') && ${c}.calls.filter(call => call.name === 'abort').length === 1; })()`, 'Retry uses the same request id and default queue behavior; accepted busy send restores stop without aborting');
+  await review.assert(`!document.body.textContent.includes('模拟发送失败，请重试。')`, 'A successful send retry clears the previous error');
+
+  // Stop remains available only for an empty composer, including retries.
   await review.evaluate(`${c}.failAbort = 1`);
   await review.click(stop);
   await review.waitFor(`document.body.textContent.includes('模拟停止失败，请重试。') && !document.querySelector('${stop}')?.disabled`);
-  await review.assert(`document.querySelector('${textarea}').value === '停止时保留这段草稿，不应被提交。' && !${c}.calls.some(call => call.name === 'submit')`, 'A failed stop leaves the draft intact and allows retry without submitting');
+  await review.assert(`document.querySelector('${textarea}').value === '' && ${c}.calls.filter(call => call.name === 'submit').length === 2`, 'A failed empty-composer stop allows retry without submitting');
   await review.evaluate(`${c}.deferAbort = true`);
   await review.click(stop);
   await review.waitFor(`${c}.pendingAbort !== null`);
-  await review.assert(`document.querySelector('${stop}').disabled && document.querySelector('${textarea}').value === '停止时保留这段草稿，不应被提交。' && ${c}.calls.filter(call => call.name === 'abort').length === 3`, 'The stop retry remains disabled while pending and preserves the draft');
+  await review.assert(`document.querySelector('${stop}').disabled && document.querySelector('${textarea}').value === '' && ${c}.calls.filter(call => call.name === 'abort').length === 3`, 'The stop retry remains disabled while pending');
   await review.evaluate(`${c}.pendingAbort()`);
-  await review.waitFor(`Boolean(document.querySelector('${send}')) && !document.querySelector('${send}').disabled`);
+  await review.waitFor(`Boolean(document.querySelector('${send}')) && document.querySelector('${send}').disabled`);
   await singleAction('send');
-  await review.assert(`document.querySelector('${textarea}').value === '停止时保留这段草稿，不应被提交。' && !!document.querySelector('${send} svg path') && !document.querySelector('${send} svg rect')`, 'Idle restores the arrow send button and the untouched draft');
+  await review.assert(`document.querySelector('${textarea}').value === '' && !!document.querySelector('${send} svg path') && !document.querySelector('${send} svg rect')`, 'Stopping an empty composer restores the disabled idle send arrow');
   await review.assert(`!document.body.textContent.includes('模拟停止失败，请重试。')`, 'A successful stop retry clears the previous error');
+  await review.fill(textarea, '空闲时正常发送。');
   await review.click(send);
-  await review.waitFor(`${c}.calls.filter(call => call.name === 'submit').length === 1 && document.querySelector('${textarea}').value === ''`);
-  await review.assert(`${c}.calls.find(call => call.name === 'submit').request.behavior == null`, 'Idle primary send starts a normal request without a follow-up override');
+  await review.waitFor(`${c}.calls.filter(call => call.name === 'submit').length === 3 && document.querySelector('${textarea}').value === ''`);
+  await review.assert(`${c}.calls.filter(call => call.name === 'submit').at(-1).request.behavior == null`, 'Idle primary send starts a normal request without a follow-up override');
 
   // Independent stop requests retain their pending state across session switches.
   await review.evaluate(`${c}.abortsBeforeOverlap = ${c}.calls.filter(call => call.name === 'abort').length; ${c}.ready('busy', ${c}.scopeA)`);
   await review.waitFor(`Boolean(document.querySelector('${stop}')) && !document.querySelector('${stop}').disabled && document.querySelector('${textarea}').value === ''`);
-  await review.fill(textarea, '会话 A 停止期间保留的草稿');
   await review.evaluate(`${c}.deferAbort = true`);
   await review.click(stop);
   await review.waitFor(`${c}.pendingAborts.has(${c}.scopeKey(${c}.scopeA)) && document.querySelector('${stop}').disabled`);
   await review.evaluate(`${c}.ready('busy', ${c}.scopeB)`);
   await review.waitFor(`Boolean(document.querySelector('${stop}')) && !document.querySelector('${stop}').disabled && document.querySelector('${textarea}').value === ''`);
-  await review.fill(textarea, '会话 B 停止期间保留的草稿');
   await review.evaluate(`${c}.deferAbort = true`);
   await review.click(stop);
   await review.waitFor(`${c}.pendingAborts.has(${c}.scopeKey(${c}.scopeB)) && document.querySelector('${stop}').disabled`);
   await review.evaluate(`${c}.ready('busy', ${c}.scopeA)`);
-  await review.waitFor(`document.querySelector('${textarea}').value === '会话 A 停止期间保留的草稿'`);
+  await review.waitFor(`document.querySelector('${textarea}').value === '' && document.querySelector('${stop}')?.disabled`);
   await review.assert(`document.querySelector('${stop}').disabled && document.querySelector('${stop}').getAttribute('aria-busy') === 'true' && ${c}.pendingAborts.size === 2`, 'Returning to session A retains its pending stop while session B also stops');
   await review.evaluate(`${c}.releaseAbort(${c}.scopeB)`);
   await review.waitFor(`!${c}.pendingAborts.has(${c}.scopeKey(${c}.scopeB))`);
-  await review.assert(`window.__modelReview.snapshot.status === 'busy' && document.querySelector('${stop}').disabled && document.querySelector('${stop}').getAttribute('aria-busy') === 'true' && document.querySelector('${textarea}').value === '会话 A 停止期间保留的草稿'`, 'Finishing session B stop cannot unlock session A or change its status and draft');
+  await review.assert(`window.__modelReview.snapshot.status === 'busy' && document.querySelector('${stop}').disabled && document.querySelector('${stop}').getAttribute('aria-busy') === 'true' && document.querySelector('${textarea}').value === ''`, 'Finishing session B stop cannot unlock session A or change its status and composer');
   await review.evaluate(`${c}.releaseAbort(${c}.scopeA)`);
-  await review.waitFor(`Boolean(document.querySelector('${send}')) && !document.querySelector('${send}').disabled && ${c}.pendingAborts.size === 0`);
-  await review.assert(`document.querySelector('${textarea}').value === '会话 A 停止期间保留的草稿' && ${c}.calls.filter(call => call.name === 'abort').length === ${c}.abortsBeforeOverlap + 2 && [${c}.scopeA, ${c}.scopeB].every(scope => ${c}.calls.filter(call => call.name === 'abort' && ${c}.scopeKey(call.request) === ${c}.scopeKey(scope)).length === 1)`, 'Completing session A restores send and each overlapping session was stopped exactly once');
+  await review.waitFor(`Boolean(document.querySelector('${send}')) && document.querySelector('${send}').disabled && ${c}.pendingAborts.size === 0`);
+  await review.assert(`document.querySelector('${textarea}').value === '' && ${c}.calls.filter(call => call.name === 'abort').length === ${c}.abortsBeforeOverlap + 2 && [${c}.scopeA, ${c}.scopeB].every(scope => ${c}.calls.filter(call => call.name === 'abort' && ${c}.scopeKey(call.request) === ${c}.scopeKey(scope)).length === 1)`, 'Completing session A restores send and each overlapping session was stopped exactly once');
   await review.record('overlapping-stop-requests', `({scopes: [${c}.scopeA, ${c}.scopeB], aborts: ${c}.calls.filter(call => call.name === 'abort'), pending: ${c}.pendingAborts.size})`);
 
   // Navigation can remain pending while the old host still reports idle/busy.
@@ -147,11 +183,16 @@ export default async function composerControlsScenarios(review) {
     await review.click('.pd-new-session');
     await review.waitFor(`${c}.pendingNavigation !== null && document.querySelector('${textarea}').disabled && document.querySelector('.pd-send-button').disabled`);
     await review.key('Enter');
-    await review.assert(`${c}.calls.filter(call => call.name === 'submit' || call.name === 'abort').length === ${c}.navigationActionsBefore && document.querySelector('${textarea}').value === ${JSON.stringify(`切换期间保留草稿 ${status}`)}`, `Pending navigation disables ${status === 'busy' ? 'Stop' : 'Send'} and retains the old draft`);
+    await review.assert(`${c}.calls.filter(call => call.name === 'submit' || call.name === 'abort').length === ${c}.navigationActionsBefore && document.querySelector('${textarea}').value === ${JSON.stringify(`切换期间保留草稿 ${status}`)}`, `Pending navigation disables Send while ${status} and retains the old draft`);
     if (status === 'busy') await review.screenshot('composer-navigation-pending-dark-1440');
     await review.evaluate(`${c}.pendingNavigation.reject(new Error('模拟切换失败，保留原会话')); ${c}.pendingNavigation = null`);
     await review.waitFor(`!document.querySelector('${textarea}').disabled && !document.querySelector('.pd-send-button').disabled`);
     await review.assert(`document.querySelector('${textarea}').value === ${JSON.stringify(`切换期间保留草稿 ${status}`)}`, 'A failed navigation re-enables the original composer without clearing its draft');
+    // Navigation errors persist in a bottom-right notice until dismissed; clean up
+    // this deliberately injected failure before testing the primary send button.
+    await review.waitFor(`document.querySelector('.pd-operation-notice.is-error')?.textContent.includes('模拟切换失败，保留原会话')`);
+    await review.click('.pd-operation-notice.is-error button[aria-label="关闭提示"]');
+    await review.waitFor(`!document.querySelector('.pd-operation-notice')`);
   }
   await review.fill(textarea, '');
 
@@ -161,6 +202,7 @@ export default async function composerControlsScenarios(review) {
   await review.assert(`document.querySelector('${behaviorSetting} button[aria-pressed="true"]').textContent.trim() === '排队'`, 'Default busy Enter behavior is queueing and is exposed in General settings');
   await review.screenshot('composer-behavior-settings-dark-1440');
   await closeSettings();
+  await clickSendAndAssert('默认按钮点击加入队列', 'followUp');
   await submitAndAssert('默认 Enter 加入队列', {}, 'followUp');
   await submitAndAssert('默认 Ctrl+Enter 立即引导', { ctrl: true }, 'steer');
   await submitAndAssert('默认 Cmd+Enter 立即引导', { meta: true }, 'steer');
@@ -186,13 +228,14 @@ export default async function composerControlsScenarios(review) {
   await review.clickText('.pd-settings-nav button', '快捷键');
   await review.assert(`[...document.querySelectorAll('.pd-shortcut-rows li')].some(row => row.textContent.includes('发送消息 / 任务进行时引导') && row.textContent.includes('Enter')) && [...document.querySelectorAll('.pd-shortcut-rows li')].some(row => row.textContent.includes('排队') && row.textContent.includes('Ctrl'))`, 'Keyboard shortcut settings immediately describe the selected default and its alternate');
   await closeSettings();
+  await clickSendAndAssert('设置修改后按钮点击立即引导', 'steer');
   await submitAndAssert('设置修改后 Enter 立即引导', {}, 'steer');
   await submitAndAssert('设置修改后 Ctrl+Enter 反向排队', { ctrl: true }, 'followUp');
   await submitAndAssert('设置修改后 Cmd+Enter 反向排队', { meta: true }, 'followUp');
-  await review.fill(textarea, '窄屏下仍然使用停止按钮，Enter 用于跟进消息。');
+  await review.fill(textarea, '窄屏下输入文字后显示发送按钮。');
   await review.viewport(680, 900);
-  await singleAction('stop');
-  await review.assert(`(() => { const box = document.querySelector('${stop}').getBoundingClientRect(); return document.documentElement.scrollWidth <= innerWidth && box.left >= 0 && box.right <= innerWidth && box.bottom <= innerHeight; })()`, 'The narrow busy composer and stop button stay within the viewport');
+  await singleAction('send');
+  await review.assert(`(() => { const box = document.querySelector('${send}').getBoundingClientRect(); return document.documentElement.scrollWidth <= innerWidth && box.left >= 0 && box.right <= innerWidth && box.bottom <= innerHeight; })()`, 'The narrow busy composer and send button stay within the viewport');
   await review.screenshot('composer-busy-draft-dark-680');
   await review.viewport(1440, 1000);
   await openGeneral();

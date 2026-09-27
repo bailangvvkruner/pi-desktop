@@ -25,6 +25,8 @@ import { createSessionTrash } from './sessionTrash';
 import { broadcastToRenderers, handleRendererInvoke, requireRendererSender } from './rendererIpc';
 import { normalizeSessionPath, pruneMissingSessionMeta } from './sessionPaths';
 import { prepareWorkspaceDrop } from './workspaceDrop';
+import { createProjectCreator } from './projectCreation';
+import { createConversationWorkspace, createConversationWorkspaceSync, prepareConversationStorageDirectory } from './conversationStorage';
 import { createDesktopNotifier } from './notifications';
 import { readDesktopSettings, writeDesktopSettings, type DesktopSettings } from './desktopSettings';
 import { readWorkspaceContext, validateContextRequest } from './contextService';
@@ -72,6 +74,7 @@ let lastSessionMetaPrune = 0;
 let sessionGroupService: SessionGroupService | null = null;
 let automationService: ReturnType<typeof createAutomationService> | null = null;
 let pluginMutationActive = false;
+let currentWindowMode: 'full' | 'pai' = 'full';
 const discoverPlugins = createPluginDiscovery();
 const automationExecutor = createAutomationExecutor({ withSessionSetup: (action) => queueWorkspaceActivation(action), onSessionCreated: async (path, task) => { await managementFeatures?.rememberAutomation(path, task.id); } });
 
@@ -167,6 +170,12 @@ export const agentService = createIsolatedAgentService({ requestProjectTrust: as
 		// workspace selection so neither transition can interrupt the other.
 		void queueWorkspaceActivation(async () => {
 			if (activeWorkspace !== cwd) return;
+			if (currentWindowMode === 'pai') {
+				// Another pai can be working in this cwd. Never restore its most
+				// recent session while recovering this process's agent host.
+				await agentService.init({ cwd, ...(sessionPath ? { sessionPath } : { fresh: true }) });
+				return;
+			}
 			const excluded = automationExecutor.sessionPaths(cwd);
 			await agentService.init(excluded.length ? { cwd, excludeSessionPaths: excluded } : { cwd });
 			if (sessionPath && (await agentService.listSessions(cwd)).some((session) => session.path === sessionPath)) {
@@ -178,7 +187,14 @@ export const agentService = createIsolatedAgentService({ requestProjectTrust: as
 	}, 250);
 } });
 
-interface WorkspaceSettings { cwd?: string; workspaces?: string[]; pinnedWorkspaces?: string[] }
+interface WorkspaceSettings {
+	cwd?: string;
+	workspaces?: string[];
+	pinnedWorkspaces?: string[];
+	conversationWorkspaces?: string[];
+	conversationStorageDirectories?: string[];
+	explicitWorkspaces?: string[];
+}
 function workspaceKey(cwd: string): string {
 	const key = resolve(cwd);
 	return process.platform === 'win32' ? key.toLowerCase() : key;
@@ -197,6 +213,9 @@ function isWorkspaceSettings(value: unknown): value is WorkspaceSettings {
 	return isRecord(value)
 		&& (value.cwd === undefined || typeof value.cwd === 'string')
 		&& (value.workspaces === undefined || (Array.isArray(value.workspaces) && value.workspaces.every((cwd) => typeof cwd === 'string')))
+		&& (value.conversationWorkspaces === undefined || (Array.isArray(value.conversationWorkspaces) && value.conversationWorkspaces.every((cwd) => typeof cwd === 'string')))
+		&& (value.conversationStorageDirectories === undefined || (Array.isArray(value.conversationStorageDirectories) && value.conversationStorageDirectories.every((cwd) => typeof cwd === 'string')))
+		&& (value.explicitWorkspaces === undefined || (Array.isArray(value.explicitWorkspaces) && value.explicitWorkspaces.every((cwd) => typeof cwd === 'string')))
 		&& (value.pinnedWorkspaces === undefined || (Array.isArray(value.pinnedWorkspaces) && value.pinnedWorkspaces.every((cwd) => typeof cwd === 'string')));
 }
 
@@ -209,6 +228,7 @@ function readWorkspaceSettingsAsync(): Promise<WorkspaceSettings> {
 }
 
 let workspaceSettingsQueue: Promise<void> = Promise.resolve();
+let desktopSettingsQueue: Promise<void> = Promise.resolve();
 function withWorkspaceSettings<T>(action: (settings: WorkspaceSettings) => Promise<T> | T): Promise<T> {
 	const result = workspaceSettingsQueue.then(async () => action(await readWorkspaceSettingsAsync()));
 	workspaceSettingsQueue = result.then(() => undefined, () => undefined);
@@ -221,12 +241,12 @@ function desktopSettingsPath(): string {
 
 /** Sync read for the close-policy handler (4.2); corrupt files fall back to defaults. */
 export function readCurrentDesktopSettings(): DesktopSettings {
-	return readDesktopSettings(desktopSettingsPath());
+	return readDesktopSettings(desktopSettingsPath(), join(app.getPath('home'), 'PiDesktopWorkspace'));
 }
 
 /** Persists a close-policy choice made from the close dialog (4.2). */
 export function saveCloseBehavior(behavior: DesktopSettings['closeBehavior']): void {
-	const current = readDesktopSettings(desktopSettingsPath());
+	const current = readCurrentDesktopSettings();
 	writeDesktopSettings(desktopSettingsPath(), { ...current, closeBehavior: behavior });
 }
 
@@ -251,7 +271,13 @@ function workspaceSettingsPath(): string {
 	return join(app.getPath('userData'), 'workspace.json');
 }
 
-export function defaultWorkspace(): string {
+export function defaultWorkspace(initialWorkspace?: string): string {
+	if (initialWorkspace !== undefined) {
+		if (!statSync(initialWorkspace).isDirectory()) throw new Error('The launch workspace must be a directory');
+		saveWorkspace(initialWorkspace, true);
+		activeWorkspace = initialWorkspace;
+		return initialWorkspace;
+	}
 	let saved: WorkspaceSettings;
 	try {
 		saved = readWorkspaceSettings();
@@ -275,31 +301,36 @@ export function defaultWorkspace(): string {
 	} catch {
 		// A saved workspace may have been moved or removed.
 	}
-	const cwd = join(app.getPath('home'), 'PiDesktopWorkspace');
-	saveWorkspace(cwd);
+	const root = readCurrentDesktopSettings().conversationStorageDirectory;
+	const cwd = createConversationWorkspaceSync(root);
+	writeStateFile(workspaceSettingsPath(), registerConversationWorkspace(saved, cwd, root));
 	activeWorkspace = cwd;
 	return cwd;
 }
 
-function saveWorkspace(cwd: string): void {
+function saveWorkspace(cwd: string, explicit = false): void {
 	const previous = readWorkspaceSettings();
 	const workspaces = [...new Set([...(Array.isArray(previous.workspaces) ? previous.workspaces : []), previous.cwd, cwd]
 		.filter((value): value is string => typeof value === 'string' && value.length > 0))];
-	writeStateFile(workspaceSettingsPath(), { cwd, workspaces, pinnedWorkspaces: previous.pinnedWorkspaces ?? [] });
+	writeStateFile(workspaceSettingsPath(), { ...previous, cwd, workspaces, pinnedWorkspaces: previous.pinnedWorkspaces ?? [],
+		...(explicit ? { explicitWorkspaces: [...new Set([...(previous.explicitWorkspaces ?? []), cwd])] } : {}),
+	});
 }
 
-async function saveWorkspaceAsync(cwd: string): Promise<void> {
+async function saveWorkspaceAsync(cwd: string, explicit = false): Promise<void> {
 	await withWorkspaceSettings(async (previous) => {
 		const workspaces = [...new Set([...(Array.isArray(previous.workspaces) ? previous.workspaces : []), previous.cwd, cwd]
 			.filter((value): value is string => typeof value === 'string' && value.length > 0))];
-		await writeStateFileAsync(workspaceSettingsPath(), { cwd, workspaces, pinnedWorkspaces: previous.pinnedWorkspaces ?? [] });
+		await writeStateFileAsync(workspaceSettingsPath(), { ...previous, cwd, workspaces, pinnedWorkspaces: previous.pinnedWorkspaces ?? [],
+			...(explicit ? { explicitWorkspaces: [...new Set([...(previous.explicitWorkspaces ?? []), cwd])] } : {}),
+		});
 	});
 }
 
 async function listWorkspaces(): Promise<string[]> {
 	await workspaceSettingsQueue;
 	const saved = await readWorkspaceSettingsAsync();
-	const candidates = [...new Set([...(Array.isArray(saved.workspaces) ? saved.workspaces : []), saved.cwd, activeWorkspace, join(app.getPath('home'), 'PiDesktopWorkspace')]
+	const candidates = [...new Set([...(saved.workspaces ?? []), ...(saved.conversationWorkspaces ?? []), ...conversationWorkspaces(saved), saved.cwd, activeWorkspace]
 		.filter((value): value is string => typeof value === 'string' && value.length > 0))];
 	const existing = await Promise.all(candidates.map(async (cwd) => {
 		try { return (await stat(cwd)).isDirectory(); }
@@ -307,6 +338,73 @@ async function listWorkspaces(): Promise<string[]> {
 	}));
 	return candidates.filter((_, index) => existing[index]);
 }
+
+function conversationWorkspaces(saved: WorkspaceSettings): string[] {
+	const explicit = new Set((saved.explicitWorkspaces ?? []).map(workspaceKey));
+	return [...new Set([...(saved.conversationWorkspaces ?? []), ...(saved.conversationStorageDirectories ?? []),
+		readCurrentDesktopSettings().conversationStorageDirectory, join(app.getPath('home'), 'PiDesktopWorkspace')])]
+		.filter((cwd) => !explicit.has(workspaceKey(cwd)));
+}
+
+async function listConversationWorkspaces(): Promise<string[]> {
+	await workspaceSettingsQueue;
+	return conversationWorkspaces(await readWorkspaceSettingsAsync());
+}
+
+export async function isConversationWorkspace(cwd: string): Promise<boolean> {
+	return (await listConversationWorkspaces()).some((path) => workspaceKey(path) === workspaceKey(cwd));
+}
+
+function registerConversationWorkspace(previous: WorkspaceSettings, cwd: string, root: string): WorkspaceSettings {
+	return {
+		...previous, cwd,
+		workspaces: [...new Set([...(previous.workspaces ?? []), ...(previous.cwd ? [previous.cwd] : []), cwd])],
+		conversationWorkspaces: [...new Set([...(previous.conversationWorkspaces ?? []), cwd])],
+		conversationStorageDirectories: [...new Set([...(previous.conversationStorageDirectories ?? []), root])],
+	};
+}
+
+function newConversation(options?: unknown): Promise<void> {
+	if (options !== undefined && (!isRecord(options) || (options.cwd !== undefined && typeof options.cwd !== 'string'))) {
+		throw new Error('新对话选项无效');
+	}
+	if (pluginMutationActive) return Promise.reject(new Error('插件正在更新，请完成后再新建对话'));
+	if (automaticRecoveryTimer) clearTimeout(automaticRecoveryTimer);
+	automaticRecoveryTimer = null;
+	return queueWorkspaceActivation(async () => {
+		if (isRecord(options) && typeof options.cwd === 'string') {
+			await performWorkspaceActivation(options.cwd, true, true);
+			return;
+		}
+		const root = readCurrentDesktopSettings().conversationStorageDirectory;
+		const cwd = await createConversationWorkspace(root);
+		// Keep the folder and its registry even if initialization fails: extensions
+		// can already have written files, and a retry must never delete that work.
+		await withWorkspaceSettings((previous) => writeStateFileAsync(workspaceSettingsPath(), {
+			...registerConversationWorkspace(previous, cwd, root), cwd: previous.cwd,
+		}));
+		await performWorkspaceActivation(cwd, true, true);
+		invalidateAppTrayData();
+	});
+}
+
+function getProjectsDirectory(): string {
+	return join(app.getPath('documents'), 'Pi Desktop');
+}
+
+const createProject = createProjectCreator({
+	getProjectsDirectory,
+	getLocale: getAppLocale,
+	register: (cwd) => withWorkspaceSettings(async (previous) => {
+		const registered = [...(previous.workspaces ?? []), previous.cwd, activeWorkspace]
+			.filter((value): value is string => typeof value === 'string' && value.length > 0);
+		const workspaces = [...new Map([...registered, cwd].map((path) => [workspaceKey(path), path])).values()];
+		await writeStateFileAsync(workspaceSettingsPath(), { ...previous, workspaces,
+			explicitWorkspaces: [...new Set([...(previous.explicitWorkspaces ?? []), cwd])],
+		});
+		invalidateAppTrayData();
+	}),
+});
 
 async function listPinnedWorkspaces(): Promise<string[]> {
 	return withWorkspaceSettings(async (saved) => {
@@ -463,7 +561,7 @@ async function performWorkspaceActivation(cwd: string, initialize: boolean, fres
 	const saved = await readWorkspaceSettingsAsync();
 	// Detaching a draft must also work before the built-in home workspace has
 	// ever been selected or added to the saved workspace list.
-	const known = [activeWorkspace, saved.cwd, join(app.getPath('home'), 'PiDesktopWorkspace'), ...(saved.workspaces ?? [])];
+	const known = [activeWorkspace, saved.cwd, ...conversationWorkspaces(saved), ...(saved.workspaces ?? [])];
 	if (!known.includes(cwd) && !pickedWorkspaces.has(cwd)) throw new Error('未知工作区');
 	try { if (!(await stat(cwd)).isDirectory()) throw new Error('工作区目录无效'); }
 	catch { throw new Error('工作区目录无效'); }
@@ -480,7 +578,7 @@ async function performWorkspaceActivation(cwd: string, initialize: boolean, fres
 		activeWorkspace = previous;
 		throw error;
 	}
-	await saveWorkspaceAsync(cwd);
+	await saveWorkspaceAsync(cwd, pickedWorkspaces.has(cwd));
 	pickedWorkspaces.delete(cwd);
 	await markSessionRead((await agentService.getSnapshot()).sessionPath);
 }
@@ -527,9 +625,12 @@ async function withPluginMutation<T>(cwd: string, action: () => Promise<T>): Pro
 }
 
 export function registerIpc(options: {
+	windowMode?: 'full' | 'pai';
 	onRendererReady?(win: BrowserWindow): void;
 	getDialogWindow?(): BrowserWindow | undefined;
 } = {}): void {
+	const windowMode = options.windowMode ?? 'full';
+	currentWindowMode = windowMode;
 	getDialogWindow = options.getDialogWindow ?? (() => undefined);
 	const notifier = createDesktopNotifier({
 		settingsPath: desktopSettingsPath,
@@ -580,18 +681,37 @@ export function registerIpc(options: {
 		onError: (error) => console.error('Automation scheduler failed:', error),
 		onRunFinished: (entry, task) => { notifier.handleAutomationRun(entry, task.name, task.cwd); if (entry.sessionPath) void managementFeatures?.rememberAutomation(entry.sessionPath, entry.id).catch(error => console.error('Usage identity persistence failed', error)); },
 	});
-	handleRendererInvoke(IPC_CHANNELS.desktopSettingsGet, () => readDesktopSettings(desktopSettingsPath()));
+	handleRendererInvoke(IPC_CHANNELS.desktopSettingsGet, () => readCurrentDesktopSettings());
 	handleRendererInvoke(IPC_CHANNELS.desktopSettingsSet, (event, patch: unknown) => {
 		const win = invokingWindow(event);
 		if (event.senderFrame !== win.webContents.mainFrame) throw new Error('Invalid desktop-settings sender');
 		if (!isRecord(patch)) throw new Error('设置参数无效');
-		const current = readDesktopSettings(desktopSettingsPath());
-		const next: DesktopSettings = {
-			notificationsEnabled: typeof patch.notificationsEnabled === 'boolean' ? patch.notificationsEnabled : current.notificationsEnabled,
-			closeBehavior: patch.closeBehavior === 'tray' || patch.closeBehavior === 'quit' ? patch.closeBehavior : current.closeBehavior,
-		};
-		writeDesktopSettings(desktopSettingsPath(), next);
-		return next;
+		const result = desktopSettingsQueue.then(async () => {
+			const directory = patch.conversationStorageDirectory === undefined ? undefined
+				: await prepareConversationStorageDirectory(patch.conversationStorageDirectory);
+			const previousDirectory = readCurrentDesktopSettings().conversationStorageDirectory;
+			if (directory && workspaceKey(directory) !== workspaceKey(previousDirectory)) {
+				await withWorkspaceSettings((previous) => {
+					const existingProject = (previous.workspaces ?? []).some(cwd => workspaceKey(cwd) === workspaceKey(directory))
+						&& !(previous.conversationWorkspaces ?? []).some(cwd => workspaceKey(cwd) === workspaceKey(directory))
+						&& workspaceKey(directory) !== workspaceKey(join(app.getPath('home'), 'PiDesktopWorkspace'));
+					return writeStateFileAsync(workspaceSettingsPath(), {
+						...previous, conversationStorageDirectories: [...new Set([...(previous.conversationStorageDirectories ?? []), previousDirectory, directory])],
+						...(existingProject ? { explicitWorkspaces: [...new Set([...(previous.explicitWorkspaces ?? []), directory])] } : {}),
+					});
+				});
+			}
+			const current = readCurrentDesktopSettings();
+			const next: DesktopSettings = {
+				notificationsEnabled: typeof patch.notificationsEnabled === 'boolean' ? patch.notificationsEnabled : current.notificationsEnabled,
+				closeBehavior: patch.closeBehavior === 'tray' || patch.closeBehavior === 'quit' ? patch.closeBehavior : current.closeBehavior,
+				conversationStorageDirectory: directory ?? current.conversationStorageDirectory,
+			};
+			writeDesktopSettings(desktopSettingsPath(), next);
+			return next;
+		});
+		desktopSettingsQueue = result.then(() => undefined, () => undefined);
+		return result;
 	});
 	automationService = automations;
 	handleRendererInvoke(IPC_CHANNELS.pluginCatalog, (event, cwd: unknown) => {
@@ -623,6 +743,7 @@ export function registerIpc(options: {
 		return discoverPlugins(query);
 	});
 	const automationHandler = (action: (...args: any[]) => unknown) => (event: IpcMainInvokeEvent, ...args: unknown[]) => {
+		if (windowMode === 'pai') throw new Error('Automations are available in the main Pi Desktop window');
 		const owner = getDialogWindow();
 		if (disposingServices || !owner || owner.isDestroyed() || owner.webContents.isDestroyed()
 			|| event.sender !== owner.webContents || event.senderFrame !== owner.webContents.mainFrame) throw new Error('Invalid automation sender');
@@ -649,7 +770,7 @@ export function registerIpc(options: {
 		const win = invokingWindow(event);
 		if (event.senderFrame !== win.webContents.mainFrame) throw new Error('Invalid renderer-ready sender');
 		options.onRendererReady?.(win);
-		void automations.start().catch((error: unknown) => {
+		if (windowMode === 'full') void automations.start().catch((error: unknown) => {
 			if (!disposingServices) console.error('Automation scheduler failed to start:', error);
 		});
 		if (!win.isDestroyed() && !notificationReadyWindows.has(win)) {
@@ -682,14 +803,22 @@ export function registerIpc(options: {
 		nodeVersion: process.versions.node ?? 'unknown',
 		electronVersion: process.versions.electron ?? 'unknown',
 		platform: process.platform,
+		windowMode,
 	}));
 	handleRendererInvoke(IPC_CHANNELS.appSetLocale, (_event, locale: AppLocale) => {
 		setAppLocale(locale);
 		updateAppTrayMenu();
 	});
-	handleRendererInvoke(IPC_CHANNELS.updateState, () => updateService.getState());
-	handleRendererInvoke(IPC_CHANNELS.updateCheck, (_event, autoInstall?: unknown) => updateService.check(autoInstall === true));
-	handleRendererInvoke(IPC_CHANNELS.updateInstall, () => updateService.install());
+	handleRendererInvoke(IPC_CHANNELS.updateState, () => windowMode === 'pai'
+		? { phase: 'unavailable', unavailableReason: 'unsupported', currentVersion: app.getVersion() } : updateService.getState());
+	handleRendererInvoke(IPC_CHANNELS.updateCheck, (_event, autoInstall?: unknown) => {
+		if (windowMode === 'pai') throw new Error('Install updates from the main Pi Desktop window');
+		return updateService.check(autoInstall === true);
+	});
+	handleRendererInvoke(IPC_CHANNELS.updateInstall, () => {
+		if (windowMode === 'pai') throw new Error('Install updates from the main Pi Desktop window');
+		return updateService.install();
+	});
 	handleRendererInvoke(IPC_CHANNELS.windowChromeState, (event) => ({
 		isMaximized: invokingWindow(event).isMaximized(),
 	}));
@@ -705,6 +834,16 @@ export function registerIpc(options: {
 		invokingWindow(event).close();
 	});
 
+	handleRendererInvoke(IPC_CHANNELS.workspaceProjectsDirectory, () => getProjectsDirectory());
+	handleRendererInvoke(IPC_CHANNELS.workspaceCreateProject, (_event, name: unknown) => createProject(name));
+	handleRendererInvoke(IPC_CHANNELS.conversationStoragePick, async () => {
+		const result = await dialog.showOpenDialog({
+			properties: ['openDirectory', 'createDirectory'],
+			title: getAppLocale() === 'en-US' ? 'Choose conversation storage folder' : '选择对话保存位置',
+			defaultPath: readCurrentDesktopSettings().conversationStorageDirectory,
+		});
+		return result.canceled ? null : result.filePaths[0] ?? null;
+	});
 	handleRendererInvoke(IPC_CHANNELS.workspacePick, async () => {
 		const result = await dialog.showOpenDialog({
 			properties: ['openDirectory'],
@@ -723,12 +862,15 @@ export function registerIpc(options: {
 		return selected;
 	});
 	handleRendererInvoke(IPC_CHANNELS.agentListWorkspaces, () => listWorkspaces());
+	handleRendererInvoke(IPC_CHANNELS.workspaceListConversations, () => listConversationWorkspaces());
 	handleRendererInvoke(IPC_CHANNELS.workspaceAddDropped, (_event, paths: unknown) => withWorkspaceSettings(async (previous) => {
 		const registered = [...(previous.workspaces ?? []), previous.cwd, activeWorkspace]
 			.filter((cwd): cwd is string => typeof cwd === 'string' && cwd.length > 0);
 		const result = await prepareWorkspaceDrop(paths, registered);
-		if (result.added.length > 0) {
-			await writeStateFileAsync(workspaceSettingsPath(), { ...previous, workspaces: result.workspaces });
+		if (result.accepted.length > 0) {
+			await writeStateFileAsync(workspaceSettingsPath(), { ...previous, workspaces: result.workspaces,
+				explicitWorkspaces: [...new Set([...(previous.explicitWorkspaces ?? []), ...result.accepted])],
+			});
 			invalidateAppTrayData();
 		}
 		return result.accepted;
@@ -744,7 +886,7 @@ export function registerIpc(options: {
 	handleRendererInvoke(IPC_CHANNELS.workspaceDefault, () => {
 		// The detach target is always the home workspace, not the last-saved cwd
 		// that defaultWorkspace() restores.
-		const home = join(app.getPath('home'), 'PiDesktopWorkspace');
+		const home = readCurrentDesktopSettings().conversationStorageDirectory;
 		mkdirSync(home, { recursive: true });
 		return home;
 	});
@@ -758,8 +900,11 @@ export function registerIpc(options: {
 				.filter((value): value is string => typeof value === 'string' && value.length > 0))]
 				.filter((path) => workspaceKey(path) !== target);
 			const pinnedWorkspaces = (previous.pinnedWorkspaces ?? []).filter((path) => workspaceKey(path) !== target);
-			const home = join(app.getPath('home'), 'PiDesktopWorkspace');
-			await writeStateFileAsync(workspaceSettingsPath(), { cwd: previous.cwd && workspaceKey(previous.cwd) === target ? home : previous.cwd, workspaces, pinnedWorkspaces });
+			const explicitWorkspaces = previous.explicitWorkspaces?.filter((path) => workspaceKey(path) !== target);
+			const home = readCurrentDesktopSettings().conversationStorageDirectory;
+			await writeStateFileAsync(workspaceSettingsPath(), { ...previous, cwd: previous.cwd && workspaceKey(previous.cwd) === target ? home : previous.cwd, workspaces, pinnedWorkspaces,
+				...(explicitWorkspaces ? { explicitWorkspaces } : {}),
+			});
 		});
 		for (const picked of [...pickedWorkspaces]) if (workspaceKey(picked) === target) pickedWorkspaces.delete(picked);
 		for (const [path, owner] of sessionOwnerByPath) if (workspaceKey(owner) === target) sessionOwnerByPath.delete(path);
@@ -1027,7 +1172,7 @@ export function registerIpc(options: {
 
 	handleRendererInvoke(IPC_CHANNELS.agentAbort, () => agentService.abort());
 
-	handleRendererInvoke(IPC_CHANNELS.agentNewSession, () => queueWorkspaceActivation(() => agentService.newSession()));
+	handleRendererInvoke(IPC_CHANNELS.agentNewSession, (_event, options?: unknown) => newConversation(options));
 	handleRendererInvoke(IPC_CHANNELS.agentExtensionDialogPending, (event) => [...pendingDialogs.values()]
 		.filter(({ owner }) => owner === invokingWindow(event)).map(({ request }) => request));
 	handleRendererInvoke(IPC_CHANNELS.agentExtensionDialogResponse, (event, id: string, value: string | boolean | null) => {
@@ -1049,6 +1194,8 @@ export function disposeServices(): Promise<void> {
 	return serviceShutdown = (async () => {
 		// Finish an accepted file move before terminating its host or exiting.
 		await workspaceActivationQueue;
+		await desktopSettingsQueue;
+		await workspaceSettingsQueue;
 		// A pending move may still need the agent to validate session ownership.
 		await sessionGroupService?.flush();
 		inputFeatures?.dispose();

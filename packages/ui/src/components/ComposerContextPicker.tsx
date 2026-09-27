@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import type { UiContextRequest, UiSessionSummary, WorkspaceEntry } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
+import { isConversationWorkspace } from '../sidebarOrganization';
 import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
 import './composerContextPicker.css';
@@ -47,6 +48,8 @@ export const ComposerContextPicker = forwardRef<ComposerContextPickerHandle, Com
 	const { t, locale } = useT();
 	const bridge = useChatStore((state) => state.bridge);
 	const sessions = useChatStore((state) => state.sessionsByWorkspace[workspace] ?? EMPTY_SESSIONS);
+	const conversationWorkspaces = useChatStore((state) => state.conversationWorkspaces);
+	const conversationFolder = isConversationWorkspace(workspace, conversationWorkspaces);
 	const [menuQuery, setMenuQuery] = useState('');
 	const [directory, setDirectory] = useState('');
 	const [mentionBrowseQuery, setMentionBrowseQuery] = useState<string | null>(null);
@@ -268,7 +271,7 @@ export const ComposerContextPicker = forwardRef<ComposerContextPickerHandle, Com
 		<div ref={listRef} id={`${id}-list`} className="pd-context-list" role="listbox" aria-label={t('composer.contextAddTitle')}>
 			{showUpload && renderRow(rows[0]!)}
 			<div className="pd-context-section" role="group" aria-labelledby={`${id}-files`}>
-				<div className="pd-context-section-title" id={`${id}-files`}><span>{t('composer.contextFiles')}</span><span className="pd-context-workspace">{leaf(workspace)}</span></div>
+				<div className="pd-context-section-title" id={`${id}-files`}><span>{t('composer.contextFiles')}</span><span className="pd-context-workspace">{conversationFolder ? t('composer.contextConversationFiles') : leaf(workspace)}</span></div>
 				{activeDirectory && !search && <button type="button" className="pd-context-back" onPointerDown={(event) => event.preventDefault()} onClick={goBack}><Icon name="chevronRight" width="13" height="13" /><span>{t('composer.contextBack')}</span><span>{activeDirectory}</span></button>}
 				{fileRows.map(renderRow)}
 				{files.key === requestKey && (files.truncated || expandedFiles && currentFiles.length > EXPANDED_LIMIT) && <div className="pd-context-status">{t('search.truncated')}</div>}
@@ -277,7 +280,7 @@ export const ComposerContextPicker = forwardRef<ComposerContextPickerHandle, Com
 				{!loading && !error && !fileRows.length && <div className="pd-context-status">{t('composer.contextEmpty')}</div>}
 			</div>
 			<div className="pd-context-section" role="group" aria-labelledby={`${id}-sessions`}>
-				<div className="pd-context-section-title" id={`${id}-sessions`}><span>{t('composer.contextSessions')}</span><span>{t('composer.contextCurrentProject')}</span></div>
+				<div className="pd-context-section-title" id={`${id}-sessions`}><span>{t('composer.contextSessions')}</span>{!conversationFolder && <span>{t('composer.contextCurrentProject')}</span>}</div>
 				{sessionRows.map(renderRow)}
 				{expandedSessions && availableSessions.length > EXPANDED_LIMIT && <div className="pd-context-status">{t('search.truncated')}</div>}
 				{!sessionRows.length && <div className="pd-context-status">{t('composer.contextEmpty')}</div>}

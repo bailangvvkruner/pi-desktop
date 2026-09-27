@@ -283,7 +283,8 @@ class UpdateService {
 			await this.beforeInstall();
 			if (!this.installing) throw new Error(this.state.error || 'Update installation failed.');
 			this.stop();
-			updater.quitAndInstall(false, true);
+			// The explicit Update click authorizes the installer; finish silently and restart.
+			updater.quitAndInstall(true, true);
 			if (!this.installing) throw new Error(this.state.error || 'Update installation failed.');
 		} catch (error) {
 			// An emitted error has already released the lock and published its restart hint.

@@ -3,6 +3,7 @@
 function installSidebarProjectsFixture(saved) {
   const fixture = window.__modelReview, bridge = window.piDesktop;
   const clone = value => structuredClone(value);
+  const defaultWorkspace = fixture.snapshot.cwd;
   const names = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot'];
   const paths = Object.fromEntries(names.map(name => [name, 'C:\\sidebar-projects\\' + name]));
   const rows = Object.fromEntries(names.map(name => [paths[name], [{ id: name, path: paths[name] + '\\conversation.jsonl', name: name + ' 会话', firstMessage: name + ' prompt', modified: '2026-09-27T00:00:00Z', messageCount: 2 }]]));
@@ -12,7 +13,9 @@ function installSidebarProjectsFixture(saved) {
   rows[paths.Delta][0].runtime = { phase: 'failed' };
   const state = { paths, rows, workspaces: names.map(name => paths[name]), pinned: saved?.pinned ?? [paths.Bravo, paths.Delta],
     groups: [{ id: 'projects-review', name: '项目测试分组', sessionPaths: [rows[paths.Alpha][0].path, rows[paths.Charlie][0].path] }],
-    navigation: [], writes: [], reveals: [], pointers: [], newSessions: 0 };
+    navigation: [], writes: [], reveals: [], pointers: [], newSessions: 0, newCalls: [], conversationWorkspaces: [] };
+  bridge.getDefaultWorkspace = async () => defaultWorkspace;
+  bridge.listConversationWorkspaces = async () => [defaultWorkspace, ...state.conversationWorkspaces];
   bridge.listWorkspaces = async () => clone(state.workspaces);
   bridge.listSessions = async cwd => clone(state.rows[cwd] ?? []);
   bridge.listSessionGroups = async () => clone(state.groups);
@@ -21,7 +24,15 @@ function installSidebarProjectsFixture(saved) {
   bridge.openWorkspaceFolder = async path => { state.reveals.push(path); };
   bridge.switchWorkspace = async cwd => { state.navigation.push({ kind: 'workspace', cwd }); Object.assign(fixture.snapshot, { cwd, sessionId: state.rows[cwd][0].id, sessionPath: state.rows[cwd][0].path }); fixture.emitAgent({ ...clone(fixture.snapshot), type: 'ready' }); };
   bridge.switchSession = async path => { state.navigation.push({ kind: 'session', path }); };
-  bridge.newSession = async () => { state.newSessions++; Object.assign(fixture.snapshot, { sessionId: 'draft-' + state.newSessions, sessionPath: fixture.snapshot.cwd + '\\draft-' + state.newSessions + '.jsonl' }); fixture.emitAgent({ ...clone(fixture.snapshot), type: 'ready' }); };
+  bridge.newSession = async options => {
+    state.newSessions++;
+    const cwd = options?.cwd ?? defaultWorkspace + '\\conversation-' + state.newSessions;
+    state.newCalls.push({ cwd, options: clone(options) });
+    if (!options?.cwd) state.conversationWorkspaces.push(cwd);
+    if (!state.workspaces.includes(cwd)) state.workspaces.push(cwd);
+    Object.assign(fixture.snapshot, { cwd, sessionId: 'draft-' + state.newSessions, sessionPath: cwd + '\\draft-' + state.newSessions + '.jsonl', messages: [], activities: [], runs: [], historyTotal: 0 });
+    fixture.emitAgent({ ...clone(fixture.snapshot), type: 'ready' });
+  };
   bridge.updateSessionOrders = async entries => { state.writes.push({ kind: 'sessions', entries: clone(entries) }); };
   bridge.updateSessionGroups = async change => { state.writes.push({ kind: 'groups', change: clone(change) }); return clone(state.groups); };
   for (const type of ['pointerdown', 'pointermove', 'pointerup', 'contextmenu']) document.addEventListener(type, event => {
@@ -39,9 +50,7 @@ export default async function sidebarProjectsScenarios(review) {
   await review.waitFor('window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
   await review.viewport(1440, 1200);
   await review.reducedMotion(false);
-  await review.evaluate(`(${installSidebarProjectsFixture.toString()})();`);
-  await review.click('.pd-sidebar-list-heading .pd-section-actions button:first-child');
-  await review.waitFor(`${state}.workspaces.length === 6 && !document.querySelector('.pd-sidebar-list-heading button:disabled')`);
+  await review.reloadWithFixture(`(${installSidebarProjectsFixture.toString()})();`);
   await review.click('[data-mode="project"]');
   await review.waitFor(`document.querySelectorAll('.pd-sidebar-group[data-section-key^="project:"]').length === 6`);
   const paths = await review.evaluate(`${state}.paths`);
@@ -60,7 +69,8 @@ export default async function sidebarProjectsScenarios(review) {
     return review.evaluate(`(() => { const node = document.querySelector(${q(selector)}); if (!node) throw new Error('Missing pointer target'); node.scrollIntoView({ block: 'nearest', inline: 'nearest' }); const rect = node.getBoundingClientRect(), x = rect.left + Math.min(rect.width * .45, 95), y = rect.top + rect.height * ${fraction}; const hit = document.elementFromPoint(x,y); if (!rect.width || !rect.height || !(hit === node || node.contains(hit))) throw new Error('Pointer target obscured'); return {x,y}; })()`);
   }
   async function right(name) { const p = await point(toggle(name)); await review.rightClick(p.x, p.y); await review.waitFor(`Boolean(document.querySelector(${q(menu)}))`); }
-  async function click(name) { const p = await point(toggle(name)); await review.mouseDown(p.x, p.y); await review.mouseUp(); }
+  // The menu starts at the context-click position, so dismiss from the title's exposed left edge.
+  async function click(name) { const p = await review.evaluate(`(() => { const r = document.querySelector(${q(toggle(name))}).getBoundingClientRect(); return { x: r.left + 16, y: r.top + r.height / 2 }; })()`); await review.mouseDown(p.x, p.y); await review.mouseUp(); }
   async function closed(message) { await review.assert(`!document.querySelector(${q(menu)})`, message); }
   const expanded = name => `document.querySelector(${q(toggle(name))}).getAttribute('aria-expanded') === 'true'`;
 
@@ -71,8 +81,8 @@ export default async function sidebarProjectsScenarios(review) {
   await review.assert(`${expanded('Alpha')} === ${!beforeToggle}`, 'The outside title click still performs its normal collapse toggle exactly once');
   await right('Alpha'); await click('Bravo');
   await closed('Clicking another project title closes the previous project menu');
-  await right('Alpha'); await review.click('.pd-sidebar-list-heading > span');
-  await closed('Clicking blank list-heading space closes the context menu');
+  await right('Alpha'); await review.click('.pd-sidebar-brand .pd-brand-mark');
+  await closed('Clicking the sidebar brand closes the context menu');
   await review.click(more('Alpha')); await review.waitFor(`Boolean(document.querySelector(${q(menu)}))`);
   await review.click(more('Alpha'));
   await closed('Clicking the same more button toggles its open menu closed');
@@ -91,7 +101,7 @@ export default async function sidebarProjectsScenarios(review) {
   await review.assert(`!document.querySelector('.pd-sidebar-drag-ghost') && !document.querySelector(${q(menu)})`, 'Pressing the project plus button closes its menu and never starts project dragging');
   await review.mouseUp();
   await review.waitFor(`${state}.newSessions === 1`);
-  await review.assert(`${state}.newSessions === 1`, 'The project plus button creates one new conversation');
+  await review.assert(`${state}.newSessions === 1 && ${state}.newCalls[0].options?.cwd === ${q(paths.Alpha)} && window.__modelReview.snapshot.cwd === ${q(paths.Alpha)} && ${state}.conversationWorkspaces.length === 0`, 'The project plus button creates one conversation in its explicitly selected directory');
   await review.click(more('Alpha')); await review.clickText(`${menu} [role=menuitem]`, '置顶项目');
   await review.waitFor(`${state}.pinned.includes(${q(paths.Alpha)})`);
   await review.click(more('Alpha')); await review.clickText(`${menu} [role=menuitem]`, '取消置顶');
@@ -175,14 +185,8 @@ export default async function sidebarProjectsScenarios(review) {
 
   const expectedOrder = await review.evaluate(order);
   const saved = await review.evaluate(`({ pinned: ${state}.pinned })`);
-  await review.click('.pd-sidebar-list-heading .pd-section-actions button:first-child');
-  await review.waitFor(`!document.querySelector('.pd-sidebar-list-heading button:disabled')`);
-  await review.assert(`JSON.stringify(${order}) === ${q(JSON.stringify(expectedOrder))}`, 'Refreshing the project list preserves manual order even when the bridge returns its original order');
-  await review.evaluate('location.reload(); void 0');
-  await review.waitFor('!window.__sidebarProjectsReview && window.__modelReview?.ready === true && Boolean(document.querySelector(".pd-sidebar-mode"))');
-  await review.evaluate(`(${installSidebarProjectsFixture.toString()})(${q(saved)});`);
-  await review.click('.pd-sidebar-list-heading .pd-section-actions button:first-child');
-  await review.waitFor(`document.querySelectorAll('.pd-sidebar-group[data-section-key^="project:"]').length === 6 && !document.querySelector('.pd-sidebar-list-heading button:disabled')`);
-  await review.assert(`JSON.stringify(${order}) === ${q(JSON.stringify(expectedOrder))} && ${noBadges}`, 'Renderer reload restores project order and the pinned partition without count badges');
+  await review.reloadWithFixture(`(${installSidebarProjectsFixture.toString()})(${q(saved)});`);
+  await review.waitFor(`document.querySelectorAll('.pd-sidebar-group[data-section-key^="project:"]').length === 6`);
+  await review.assert(`JSON.stringify(${order}) === ${q(JSON.stringify(expectedOrder))} && ${noBadges}`, 'Renderer reload restores manual project order and the pinned partition even when the bridge returns its original order');
   await review.screenshot('sidebar-projects-reloaded-persistent-order');
 }

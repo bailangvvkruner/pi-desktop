@@ -29,9 +29,21 @@ test('desktop settings default, persist and survive corruption (4.1/4.2)', async
 
   await t.test('writes round-trip through reads', async () => {
     writeDesktopSettings(path, { notificationsEnabled: false, closeBehavior: 'quit' });
-    assert.deepEqual(readDesktopSettings(path), { notificationsEnabled: false, closeBehavior: 'quit' });
+    assert.deepEqual(readDesktopSettings(path), { ...DEFAULT_DESKTOP_SETTINGS, notificationsEnabled: false, closeBehavior: 'quit' });
     await writeDesktopSettingsAsync(path, { notificationsEnabled: true, closeBehavior: 'tray' });
-    assert.deepEqual(readDesktopSettings(path), { notificationsEnabled: true, closeBehavior: 'tray' });
+    assert.deepEqual(readDesktopSettings(path), DEFAULT_DESKTOP_SETTINGS);
+  });
+
+  await t.test('legacy preferences gain the default directory without losing existing choices', () => {
+    const configuredDefault = join(temp, 'legacy-default');
+    writeFileSync(path, JSON.stringify({ notificationsEnabled: false, closeBehavior: 'quit' }));
+    assert.deepEqual(readDesktopSettings(path, configuredDefault), {
+      notificationsEnabled: false, closeBehavior: 'quit', conversationStorageDirectory: configuredDefault,
+    });
+    const custom = join(temp, 'custom');
+    writeDesktopSettings(path, { ...DEFAULT_DESKTOP_SETTINGS, conversationStorageDirectory: custom });
+    assert.equal(readDesktopSettings(path, configuredDefault).conversationStorageDirectory, custom);
+    assert.equal(recoveries.length, 0);
   });
 
   await t.test('corrupt or invalid content is preserved before falling back to defaults', () => {

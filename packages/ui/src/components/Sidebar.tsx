@@ -33,7 +33,6 @@ export function Sidebar({ open, projectRevealRequest = 0, narrow, onToggle, onNa
 	const platform = useChatStore((s) => s.appInfo?.platform);
 	const cwd = useChatStore((s) => s.cwd);
 	const status = useChatStore((s) => s.status);
-	const pickWorkspace = useChatStore((s) => s.pickWorkspace);
 	const newSession = useChatStore((s) => s.newSession);
 	const [actionError, setActionError] = useState<string | null>(null);
 	const reportActionError = useCallback((message: string | null) => {
@@ -91,9 +90,9 @@ export function Sidebar({ open, projectRevealRequest = 0, narrow, onToggle, onNa
 	async function startSession() {
 		setActionError(null);
 		const origin = cwd;
-		await runWithFeedback({ id: `new-session:${origin}`, title: t('sidebar.newSession'), run: async () => {
+		await runWithFeedback({ id: `new-session:${origin}`, title: t('sidebar.newSessionFailed'), showPending: false, run: async () => {
 			if (useChatStore.getState().cwd !== origin) throw new Error(locale === 'zh-CN' ? '请返回原工作区后重试。' : 'Return to the original workspace before retrying.');
-			await (origin ? newSession() : pickWorkspace()); onNavigate();
+			await newSession(); onNavigate();
 		} });
 	}
 

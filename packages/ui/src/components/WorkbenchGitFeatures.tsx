@@ -27,7 +27,7 @@ export function WorkbenchGitFeatures() {
     await useChatStore.getState().switchWorkspace(item.cwd);
     if (useChatStore.getState().cwd !== item.cwd || useChatStore.getState().bridge !== bridge) return;
     if (item.sessionPath && !item.sessionMissing) await useChatStore.getState().switchSession(item.sessionPath); else {
-      await useChatStore.getState().newSession(); if (useChatStore.getState().cwd !== item.cwd || useChatStore.getState().bridge !== bridge) return; const path = useChatStore.getState().sessionPath;
+      await useChatStore.getState().newSession({ cwd: item.cwd }); if (useChatStore.getState().cwd !== item.cwd || useChatStore.getState().bridge !== bridge) return; const path = useChatStore.getState().sessionPath;
       try { if (!path) throw new Error('会话尚未获得持久路径；可从工作树列表再次打开'); await api.bindTaskWorktree({ id: item.id, sessionPath: path }); }
       catch (reason) { if (useChatStore.getState().cwd === item.cwd && useChatStore.getState().bridge === bridge) useChatStore.setState({ error: `工作树已打开，但会话关联失败：${String(reason)}` }); throw reason; }
     }

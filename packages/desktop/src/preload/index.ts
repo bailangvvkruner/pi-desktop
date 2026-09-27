@@ -159,6 +159,9 @@ const bridge: AgentBridge = {
 	toggleMaximizeWindow: () => invoke(IPC_CHANNELS.windowToggleMaximize),
 	closeWindow: () => invoke(IPC_CHANNELS.windowClose),
 	pickWorkspace: () => invoke(IPC_CHANNELS.workspacePick),
+	pickConversationStorageDirectory: () => invoke(IPC_CHANNELS.conversationStoragePick),
+	getProjectsDirectory: () => invoke(IPC_CHANNELS.workspaceProjectsDirectory),
+	createProject: (name) => invoke(IPC_CHANNELS.workspaceCreateProject, name),
 	addDroppedWorkspaces: async (files) => {
 		if (!Array.isArray(files) || files.length > 256) throw new Error('拖入的项目数量无效');
 		const paths = files.map((file) => webUtils.getPathForFile(file as Parameters<typeof webUtils.getPathForFile>[0])).filter(Boolean);
@@ -168,6 +171,9 @@ const bridge: AgentBridge = {
 	listWorkspaceEntries: (relativePath) => invoke(IPC_CHANNELS.workspaceListEntries, relativePath),
 	searchWorkspaceFiles: (query, options) => invoke(IPC_CHANNELS.workspaceSearchFiles, query, options),
 	readWorkspaceFile: (relativePath) => invoke(IPC_CHANNELS.workspaceReadFile, relativePath),
+	openResultFile: (target) => invoke(IPC_CHANNELS.resultFileOpen, target),
+	revealResultFile: (target) => invoke(IPC_CHANNELS.resultFileReveal, target),
+	previewResultFile: (target) => invoke(IPC_CHANNELS.resultFilePreview, target),
 	readContext: (request) => invoke(IPC_CHANNELS.contextRead, request),
 	getWorkspaceGitStatus: () => invoke(IPC_CHANNELS.workspaceGitStatus),
 		getWorkspaceGitDiff: (relativePath, source) => invoke(IPC_CHANNELS.workspaceGitDiff, relativePath, source),
@@ -188,6 +194,7 @@ const bridge: AgentBridge = {
 	onWorkspaceCommandEvent,
 	initAgent: (cwd) => invoke(IPC_CHANNELS.agentInit, cwd),
 	listWorkspaces: () => invoke(IPC_CHANNELS.agentListWorkspaces),
+	listConversationWorkspaces: () => invoke(IPC_CHANNELS.workspaceListConversations),
 	switchWorkspace: (cwd, options) => invoke(IPC_CHANNELS.workspaceSwitch, cwd, options),
 		getDefaultWorkspace: () => invoke(IPC_CHANNELS.workspaceDefault),
 		removeWorkspace: (cwd) => invoke(IPC_CHANNELS.workspaceRemove, cwd),
@@ -229,7 +236,7 @@ const bridge: AgentBridge = {
 		updateQueuedMessage: (id, action, text) => invoke(IPC_CHANNELS.agentUpdateQueuedMessage, id, action, text),
 		generateCommitMessage: (context) => invoke(IPC_CHANNELS.agentGenerateCommitMessage, context),
 	abort: () => invoke(IPC_CHANNELS.agentAbort),
-	newSession: () => invoke(IPC_CHANNELS.agentNewSession),
+	newSession: (options) => invoke(IPC_CHANNELS.agentNewSession, options),
 	onExtensionDialog,
 	onExtensionDialogClosed,
 	getPendingExtensionDialogs: () => invoke(IPC_CHANNELS.agentExtensionDialogPending),

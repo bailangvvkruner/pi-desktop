@@ -16,6 +16,8 @@ import type { ModelManagementTarget } from '../modelManagement';
 import { DEFAULT_UI_FONT_SIZE, UI_FONT_SIZE_MAX, UI_FONT_SIZE_MIN, applyUiFontSize, readUiFontSize, saveUiFontSize } from '../uiFontSize';
 import { createSettingsLeaveGuard, type SettingsDraftState as DraftState, type SettingsLeaveRequest } from '../settingsLeaveGuard';
 import { useBusyInputBehavior } from '../busyInputBehavior';
+import { ConversationMetricsSettings } from './ConversationMetricsSettings';
+import { ConversationStorageSettings } from './ConversationStorageSettings';
 
 export type ThemePreference = 'system' | 'dark' | 'light';
 type SettingsPage = 'general' | 'appearance' | 'personalization' | 'model' | 'shortcuts' | 'updates' | 'data' | 'mcp';
@@ -117,7 +119,10 @@ function ProviderCredentialRow({ provider, configured, source, supportsApiKey, o
 
 export function SettingsPanel({ initialPage = 'general', modelManagementTarget, onClose, themePreference, onThemePreferenceChange, colorPreferences, onColorPreferencesChange, colorSaveFailed }: { initialPage?: 'general' | 'appearance' | 'model' | 'updates'; modelManagementTarget?: ModelManagementTarget; onClose(): void; themePreference: ThemePreference; onThemePreferenceChange(theme: ThemePreference): void; colorPreferences: ThemeColorPreferences; onColorPreferencesChange(preferences: ThemeColorPreferences): void; colorSaveFailed: boolean }) {
 	const { t, locale, setLocale } = useT();
-	const [page, setPage] = useState<SettingsPage>(initialPage);
+	const appInfo = useChatStore((s) => s.appInfo);
+	const [paiLaunch] = useState(() => new URLSearchParams(window.location.search).get('mode') === 'pai');
+	const paiMode = appInfo?.windowMode === 'pai' || paiLaunch;
+	const [page, setPage] = useState<SettingsPage>(paiMode && initialPage === 'updates' ? 'general' : initialPage);
 	const [modelTarget, setModelTarget] = useState(modelManagementTarget);
 	const [draftState, setDraftState] = useState<DraftState>({ dirty: false, saving: false });
 	const [leaveGuard] = useState(() => createSettingsLeaveGuard<SettingsPage, DraftFocus | null>());
@@ -146,7 +151,6 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	const settingsError = useChatStore((s) => s.settingsError);
 	const status = useChatStore((s) => s.status);
 	const cwd = useChatStore((s) => s.cwd);
-	const appInfo = useChatStore((s) => s.appInfo);
 	const bridge = useChatStore((s) => s.bridge);
 	const refreshModels = useChatStore((s) => s.refreshModels);
 	const refreshProviderAuth = useChatStore((s) => s.refreshProviderAuth);
@@ -222,7 +226,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	}, [bridge]);
 
 	useEffect(() => {
-		if (!bridge) return;
+		if (!bridge || paiMode) return;
 		let active = true;
 		let receivedEvent = false;
 		const unsubscribe = bridge.onUpdateStateChanged((next) => {
@@ -236,7 +240,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 			if (active) setUpdateActionError(error instanceof Error ? error.message : String(error));
 		});
 		return () => { active = false; unsubscribe(); };
-	}, [bridge]);
+	}, [bridge, paiMode]);
 
 	useEffect(() => {
 		if (!dialogRef.current?.contains(document.activeElement) && !document.querySelector('dialog[open]')?.contains(document.activeElement)) closeRef.current?.focus();
@@ -247,7 +251,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 				returnFocus.focus();
 				return;
 			}
-			const settingsEntry = document.querySelector<HTMLButtonElement>('.pd-settings-entry');
+			const settingsEntry = document.querySelector<HTMLButtonElement>('.pd-settings-entry, .pd-pai-settings');
 			const sidebarToggle = document.querySelector<HTMLButtonElement>('.pd-header-sidebar-toggle');
 			if (canReceiveFocus(settingsEntry)) settingsEntry.focus();
 			else if (canReceiveFocus(sidebarToggle)) sidebarToggle.focus();
@@ -319,13 +323,13 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 						<button type="button" className={page === 'personalization' ? 'is-active' : ''} aria-current={page === 'personalization' ? 'page' : undefined} onClick={() => selectPage('personalization')}>{t('settings.personalization')}</button>
 						<button type="button" className={page === 'model' ? 'is-active' : ''} aria-current={page === 'model' ? 'page' : undefined} onClick={() => selectPage('model')}>{t('settings.modelManagement')}</button>
 						<button type="button" className={page === 'shortcuts' ? 'is-active' : ''} aria-current={page === 'shortcuts' ? 'page' : undefined} onClick={() => selectPage('shortcuts')}>{t('settings.shortcuts')}</button>
-						<button type="button" className={page === 'updates' ? 'is-active' : ''} aria-current={page === 'updates' ? 'page' : undefined} onClick={() => selectPage('updates')}>{t('settings.updates')}</button>
+						{!paiMode && <button type="button" className={page === 'updates' ? 'is-active' : ''} aria-current={page === 'updates' ? 'page' : undefined} onClick={() => selectPage('updates')}>{t('settings.updates')}</button>}
 						<button type="button" className={page === 'mcp' ? 'is-active' : ''} aria-current={page === 'mcp' ? 'page' : undefined} onClick={() => selectPage('mcp')}>MCP</button>
-						<button type="button" className={page === 'data' ? 'is-active' : ''} aria-current={page === 'data' ? 'page' : undefined} onClick={() => selectPage('data')}>{locale === 'zh-CN' ? '数据管理' : 'Data management'}</button>
+						{!paiMode && <button type="button" className={page === 'data' ? 'is-active' : ''} aria-current={page === 'data' ? 'page' : undefined} onClick={() => selectPage('data')}>{locale === 'zh-CN' ? '数据管理' : 'Data management'}</button>}
 					</nav>
 					<div className="pd-settings-content" onFocusCapture={(event) => { if (event.target instanceof HTMLElement) draftFocusRef.current = event.target; }}>
 						{settingsError && <div className="pd-settings-error" role="alert">{settingsError}</div>}
-						{page === 'data' && <DataManagementPanel />}
+						{!paiMode && page === 'data' && <DataManagementPanel />}
 						{page === 'mcp' && <McpSettingsPanel />}
 						{page === 'personalization' && <PersonalizationPanel active onDraftStateChange={reportDraftState} />}
 						{page === 'general' && <>
@@ -335,12 +339,14 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 								<button type="button" className={locale === 'zh-CN' ? 'is-selected' : ''} aria-pressed={locale === 'zh-CN'} onClick={() => setLocale('zh-CN')}>{t('settings.languageZh')}</button>
 								<button type="button" className={locale === 'en-US' ? 'is-selected' : ''} aria-pressed={locale === 'en-US'} onClick={() => setLocale('en-US')}>{t('settings.languageEn')}</button>
 						</div>
+						<ConversationStorageSettings onDraftStateChange={reportDraftState} />
 						<div className="pd-settings-section-head"><h3>{t('settings.busyInputBehavior')}</h3><p>{t('settings.busyInputBehaviorDescription', { modifier: appInfo?.platform === 'darwin' ? 'Cmd' : 'Ctrl' })}</p></div>
 						<div className="pd-language-options" data-setting="busy-input-behavior" role="group" aria-label={t('settings.busyInputBehavior')}>
 							<button type="button" className={busyInputBehavior === 'followUp' ? 'is-selected' : ''} aria-pressed={busyInputBehavior === 'followUp'} onClick={() => setBusyInputSaveFailed(!setBusyInputBehavior('followUp'))}>{t('settings.busyInputQueue')}</button>
 							<button type="button" className={busyInputBehavior === 'steer' ? 'is-selected' : ''} aria-pressed={busyInputBehavior === 'steer'} onClick={() => setBusyInputSaveFailed(!setBusyInputBehavior('steer'))}>{t('settings.busyInputSteer')}</button>
 						</div>
 						{busyInputSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.busyInputSaveFailed')}</p>}
+						<ConversationMetricsSettings />
 						<div className="pd-settings-section-head"><h3>{t('settings.notifications')}</h3><p>{t('settings.notificationsDescription')}</p></div>
 						{desktopSettingsError && <p role="alert">{desktopSettingsError}</p>}
 						{desktopSettings && (
@@ -351,7 +357,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 									disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ notificationsEnabled: false }); }}>{t('settings.notificationsOff')}</button>
 							</div>
 						)}
-						{appInfo?.platform === 'win32' && desktopSettings && (
+						{!paiMode && appInfo?.platform === 'win32' && desktopSettings && (
 							<>
 								<div className="pd-settings-section-head"><h3>{t('settings.closeBehavior')}</h3><p>{t('settings.closeBehaviorDescription')}</p></div>
 									<div className="pd-language-options" data-setting="tray" role="group" aria-label={t('settings.closeBehavior')}>
@@ -389,7 +395,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 							<div className="pd-settings-section-head"><h2>{t('settings.shortcuts')}</h2><p>{t('settings.shortcutsDescription')}</p></div>
 						<ShortcutSettings isMac={appInfo?.platform === 'darwin'} />
 						</>}
-						{page === 'updates' && <>
+						{!paiMode && page === 'updates' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.updates')}</h2><p>{t('settings.updateDescription')}</p></div>
 							<div className="pd-update-card" aria-live="polite">
 								<strong>{updateStatus}</strong>

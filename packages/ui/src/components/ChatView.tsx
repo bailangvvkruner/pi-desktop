@@ -63,7 +63,7 @@ function SessionLoading() {
 
 export interface SearchMessageTarget { sessionPath: string; messageId: string; snippet?: string; requestId: number }
 
-export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget, historyControls, navigationError }: { onToggleSidebar(): void; onOpenModelManagement(target: ModelManagementTarget): void; searchTarget?: SearchMessageTarget | null; historyControls?: ReactNode; navigationError?: string | null }) {
+export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget, historyControls, navigationError, compact = false }: { onToggleSidebar(): void; onOpenModelManagement(target: ModelManagementTarget): void; searchTarget?: SearchMessageTarget | null; historyControls?: ReactNode; navigationError?: string | null; compact?: boolean }) {
 	const { t } = useT();
 	const messages = useChatStore((s) => s.messages);
 	const c = useConversationCopy();
@@ -91,7 +91,8 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	}
 	const timeline = timelineRef.current.entries;
 	const hasOlderHistory = historyTotal > messages.length + activities.length;
-	const isEmpty = timeline.length === 0 && !error && fileChanges.length === 0;
+	const isNewConversation = timeline.length === 0 && fileChanges.length === 0;
+	const isEmpty = isNewConversation && !error;
 	const awaitingResponse = agentStatus === 'busy' && !runs.some(run => run.status === 'running') && !error && !messages.some((message) => message.status === 'streaming') && !activities.some((activity) => activity.status === 'running');
 	const disclosureScope = `${cwd}\0${sessionPath}\0${sessionId}`;
 	const [revealMessage, setRevealMessage] = useState<{ id: string; request: number; scope: string } | null>(null);
@@ -153,7 +154,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.defaultPrevented || event.isComposing) return;
+			if (event.defaultPrevented || event.isComposing || document.querySelector('[role="dialog"][aria-modal="true"], dialog[open]')) return;
 			if (matchesShortcut(event, bindingKeysFor('findInTranscript'))) {
 				event.preventDefault();
 				setFindOpen(true);
@@ -423,7 +424,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		<main className={`pd-main${isEmpty ? ' is-empty' : ''}`}>
 			<header className="pd-chat-header">
 				{historyControls}
-				<HoverTooltip title={t('chat.toggleSidebar')}><button type="button" className="pd-icon-button pd-header-sidebar-toggle" onClick={onToggleSidebar} aria-label={t('chat.toggleSidebar')}><Icon name="panel" /></button></HoverTooltip>
+				{!compact && <HoverTooltip title={t('chat.toggleSidebar')}><button type="button" className="pd-icon-button pd-header-sidebar-toggle" onClick={onToggleSidebar} aria-label={t('chat.toggleSidebar')}><Icon name="panel" /></button></HoverTooltip>}
 				<div className="pd-chat-heading"><WorkspaceFolderButton key={`folder:${cwd}\0${sessionId}`} cwd={cwd} /><ChatTitle key={`${cwd}\0${sessionId}`} ref={titleRef} title={title} sessionPath={sessionPath} /><ChatHeaderMenu title={title} sessionPath={sessionPath} cwd={cwd} onRename={() => titleRef.current?.beginRename()} onOpenCommit={() => setCommitOpen(true)} /></div>
 				<div className="pd-chat-header-actions"><WorkspaceOpenButton cwd={cwd} /></div>
 			</header>
@@ -478,7 +479,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 					</button>
 				</div>
 				{!isEmpty && !sessionLoading && <ConversationRail messages={messages} getScrollElement={getScrollElement} markedIds={railMarkedIds ?? undefined} onJumpToMessage={jumpToMessage} />}
-				<Composer header={isEmpty ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} changesSlotRef={setChangesDock} />
+				<Composer header={isNewConversation ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} changesSlotRef={setChangesDock} />
 			</div>
 			{commitOpen && <ChatCommitDialog onClose={() => setCommitOpen(false)} />}
 		</main>

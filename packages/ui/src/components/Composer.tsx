@@ -21,6 +21,7 @@ import { ImagePreviewDialog } from './ImagePreviewDialog';
 import type { InputFeatureBridge, UiStoredAttachment } from '../../../shared/src/inputFeatures';
 import { PersistedComposerDrafts } from '../persistedDrafts';
 import { useBusyInputBehavior, type BusyInputBehavior as BusyBehavior } from '../busyInputBehavior';
+import { ConversationMetrics } from './ConversationMetrics';
 
 function draftStorageKey(cwd: string, sessionPath: string | null): string {
 	return `pi-desktop:draft:${encodeURIComponent(cwd)}:${encodeURIComponent(sessionPath ?? 'new')}`;
@@ -87,6 +88,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const [stopRequests, setStopRequests] = useState(() => new Map(stopRequestsRef.current));
 	const [retrying, setRetrying] = useState(false);
 	const [attaching, setAttaching] = useState(false);
+	const [restoringDraft, setRestoringDraft] = useState(false);
 	const [submissionError, setSubmissionError] = useState<string | null>(null);
 	const [draftWarning, setDraftWarning] = useState(false);
 	const [missingAttachments, setMissingAttachments] = useState<UiStoredAttachment[]>([]);
@@ -106,6 +108,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const draftsRef = useRef(new Map<string, ComposerDraft>([[draftKey, { text, attachments }]]));
 	const textEdits = useRef(new Map<string, number>());
 	const pendingAttachmentsRef = useRef(0);
+	const pendingDraftRestoresRef = useRef(0);
 	const sendingRef = useRef(false);
 	const currentKeyRef = useRef(draftKey);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -127,7 +130,10 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const unavailable = navigating || status === 'starting' || status === 'uninitialized' || status === 'error';
 	const busyHint = t('composer.busyHint', { action: t(defaultBusyBehavior === 'followUp' ? 'composer.queueSend' : 'composer.steer'), alternate: t(defaultBusyBehavior === 'followUp' ? 'composer.steer' : 'composer.queueSend'), shortcut: alternateShortcut });
 	const placeholder = status === 'error' ? t('composer.connectionErrorPlaceholder') : unavailable ? t('composer.connecting') : busy ? busyHint : t('composer.placeholder');
-	const canSubmit = Boolean(text.trim() || attachments.length) && !sending && !attaching && !unavailable && !missingAttachments.length && !draftRestoreError;
+	const hasContent = Boolean(text.trim() || attachments.length);
+	const showStop = busy && !hasContent;
+	const primaryActionLabel = t(showStop ? stopping ? 'composer.stopping' : 'composer.stopTitle' : 'composer.send');
+	const canSubmit = hasContent && !sending && !attaching && !restoringDraft && !unavailable && !missingAttachments.length && !draftRestoreError;
 	const slashCatalogKey = JSON.stringify([cwd, sessionId]);
 	const slashOpen = slashTrigger !== null;
 	const inputBridge = bridge as Partial<InputFeatureBridge> | null;
@@ -137,14 +143,14 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 		if (!persistence || loadedDrafts.current.has(draftKey)) { setDraftRestoreError(false); setMissingAttachments(missingByKey.current.get(draftKey) ?? []); return; }
 		const key = draftKey, scope = { cwd, sessionPath }, initialTextRevision = textEdits.current.get(draftKey) ?? 0; let cancelled = false;
 		setDraftRestoreError(false);
-		pendingAttachmentsRef.current++; setAttaching(true);
+		pendingDraftRestoresRef.current++; setRestoringDraft(true);
 		void persistence.load(scope).then(({ draft, missing }) => {
 			loadedDrafts.current.add(key); missingByKey.current.set(key, missing);
 			const local = draftsRef.current.get(key), editedWhileLoading = (textEdits.current.get(key) ?? 0) !== initialTextRevision;
 			const next = { text: editedWhileLoading ? local?.text ?? '' : local?.text || draft.text, attachments: local?.attachments.length ? local.attachments : draft.attachments };
 			draftsRef.current.set(key, next);
 			if (!cancelled && currentKeyRef.current === key) { textRef.current = next.text; attachmentsRef.current = next.attachments; setText(next.text); setAttachments(next.attachments); setMissingAttachments(missing); writeDraft(key, next.text); }
-		}).catch((error: unknown) => { if (!cancelled) { setDraftRestoreError(true); setSubmissionError(error instanceof Error ? error.message : String(error)); } }).finally(() => { pendingAttachmentsRef.current--; setAttaching(pendingAttachmentsRef.current > 0); });
+		}).catch((error: unknown) => { if (!cancelled) { setDraftRestoreError(true); setSubmissionError(error instanceof Error ? error.message : String(error)); } }).finally(() => { pendingDraftRestoresRef.current--; setRestoringDraft(pendingDraftRestoresRef.current > 0); });
 		return () => { cancelled = true; };
 	}, [bridge, draftKey, restoreRetry]);
 	useEffect(() => {
@@ -378,7 +384,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	async function submit(behavior?: BusyBehavior): Promise<void> {
 		const value = textRef.current.trim();
 		const submittedAttachments = attachmentsRef.current;
-		if ((!value && !submittedAttachments.length) || sendingRef.current || pendingAttachmentsRef.current > 0 || unavailable || missingAttachments.length || draftRestoreError) return;
+		if ((!value && !submittedAttachments.length) || sendingRef.current || pendingAttachmentsRef.current > 0 || pendingDraftRestoresRef.current > 0 || unavailable || missingAttachments.length || draftRestoreError) return;
 		const submittedKey = currentKeyRef.current;
 		sendingRef.current = true;
 		setSending(true);
@@ -469,13 +475,13 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 						{quotes.filter((item) => item.key === draftKey && text.includes(item.block)).map((item, index) => <button type="button" className="pd-quote-chip" key={`${item.source}:${index}`} onClick={() => { changeText(textRef.current.replace(item.block, '')); setQuotes((items) => items.filter((entry) => entry !== item)); }} aria-label={c('removeQuote')}>{item.source} ×</button>)}
 						<div className="pd-composer-meta">
 							<input ref={fileInputRef} type="file" multiple className="pd-composer-file-input" tabIndex={-1} aria-hidden="true" onChange={onFileChange} />
-							<HoverTooltip title={t('composer.contextAddTitle')} shortcut="@"><button ref={contextButtonRef} type="button" className="pd-composer-add-attachment" onMouseDown={(event) => event.preventDefault()} onClick={() => { closeSlash(); setContextPicker((current) => current?.mode === 'menu' ? null : { mode: 'menu' }); }} disabled={unavailable || attaching || attachments.length >= MAX_ATTACHMENTS} aria-label={t('composer.contextAddTitle')} aria-haspopup="dialog" aria-expanded={contextPicker !== null}><Icon name="plus" width="16" height="16" /></button></HoverTooltip>
+							<HoverTooltip title={t('composer.contextAddTitle')} shortcut="@"><button ref={contextButtonRef} type="button" className="pd-composer-add-attachment" onMouseDown={(event) => event.preventDefault()} onClick={() => { closeSlash(); setContextPicker((current) => current?.mode === 'menu' ? null : { mode: 'menu' }); }} disabled={unavailable || attaching || restoringDraft || attachments.length >= MAX_ATTACHMENTS} aria-label={t('composer.contextAddTitle')} aria-haspopup="dialog" aria-expanded={contextPicker !== null}><Icon name="plus" width="16" height="16" /></button></HoverTooltip>
 						</div>
 						<div className="pd-composer-actions">
 							<ComposerControls onOpenModelManagement={onOpenModelManagement} hasImages={attachments.some((item) => item.kind === 'image')} />
 							{status === 'error' || retrying
 								? <button type="button" className="pd-send-button pd-composer-retry" onClick={() => void retryConnection()} disabled={retrying}><Icon name="refresh" width="15" height="15" /><span>{t(retrying ? 'composer.retryingConnection' : 'composer.retryConnection')}</span></button>
-								: <HoverTooltip title={t(busy ? stopping ? 'composer.stopping' : 'composer.stopTitle' : 'composer.send')} description={busy ? busyHint : undefined} shortcut={busy ? undefined : 'Enter'}><button type="button" className="pd-send-button" data-action={busy ? 'stop' : 'send'} onClick={() => void (busy ? stopCurrentTask() : submit())} disabled={busy ? stopping || navigating : !canSubmit} aria-label={t(busy ? stopping ? 'composer.stopping' : 'composer.stopTitle' : 'composer.send')} aria-busy={busy ? stopping : sending}><Icon name={busy ? 'square' : 'arrowUp'} width="16" height="16" /></button></HoverTooltip>}
+								: <button type="button" className="pd-send-button" data-action={showStop ? 'stop' : 'send'} onClick={() => void (showStop ? stopCurrentTask() : submit())} disabled={showStop ? stopping || navigating : !canSubmit} aria-label={primaryActionLabel} aria-busy={showStop ? stopping : sending}><Icon name={showStop ? 'square' : 'arrowUp'} width="16" height="16" /></button>}
 						</div>
 					</div>
 				</div>
@@ -484,6 +490,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 				{attaching && <p className="pd-composer-attachment-hint" role="status">{t('composer.readingAttachments')}{pdfCount > 0 && <button type="button" onClick={() => { for (const id of pdfJobs.current) void inputBridge?.cancelPdfInput?.(id); }}>{zh ? '取消PDF处理' : 'Cancel PDF processing'}</button>}</p>}
 				{!queueEditing && attachments.length > 0 && <p className="pd-composer-attachment-hint">{inputBridge?.getInputDraft ? (zh ? '附件随草稿保存在本机。PDF以带页码的本地提取文字发送；不支持扫描OCR。' : 'Attachments are saved locally with the draft. PDFs send locally extracted text with page numbers; OCR is unavailable.') : t('composer.attachmentPersistence')}</p>}
 				{imagePreview && <ImagePreviewDialog images={attachments.flatMap((attachment, index) => attachment.kind === 'image' ? [{ id: `pending:${index}`, name: attachment.name, attachment }] : [])} initialIndex={imagePreview.index} returnFocus={imagePreview.trigger} onClose={() => setImagePreview(null)} />}
+				<ConversationMetrics />
 			</div>
 		</div>
 	);
