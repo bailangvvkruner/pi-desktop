@@ -75,4 +75,60 @@ export default async function inputScenarios(review) {
   await review.evaluate('window.__inputReview.resolveLateDraft({version:1,text:"Old stored text",attachments:[],missing:[]})');
   await review.waitFor('!document.querySelector(".pd-composer-attachment-hint button")');
   await review.assert('document.querySelector(".pd-composer-shell textarea").value === ""', 'Late restoration does not overwrite an intentionally cleared draft');
+
+  await review.evaluate(`(() => {
+    const state = window.__inputReview, original = window.piDesktop.getInputDraft;
+    state.recoveryReads = {}; state.recoveryPending = {};
+    window.piDesktop.getInputDraft = async scope => {
+      if (!scope.sessionPath.startsWith('input-recovery-')) return original(scope);
+      const count = state.recoveryReads[scope.sessionPath] = (state.recoveryReads[scope.sessionPath] ?? 0) + 1;
+      if (count === 1 || scope.sessionPath === 'input-recovery-unread') throw new Error('草稿所属工作区或会话已变化');
+      return new Promise(resolve => { state.recoveryPending[scope.sessionPath] = resolve; });
+    };
+    state.ready('input-recovery-retry');
+  })()`);
+  const quietRecovery = '!document.querySelector(".pd-composer-error") && !/草稿所属工作区或会话已变化|重试恢复草稿|Retry draft recovery/.test(document.querySelector(".pd-composer-wrap").textContent)';
+  await review.waitFor('window.__inputReview.recoveryReads["input-recovery-retry"] === 1');
+  await review.fill('.pd-composer-shell textarea', '草稿后台恢复期间继续编辑');
+  await review.waitFor('!document.querySelector(".pd-send-button").disabled');
+  await review.assert(quietRecovery, 'A failed draft read shows no scope warning or manual recovery button and keeps current input usable');
+  await review.waitFor('Boolean(window.__inputReview.recoveryPending["input-recovery-retry"])');
+  await review.fill('.pd-composer-shell textarea', '');
+  await review.evaluate('window.__inputReview.recoveryPending["input-recovery-retry"]({version:7,text:"Old stored draft",attachments:[],missing:[]})');
+  await review.waitFor('window.__inputReview.saves.some(item => item.sessionPath === "input-recovery-retry" && item.expectedVersion === 7 && item.text === "")');
+  await review.assert(quietRecovery + ' && document.querySelector(".pd-composer-shell textarea").value === ""', 'Background recovery respects a deliberate clear and resumes persistence only after reading the stored version');
+
+  await review.evaluate('window.__inputReview.ready("input-recovery-away")');
+  await review.waitFor('Boolean(window.__inputReview.recoveryPending["input-recovery-away"])');
+  await review.fill('.pd-composer-shell textarea', '原对话的本地草稿');
+  await review.evaluate('window.__inputReview.ready("input-recovery-unread")');
+  await review.waitFor('window.__inputReview.recoveryReads["input-recovery-unread"] >= 1');
+  await review.fill('.pd-composer-shell textarea', '读取失败仍然能够正常发送');
+  await review.evaluate('window.__inputReview.recoveryPending["input-recovery-away"]({version:9,text:"Another conversation draft",attachments:[],missing:[]})');
+  await review.waitFor('window.__inputReview.recoveryReads["input-recovery-unread"] === 3 && !document.querySelector(".pd-send-button").disabled');
+  await review.assert(quietRecovery + ' && document.querySelector(".pd-composer-shell textarea").value === "读取失败仍然能够正常发送" && !window.__inputReview.saves.some(item => item.sessionPath.startsWith("input-recovery-") && item.sessionPath !== "input-recovery-retry")', 'Exhausted retries and a late result from another conversation never overwrite unread persisted drafts or current input');
+  await review.screenshot('inputs-quiet-draft-recovery');
+  await review.click('.pd-send-button');
+  await review.waitFor('document.querySelector(".pd-composer-shell textarea").value === "" && window.__inputReview.sends.at(-1).text === "读取失败仍然能够正常发送"');
+  await review.assert(quietRecovery + ' && window.__inputReview.recoveryReads["input-recovery-unread"] === 3 && !window.__inputReview.saves.some(item => item.sessionPath === "input-recovery-unread")', 'A current local draft can still be sent after recovery fails without an endless retry loop or overwriting the unread draft');
+
+  await review.evaluate(`(() => {
+    const state = window.__inputReview, original = window.piDesktop.submitInput;
+    window.piDesktop.submitInput = async request => {
+      const result = await original(request);
+      return new Promise(resolve => { state.acknowledgeRecoverySend = () => resolve(result); });
+    };
+    state.ready('input-recovery-sending');
+  })()`);
+  await review.waitFor('window.__inputReview.recoveryReads["input-recovery-sending"] >= 1');
+  await review.fill('.pd-composer-shell textarea', '发送确认期间草稿恢复也不能改变这条消息');
+  await review.waitFor('!document.querySelector(".pd-send-button").disabled');
+  await review.click('.pd-send-button');
+  await review.waitFor('Boolean(window.__inputReview.acknowledgeRecoverySend) && Boolean(window.__inputReview.recoveryPending["input-recovery-sending"])');
+  await review.evaluate(`window.__inputReview.recoveryPending['input-recovery-sending']({version:3,text:'Older disk draft',attachments:[{id:'stored-image',version:1,kind:'image',name:'restored.png',mimeType:'image/png',size:100},{id:'missing',version:1,kind:'image',name:'missing.png',mimeType:'image/png',size:100}],missing:['missing']})`);
+  await review.waitFor('window.__inputReview.saves.some(item => item.sessionPath === "input-recovery-sending" && item.expectedVersion === 3)');
+  await review.assert(quietRecovery + ' && !document.querySelector(".pd-composer-attachment") && document.querySelector(".pd-composer-shell textarea").value === "发送确认期间草稿恢复也不能改变这条消息"', 'Recovery during an unacknowledged send does not merge old attachments or reinstate missing-attachment blockers');
+  await review.evaluate('window.__inputReview.acknowledgeRecoverySend()');
+  await review.waitFor('document.querySelector(".pd-composer-shell textarea").value === ""');
+  await review.assert(quietRecovery + ' && !document.querySelector(".pd-composer-attachment")', 'The acknowledged message clears normally even when background recovery finished during submission');
 }

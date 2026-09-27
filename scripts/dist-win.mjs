@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { parseArgs } from 'node:util';
 import { prepareUpdateConfig } from './prepare-update-config.mjs';
+import { preparePaiLauncher } from './prepare-pai-launcher.mjs';
 import { WINDOWS_PTY_PREBUILD_CONFIG, verifyWindowsPtyPrebuilds } from './windows-pty-prebuild.mjs';
 
 const require = createRequire(new URL('../packages/desktop/package.json', import.meta.url));
@@ -12,6 +13,8 @@ const { values } = parseArgs({ options: { output: { type: 'string' }, dir: { typ
 // Verify the target artifacts before opting out of native rebuilds for Windows;
 // macOS/Linux keep their own native build policies.
 verifyWindowsPtyPrebuilds(require);
+// Also prepare the standalone command for --dir builds used for local installs.
+await preparePaiLauncher();
 const config = {
   publish,
   ...WINDOWS_PTY_PREBUILD_CONFIG,

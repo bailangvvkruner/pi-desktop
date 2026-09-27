@@ -122,6 +122,12 @@ export function AppShell() {
 		const bridge = commandBridge;
 		if (!bridge?.onAppCommand) return;
 		return bridge.onAppCommand((command) => {
+			if (command.type === 'open-settings') {
+				setSearchOpen(false);
+				setSettingsInitialPage('general');
+				setSettingsOpen(true);
+				return;
+			}
 			setMainView('chat');
 			setSearchMessageTarget(null);
 			if (command.type === 'new-session') {

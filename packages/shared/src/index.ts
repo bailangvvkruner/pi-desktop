@@ -791,7 +791,7 @@ export interface UiDesktopSettings {
 }
 
 /** Main → renderer commands (tray menu, notification clicks). */
-export type UiAppCommand = { type: 'new-session' } | { type: 'switch-session'; path: string; cwd?: string };
+export type UiAppCommand = { type: 'new-session' } | { type: 'switch-session'; path: string; cwd?: string } | { type: 'open-settings' };
 
 export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge, ResultFilesBridge {
   getPersonalization(): Promise<UiInstructionDocument[]>;

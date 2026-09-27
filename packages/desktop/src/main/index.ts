@@ -1,7 +1,7 @@
 import { initializeDiagnostics, recordDiagnostic } from './diagnostics.ts';
 import { app, BrowserWindow, dialog, Menu, session, shell } from 'electron';
 import { mkdirSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IPC_CHANNELS } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
@@ -34,6 +34,7 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 let ipc: typeof import('./ipc') | null = null;
 let updateService: typeof import('./updateService').updateService | null = null;
 let mainRevealed = false;
+let pendingOpenSettings = false;
 let startupCancelled = false;
 const pendingWindowReveals = new WeakMap<BrowserWindow, () => void>();
 const rendererWindows = new Set<BrowserWindow>();
@@ -45,6 +46,15 @@ function showMainWindow(): void {
 	if (target.isMinimized()) target.restore();
 	target.show();
 	target.focus();
+}
+
+function openSettings(): void {
+	showMainWindow();
+	if (!mainRevealed || !ipc) {
+		pendingOpenSettings = true;
+		return;
+	}
+	ipc.sendAppCommand({ type: 'open-settings' });
 }
 
 function splashUrl(html: string): string {
@@ -305,6 +315,10 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 		const mainWindow = createWindow(() => {
 			mainRevealed = true;
 			if (!splash.isDestroyed()) splash.close();
+			if (pendingOpenSettings) {
+				pendingOpenSettings = false;
+				module.sendAppCommand({ type: 'open-settings' });
+			}
 		}, (error) => showStartupError(splash, error));
 		// Load the UI and Pi history concurrently, keeping the logo until React
 		// acknowledges a committed conversation (or a required extension dialog).
@@ -338,26 +352,15 @@ if (!hasSingleInstanceLock) {
 		Menu.setApplicationMenu(null);
 		if (launch.windowMode === 'full') createAppTray({
 			showMainWindow,
+			onOpenSettings: openSettings,
 			quitApp: () => app.quit(),
 			getStatus: async () => {
 				if (!ipc) return null;
 				try {
 					const snapshot = await ipc.agentService.getSnapshot();
-					return { running: snapshot.status === 'busy', project: snapshot.cwd && !(await ipc.isConversationWorkspace(snapshot.cwd)) ? basename(snapshot.cwd) : '' };
+					return { running: snapshot.status === 'busy' };
 				} catch { return null; }
 			},
-			getRecentSessions: async () => {
-				if (!ipc) return [];
-				try {
-					const snapshot = await ipc.agentService.getSnapshot();
-					const sessions = await ipc.agentService.listSessions(snapshot.cwd);
-					return sessions.filter((session) => !session.archived).slice(0, 5)
-						.map((session) => ({ path: session.path, title: session.name || session.firstMessage }));
-				} catch { return []; }
-			},
-			onNewSession: () => { showMainWindow(); ipc?.sendAppCommand({ type: 'new-session' }); },
-			onSwitchSession: (path) => { showMainWindow(); ipc?.sendAppCommand({ type: 'switch-session', path }); },
-			onCheckUpdates: () => { showMainWindow(); void updateService?.check(false).catch(() => undefined); },
 		});
 	}
 	// The renderer only needs clipboard write for its explicit copy action.

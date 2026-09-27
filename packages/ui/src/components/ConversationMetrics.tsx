@@ -5,7 +5,6 @@ import { useT } from '../i18n';
 import { useConversationMetricsPreferences } from '../conversationMetricsPreferences';
 import { conversationMetricsAt, formatMetricDuration, formatMetricTokens } from '../conversationMetrics';
 import { Icon } from './Icons';
-import { HoverTooltip } from './HoverTooltip';
 import './conversationMetrics.css';
 
 export function ConversationMetrics() {
@@ -48,9 +47,9 @@ export function ConversationMetrics() {
 	const tokens = (value: number | undefined) => formatMetricTokens(value, locale);
 	const exact = (value: number | undefined) => value?.toLocaleString(locale) ?? '—';
 	return <div className="pd-conversation-metrics" role="group" aria-label={t('settings.conversationMetrics')}>
-		{preferences.speed && <HoverTooltip title={t('settings.metrics.speed')} description={t('metrics.speedDescription')}><span className="pd-metric-group pd-metric-speed" tabIndex={0} aria-label={`${t('settings.metrics.speed')}: ${speed === null ? '—' : speed.toFixed(1)} t/s`}>{speed === null ? '—' : speed.toLocaleString(locale, { maximumFractionDigits: 1 })} t/s</span></HoverTooltip>}
-		{preferences.tokens && <HoverTooltip title={t('settings.metrics.tokens')} description={t('metrics.tokensDescription', { input: exact(stats?.tokens.input), output: exact(stats?.tokens.output), total: exact(stats?.tokens.total) })}><span className="pd-metric-group" tabIndex={0}><span className="pd-metric-input">↑{tokens(stats?.tokens.input)}</span><span className="pd-metric-output">↓{tokens(stats?.tokens.output)}</span><span>Σ {tokens(stats?.tokens.total)}</span></span></HoverTooltip>}
-		{preferences.cache && <HoverTooltip title={t('settings.metrics.cache')} description={t('metrics.cacheDescription', { read: exact(stats?.tokens.cacheRead), write: exact(stats?.tokens.cacheWrite) })}><span className="pd-metric-group pd-metric-cache" tabIndex={0}><span>{t('metrics.cacheRead')} {tokens(stats?.tokens.cacheRead)}</span><span>{t('metrics.cacheWrite')} {tokens(stats?.tokens.cacheWrite)}</span></span></HoverTooltip>}
-		{preferences.duration && <HoverTooltip title={t('settings.metrics.duration')} description={t('metrics.durationDescription')}><span className="pd-metric-group pd-metric-duration" tabIndex={0} aria-label={`${t('settings.metrics.duration')}: ${formatMetricDuration(metrics.durationMs)}`}><Icon name="clock" width="12" height="12" />{formatMetricDuration(metrics.durationMs)}</span></HoverTooltip>}
+		{preferences.speed && <span className="pd-metric-group pd-metric-speed" aria-label={`${t('settings.metrics.speed')}: ${speed === null ? '—' : speed.toFixed(1)} t/s`}>{speed === null ? '—' : speed.toLocaleString(locale, { maximumFractionDigits: 1 })} t/s</span>}
+		{preferences.tokens && <span className="pd-metric-group" aria-label={t('metrics.tokensDescription', { input: exact(stats?.tokens.input), output: exact(stats?.tokens.output), total: exact(stats?.tokens.total) })}><span className="pd-metric-input">↑{tokens(stats?.tokens.input)}</span><span className="pd-metric-output">↓{tokens(stats?.tokens.output)}</span><span>Σ {tokens(stats?.tokens.total)}</span></span>}
+		{preferences.cache && <span className="pd-metric-group pd-metric-cache" aria-label={t('metrics.cacheDescription', { read: exact(stats?.tokens.cacheRead), write: exact(stats?.tokens.cacheWrite) })}><span>{t('metrics.cacheRead')} {tokens(stats?.tokens.cacheRead)}</span><span>{t('metrics.cacheWrite')} {tokens(stats?.tokens.cacheWrite)}</span></span>}
+		{preferences.duration && <span className="pd-metric-group pd-metric-duration" aria-label={`${t('settings.metrics.duration')}: ${formatMetricDuration(metrics.durationMs)}`}><Icon name="clock" width="12" height="12" />{formatMetricDuration(metrics.durationMs)}</span>}
 	</div>;
 }

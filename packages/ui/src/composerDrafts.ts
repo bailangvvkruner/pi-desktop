@@ -27,3 +27,14 @@ export function clearSubmittedDraft(drafts: Map<string, ComposerDraft>, key: str
 	drafts.set(key, { text: '', attachments: [] });
 	return true;
 }
+
+/** A failed optimistic send restores its content without discarding newer edits. */
+export function restoreSubmittedDraft(drafts: Map<string, ComposerDraft>, key: string, submitted: ComposerDraft): ComposerDraft {
+	const current = drafts.get(key);
+	const next = !current || (!current.text && !current.attachments.length) ? submitted : {
+		text: !current.text || current.text === submitted.text ? submitted.text : !submitted.text ? current.text : `${submitted.text}\n\n${current.text}`,
+		attachments: !current.attachments.length ? submitted.attachments : [...new Set([...submitted.attachments, ...current.attachments])],
+	};
+	drafts.set(key, next);
+	return next;
+}

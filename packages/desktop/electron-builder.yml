@@ -10,6 +10,7 @@ files:
   - out/**/*
   - package.json
   - '!out/**/*.map'
+  - '!out/pai/**'
 
 asar: true
 asarUnpack:
@@ -39,6 +40,9 @@ publish:
 win:
   icon: build/icon.ico
   verifyUpdateCodeSignature: true
+  extraFiles:
+    - from: out/pai/pai.exe
+      to: bin/pai.exe
   target:
     - target: nsis
       arch: [x64]

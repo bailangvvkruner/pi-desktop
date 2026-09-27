@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { WINDOWS_PTY_PREBUILD_CONFIG, verifyWindowsPtyPrebuilds } from './windows-pty-prebuild.mjs';
+import { preparePaiLauncher } from './prepare-pai-launcher.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DESKTOP = join(ROOT, 'packages', 'desktop');
@@ -22,7 +23,7 @@ const HELP = `Pi Desktop 本地调试构建（便携版，无需发布）
   debug.cmd --no-build       复用上一次的 out/ 编译产物，只重新打包
   debug.cmd --no-launcher    不生成 run-debug.cmd 启动器
 
-其他系统：node scripts/dist-debug.mjs [选项]
+直接运行（Windows）：node scripts/dist-debug.mjs [选项]
 
 产物是独立的 "Pi Desktop Debug" 便携版：
 - 与正式安装互不影响（独立 userData：%APPDATA%\\Pi Desktop Debug，单实例锁也独立）
@@ -105,6 +106,7 @@ const { Arch, Platform, build } = require('electron-builder');
 // Same Windows PTY policy as the release packaging entry: ship node-pty's
 // N-API prebuilds instead of triggering a node-gyp rebuild that needs Visual Studio.
 verifyWindowsPtyPrebuilds(require);
+await preparePaiLauncher({ executableName: 'Pi Desktop Debug.exe' });
 if (!(await removeWithRetry(STAGING))) throw new Error(`暂存目录无法清空：${STAGING}`);
 mkdirSync(OUTPUT, { recursive: true });
 await build({

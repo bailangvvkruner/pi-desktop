@@ -7,7 +7,7 @@ import { isGitHubReleaseFeedUrl, parseUpdateFeedUrl } from './updateFeed';
 
 type Updater = typeof import('electron-updater').autoUpdater;
 
-const FIRST_CHECK_DELAY_MS = 15_000;
+const FIRST_CHECK_DELAY_MS = 5_000;
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1_000;
 
 interface CheckAttempt { failed: boolean }

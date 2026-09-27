@@ -128,7 +128,7 @@ export function Sidebar({ open, projectRevealRequest = 0, narrow, onToggle, onNa
 			{actionError && <div className="pd-sidebar-error pd-sidebar-detail" role="alert">{actionError}</div>}
 			{updateError && <div className="pd-sidebar-error pd-sidebar-detail" role="alert">{updateError}</div>}
 			<div className="pd-sidebar-footer-actions">
-				<HoverTooltip title={t('sidebar.settings')} align="start"><button type="button" className="pd-settings-entry" aria-label={t('sidebar.settings')} onClick={() => onOpenSettings()}><Icon name="settings" width="17" height="17" /><span className="pd-sidebar-detail">{t('sidebar.settings')}</span><Icon name="chevronRight" className="pd-sidebar-detail" width="15" height="15" /></button></HoverTooltip>
+				<button type="button" className="pd-settings-entry" aria-label={t('sidebar.settings')} onClick={() => onOpenSettings()}><Icon name="settings" width="17" height="17" /><span className="pd-sidebar-detail">{t('sidebar.settings')}</span><Icon name="chevronRight" className="pd-sidebar-detail" width="15" height="15" /></button>
 				{updateAvailable && <HoverTooltip title={updateLabel} align="end" description={updateNotesVisible ? (
 					<div className="pd-update-notes">
 						{updateNotesDate && <div className="pd-update-notes-date">{updateNotesDate}</div>}

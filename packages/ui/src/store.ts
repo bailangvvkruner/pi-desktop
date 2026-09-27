@@ -19,6 +19,7 @@ import type {
 	AgentUiEvent,
 	AppInfo,
 	UiAttachment,
+	UiInputScope,
 	UiFileChange,
 	UiContextUsage,
 	UiMessage,
@@ -82,6 +83,9 @@ interface ChatState {
 	/** Latest explicit project/session navigation intent; stale requests cannot overwrite it. */
 	navigationRequestId: number;
 	navigationPending: boolean;
+	/** A new standalone conversation is prepared without blocking its local draft. */
+	sessionPreparation: { requestId: number; draftScope: UiInputScope } | null;
+	draftTransfer: { requestId: number; from: UiInputScope; to: UiInputScope } | null;
 
 	setBridge(bridge: AgentBridge): void;
 	retryAgent(): Promise<void>;
@@ -121,6 +125,7 @@ interface ChatState {
 	updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void>;
 	abort(): Promise<void>;
 	newSession(options?: { cwd?: string }): Promise<void>;
+	detachProject(): Promise<void>;
 	pickWorkspace(options?: { fresh?: boolean }): Promise<void>;
 }
 
@@ -137,6 +142,28 @@ let historyLoadRequest = 0;
 const MAX_BOOTSTRAP_EVENTS = 256;
 const MAX_BOOTSTRAP_RESYNCS = 3;
 const SNAPSHOT_TIMEOUT_MS = 15_000;
+
+type ReadyEvent = Extract<AgentUiEvent, { type: 'ready' }>;
+interface SessionPreparation {
+	bridge: AgentBridge;
+	requestId: number;
+	ready: ReadyEvent | null;
+	reset: boolean;
+	promise: Promise<void>;
+}
+interface PreparedInput {
+	bridge: AgentBridge;
+	requestId: number;
+	id: string;
+	text: string;
+	message: UiMessage;
+	echoed: boolean;
+	dispatched: boolean;
+	runtimeStatus: AgentStatus | null;
+	cancel(): void;
+}
+let sessionPreparation: SessionPreparation | null = null;
+let preparedInput: PreparedInput | null = null;
 
 async function snapshotWithTimeout(bridge: AgentBridge): Promise<AgentSnapshot> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -226,9 +253,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	appInfo: null,
 	navigationRequestId: 0,
 	navigationPending: false,
+	sessionPreparation: null,
+	draftTransfer: null,
 
 	setBridge(bridge) {
 		if (get().bridge === bridge) return;
+		cancelPreparedInput();
+		sessionPreparation = null;
 		unsubscribeAgentEvent?.();
 		unsubscribeAgentEvent = null;
 		bridgeGeneration += 1;
@@ -351,6 +382,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	},
 
 	handleEvent(event) {
+		const preparing = sessionPreparation;
+		if (preparing && get().sessionPreparation?.requestId === preparing.requestId && currentSessionNavigation(preparing.bridge, preparing.requestId)
+			&& event.type !== 'session-runtime' && event.type !== 'sessions-changed') {
+			// Workspace initialization emits reset/starting/busy before its real
+			// draft scope exists. Keep those transient states behind the local view.
+			if (event.type === 'reset') { preparing.reset = true; preparing.ready = null; }
+			if (event.type === 'ready') preparing.ready = event;
+			return;
+		}
 		switch (event.type) {
 			case 'reset':
 				resetSettingsRequests();
@@ -389,6 +429,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				});
 				return;
 			case 'status': {
+				const pending = currentPreparedInput();
+				if (pending?.dispatched) pending.runtimeStatus = event.status;
 				const previousStatus = get().status;
 				set((state) => ({
 					status: event.status, statusMessage: event.message, retryAttempt: event.attempt, retryMaxAttempts: event.maxAttempts,
@@ -407,6 +449,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			}
 			case 'ready': {
 				const previous = get();
+				const completedPreparation = previous.sessionPreparation;
+				const pending = currentPreparedInput();
+				if (pending?.dispatched && event.messages.some(message => message.role === 'user')) pending.echoed = true;
+				const messages = pending && !pending.echoed ? [...event.messages, pending.message] : event.messages;
 				// A fresh session context clears the view; a same-session resync keeps older pages coming.
 				const sameSession = previous.cwd === event.cwd && previous.sessionId === event.sessionId && previous.sessionPath === event.sessionPath;
 				if (!sameSession) historyLoadRequest += 1;
@@ -414,6 +460,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					? previous.messages.length + previous.activities.length - (event.messages.length + event.activities.length)
 					: 0;
 				set({
+					...(completedPreparation ? { sessionPreparation: null, navigationPending: false,
+						draftTransfer: { requestId: completedPreparation.requestId, from: completedPreparation.draftScope,
+							to: { cwd: event.cwd, sessionPath: event.sessionPath } }, status: pending ? 'busy' as const : 'idle' as const } : {}),
 					model: event.model,
 					modelName: event.modelName ?? null,
 					modelProvider: event.modelProvider,
@@ -424,10 +473,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 					sessions: get().sessionsByWorkspace[event.cwd] ?? [],
 					sessionId: event.sessionId,
 					sessionPath: event.sessionPath,
-					messages: event.messages,
+					messages,
 					activities: event.activities,
 					runs: event.runs ?? [],
-					historyTotal: event.historyTotal ?? event.messages.length + event.activities.length,
+					historyTotal: (event.historyTotal ?? event.messages.length + event.activities.length) + (messages.length - event.messages.length),
 					timelineRevision: get().timelineRevision + 1,
 					historyGeneration: previous.historyGeneration + 1,
 					loadingOlder: sameSession && previous.loadingOlder,
@@ -459,17 +508,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			case 'run':
 				set(state => ({ runs: mergeConversationRuns(state.runs, [event.run]) }));
 				return;
-			case 'user-message':
+			case 'user-message': {
+				const pending = currentPreparedInput();
+				// This is the first submitted input in a brand-new session. A slash
+				// template may expand its text, so use the submission lifecycle.
+				const replacesPending = Boolean(pending?.dispatched && !pending.echoed);
+				if (replacesPending) pending!.echoed = true;
 				set((s) => ({
 					...acceptedSessionTitle(s, event.text),
-					messages: [...s.messages, { id: event.id, order: event.order, runId: event.runId, role: 'user', text: event.text, attachments: event.attachments, attachmentsOmitted: event.attachmentsOmitted, attachmentReferences: event.attachmentReferences, status: 'done' }],
-					historyTotal: s.historyTotal + 1,
+					messages: [...s.messages.filter(message => !replacesPending || message.id !== pending!.message.id), { id: event.id, order: event.order, runId: event.runId, role: 'user', text: event.text, attachments: event.attachments, attachmentsOmitted: event.attachmentsOmitted, attachmentReferences: event.attachmentReferences, status: 'done' }],
+					historyTotal: s.historyTotal + (replacesPending ? 0 : 1),
 					timelineRevision: s.timelineRevision + 1,
 				}));
 				// Refresh only after the accepted message has updated the row. This also
 				// supersedes list requests started before the first input was accepted.
 				void get().refreshSessions();
 				return;
+			}
 			case 'assistant-start':
 				set((s) => ({
 					messages: [...s.messages, { id: event.id, order: event.order, runId: event.runId, role: 'assistant', text: '', status: 'streaming' }],
@@ -870,6 +925,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	},
 
 	async send(text, behavior, attachments, inputId) {
+		const preparing = sessionPreparation;
+		if (preparing && get().sessionPreparation?.requestId === preparing.requestId && currentSessionNavigation(preparing.bridge, preparing.requestId)) {
+			return sendAfterPreparation(preparing, text, behavior, attachments, inputId);
+		}
 		const { bridge, status, cwd, sessionId, navigationPending, sessionLoading } = get();
 		const trimmed = text.trim();
 		if (!bridge || (!trimmed && !attachments?.length)) return;
@@ -971,6 +1030,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	},
 
 	async abort() {
+		if (get().sessionPreparation && currentPreparedInput()) {
+			cancelPreparedInput();
+			set({ status: 'idle', error: null });
+			return;
+		}
 		const { bridge, cwd, sessionId, navigationRequestId, navigationPending, sessionLoading } = get();
 		if (!bridge || navigationPending || sessionLoading) return;
 		set({ error: null });
@@ -993,6 +1057,56 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			if (currentSessionNavigation(bridge, request)) set({ error: errorMessage(error) });
 			throw error;
 		} finally { finishSessionNavigation(bridge, request); }
+	},
+
+	async detachProject() {
+		const previous = get();
+		const { bridge } = previous;
+		if (!bridge || previous.navigationPending) return;
+		const request = beginSessionNavigation();
+		const draftScope = { cwd: previous.cwd, sessionPath: previous.sessionPath };
+		const preparing: SessionPreparation = { bridge, requestId: request, ready: null, reset: false, promise: Promise.resolve() };
+		sessionPreparation = preparing;
+		set({ sessionPreparation: { requestId: request, draftScope }, cwd: '', sessionId: null, sessionPath: null,
+			status: 'idle', statusMessage: undefined, retryAttempt: undefined, retryMaxAttempts: undefined,
+			messages: [], activities: [], runs: [], fileChanges: [], contextUsage: null,
+			queuedMessages: [], queuedCount: 0, historyTotal: 0, loadingOlder: false, sessionLoading: false,
+			timelineRevision: get().timelineRevision + 1, historyGeneration: get().historyGeneration + 1 });
+		preparing.promise = (async () => {
+			try {
+				await bridge.newSession();
+				if (!currentSessionNavigation(bridge, request)) return;
+				if (!preparing.ready) {
+					const snapshot = await snapshotWithTimeout(bridge);
+					if (!snapshot.sessionId || snapshot.status === 'error') throw new Error(snapshot.error ?? translate('store.agentNotReady'));
+					preparing.ready = { ...snapshot, type: 'ready', sessionId: snapshot.sessionId };
+				}
+				if (!currentSessionNavigation(bridge, request)) return;
+				const ready = preparing.ready;
+				sessionPreparation = null;
+				// Publish the actual scope and draft handoff together, after the main
+				// process has finished activating it. No intermediate draft IPC occurs.
+				get().handleEvent(ready);
+				// Sidebar refreshes do not hold up typing or the waiting submission.
+				void Promise.all([get().refreshWorkspaces(), get().refreshSessions()]);
+			} catch (error) {
+				if (!currentSessionNavigation(bridge, request)) throw error;
+				sessionPreparation = null;
+				if (preparing.ready) {
+					get().handleEvent(preparing.ready);
+					set({ status: 'idle', error: errorMessage(error) });
+				} else {
+					set({ ...conversationView(previous), sessionPreparation: null, navigationPending: false,
+						...(preparing.reset ? { status: 'error' as const } : {}), error: errorMessage(error),
+						timelineRevision: get().timelineRevision + 1, historyGeneration: get().historyGeneration + 1 });
+				}
+				throw error;
+			} finally {
+				if (sessionPreparation === preparing) sessionPreparation = null;
+				finishSessionNavigation(bridge, request);
+			}
+		})();
+		await preparing.promise;
 	},
 
 	async pickWorkspace(options) {
@@ -1018,9 +1132,82 @@ function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+function conversationView(state: ChatState): Partial<ChatState> {
+	const { cwd, sessionId, sessionPath, status, statusMessage, messages, activities, runs, fileChanges,
+		contextUsage, queuedMessages, queuedCount, historyTotal, model, modelName, modelProvider, thinkingLevel,
+		availableThinkingLevels, sessions, retryAttempt, retryMaxAttempts } = state;
+	return { cwd, sessionId, sessionPath, status, statusMessage, messages, activities, runs, fileChanges,
+		contextUsage, queuedMessages, queuedCount, historyTotal, model, modelName, modelProvider, thinkingLevel,
+		availableThinkingLevels, sessions, retryAttempt, retryMaxAttempts };
+}
+
+function currentPreparedInput(): PreparedInput | null {
+	return preparedInput && currentSessionNavigation(preparedInput.bridge, preparedInput.requestId) ? preparedInput : null;
+}
+
+function cancelledSubmission(): Error {
+	return Object.assign(new Error('已取消等待发送'), { name: 'AbortError' });
+}
+
+function removePreparedMessage(input: PreparedInput): void {
+	useChatStore.setState(state => {
+		const messages = state.messages.filter(message => message.id !== input.message.id);
+		return messages.length === state.messages.length ? {} : {
+			messages, historyTotal: Math.max(0, state.historyTotal - 1), timelineRevision: state.timelineRevision + 1,
+		};
+	});
+}
+
+function cancelPreparedInput(): void {
+	const input = preparedInput;
+	preparedInput = null;
+	if (!input) return;
+	if (!input.dispatched) input.cancel();
+	removePreparedMessage(input);
+}
+
+async function sendAfterPreparation(preparing: SessionPreparation, text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[], inputId?: string): Promise<void> {
+	const trimmed = text.trim();
+	if (!trimmed && !attachments?.length) return;
+	if (currentPreparedInput()) throw new Error(translate('store.sessionBusy'));
+	const id = inputId ?? crypto.randomUUID();
+	let cancel!: () => void;
+	const cancelled = new Promise<never>((_resolve, reject) => { cancel = () => reject(cancelledSubmission()); });
+	const input: PreparedInput = { bridge: preparing.bridge, requestId: preparing.requestId, id, text: trimmed,
+		message: { id: `pending:${id}`, order: 0, role: 'user', text: trimmed, attachments, status: 'done' },
+		echoed: false, dispatched: false, runtimeStatus: null, cancel };
+	preparedInput = input;
+	useChatStore.setState(state => ({ messages: [...state.messages, input.message], status: 'busy', error: null,
+		historyTotal: state.historyTotal + 1, timelineRevision: state.timelineRevision + 1 }));
+	try {
+		await Promise.race([preparing.promise, cancelled]);
+		if (preparedInput !== input || !currentSessionNavigation(input.bridge, input.requestId)) throw cancelledSubmission();
+		input.dispatched = true;
+		await useChatStore.getState().send(trimmed, behavior, attachments, id);
+		if (parseSlashCommand(trimmed) && !input.echoed) {
+			removePreparedMessage(input);
+			if (preparedInput === input) preparedInput = null;
+			finishPreparedBusy(input);
+		}
+	} catch (error) {
+		removePreparedMessage(input);
+		if (preparedInput === input) preparedInput = null;
+		finishPreparedBusy(input);
+		throw error;
+	} finally {
+		if (preparedInput === input && (input.echoed || !input.dispatched)) preparedInput = null;
+	}
+}
+
+function finishPreparedBusy(input: PreparedInput): void {
+	if (currentSessionNavigation(input.bridge, input.requestId) && input.runtimeStatus !== 'busy' && useChatStore.getState().status === 'busy') {
+		useChatStore.setState({ status: 'idle' });
+	}
+}
+
 function acceptedSessionTitle(state: ChatState, text: string): Partial<ChatState> {
 	const { cwd, sessionPath: path, sessionId: id } = state;
-	if (!cwd || !path || !id || !text.trim() || state.messages.some((message) => message.role === 'user')) return {};
+	if (!cwd || !path || !id || !text.trim() || state.messages.some((message) => message.role === 'user' && message.id !== currentPreparedInput()?.message.id)) return {};
 	const cached = state.sessionsByWorkspace[cwd] ?? state.sessions;
 	const existing = cached.find((session) => session.path === path && session.id === id);
 	if (existing?.firstMessage.trim() && existing.messageCount > 0) return {};
@@ -1080,8 +1267,9 @@ async function refreshSessionCache(cwd: string, reportError = true): Promise<voi
 }
 
 function beginSessionNavigation(): number {
+	cancelPreparedInput();
 	const request = useChatStore.getState().navigationRequestId + 1;
-	useChatStore.setState({ navigationRequestId: request, navigationPending: true, error: null });
+	useChatStore.setState({ navigationRequestId: request, navigationPending: true, sessionPreparation: null, draftTransfer: null, error: null });
 	return request;
 }
 

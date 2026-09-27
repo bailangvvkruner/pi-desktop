@@ -82,6 +82,8 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const error = navigationError ?? agentError;
 	const timelineRevision = useChatStore((s) => s.timelineRevision);
 	const sessionLoading = useChatStore((s) => s.sessionLoading);
+	const navigationPending = useChatStore((s) => s.navigationPending);
+	const sessionPreparation = useChatStore((s) => s.sessionPreparation);
 	const historyTotal = useChatStore((s) => s.historyTotal);
 	const loadingOlder = useChatStore((s) => s.loadingOlder);
 	const loadOlderMessages = useChatStore((s) => s.loadOlderMessages);
@@ -91,9 +93,17 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	}
 	const timeline = timelineRef.current.entries;
 	const hasOlderHistory = historyTotal > messages.length + activities.length;
-	const isNewConversation = timeline.length === 0 && fileChanges.length === 0;
+	const emptyTimeline = timeline.length === 0 && fileChanges.length === 0;
+	const layoutPending = !sessionPreparation && (sessionLoading || navigationPending || agentStatus === 'starting' || agentStatus === 'uninitialized' || !sessionId && agentStatus !== 'error');
+	const settledEmptyLayout = useRef(false);
+	// A reset temporarily has no messages. Preserve the previous layout until
+	// the destination is ready, so an existing chat never becomes a blank draft.
+	const isNewConversation = layoutPending ? settledEmptyLayout.current : emptyTimeline;
+	useLayoutEffect(() => {
+		if (!layoutPending) settledEmptyLayout.current = emptyTimeline;
+	}, [layoutPending, emptyTimeline]);
 	const isEmpty = isNewConversation && !error;
-	const awaitingResponse = agentStatus === 'busy' && !runs.some(run => run.status === 'running') && !error && !messages.some((message) => message.status === 'streaming') && !activities.some((activity) => activity.status === 'running');
+	const awaitingResponse = !layoutPending && agentStatus === 'busy' && !runs.some(run => run.status === 'running') && !error && !messages.some((message) => message.status === 'streaming') && !activities.some((activity) => activity.status === 'running');
 	const disclosureScope = `${cwd}\0${sessionPath}\0${sessionId}`;
 	const [revealMessage, setRevealMessage] = useState<{ id: string; request: number; scope: string } | null>(null);
 	const bodyRef = useRef<HTMLDivElement>(null);

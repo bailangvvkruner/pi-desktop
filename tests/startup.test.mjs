@@ -15,10 +15,10 @@ const stubs = {
   `,
   './ipc': `
     const env = globalThis.__startupTest;
-    export const { agentService, updateService, registerIpc, defaultWorkspace, disposeServices, readCurrentDesktopSettings, isAgentWorkActive, saveCloseBehavior } = env;
+    export const { agentService, updateService, registerIpc, defaultWorkspace, disposeServices, readCurrentDesktopSettings, isAgentWorkActive, saveCloseBehavior, sendAppCommand } = env;
   `,
   './appLocale': `export const getAppLocale = () => 'en-US';`,
-  './tray': `export const createAppTray = () => { globalThis.__startupTest.calls.trays += 1; }; export const destroyAppTray = () => {};`,
+  './tray': `export const createAppTray = (options) => { globalThis.__startupTest.calls.trays += 1; globalThis.__startupTest.calls.trayOptions = options; }; export const destroyAppTray = () => {};`,
   './splash': `
     export const createSplashHtml = () => '<html>Splash</html>';
     export const createSplashErrorHtml = (message) => '<html>' + message + '</html>';
@@ -50,7 +50,7 @@ async function settle() {
 async function createStartupHarness(t, { workspaceError, initialization = deferred(), shutdown = async () => {}, closeBehavior = 'quit', busy = false, closeChoice = 1, launchArgs, userData = 'test-user-data' } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const windows = [];
-  const calls = { init: [], startUpdates: 0, dispose: 0, quit: 0, errors: [], logs: [], registered: 0, trays: 0, singleInstanceLocks: 0, paths: {}, windowMode: null };
+  const calls = { init: [], startUpdates: 0, dispose: 0, quit: 0, errors: [], logs: [], registered: 0, trays: 0, trayOptions: null, appCommands: [], singleInstanceLocks: 0, paths: {}, windowMode: null };
   t.mock.method(console, 'error', (...args) => calls.logs.push(args));
   let rendererReady;
   let getDialogWindow;
@@ -65,6 +65,8 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
       this.visible = false;
       this.destroyed = false;
       this.showCount = 0;
+      this.focusCount = 0;
+      this.minimized = false;
       this.load = deferred();
       this.webContents = Object.assign(new EventEmitter(), {
         isDestroyed: () => this.destroyed,
@@ -79,14 +81,16 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
     loadFile(path, options) { this.url = path; this.query = options?.query; return this.load.promise; }
     isDestroyed() { return this.destroyed; }
     isVisible() { return this.visible; }
-    isMinimized() { return false; }
+    isMinimized() { return this.minimized; }
     isMaximized() { return false; }
     show() { assert.equal(this.destroyed, false); this.visible = true; this.showCount += 1; }
+    hide() { this.visible = false; }
+    restore() { this.minimized = false; }
     close() { this.destroy(); }
     destroy() { if (this.destroyed) return; this.destroyed = true; this.visible = false; this.emit('closed'); }
     setSize() {}
     center() {}
-    focus() {}
+    focus() { this.focusCount += 1; }
     reload() {}
   }
   const app = Object.assign(new EventEmitter(), {
@@ -126,6 +130,7 @@ async function createStartupHarness(t, { workspaceError, initialization = deferr
     readCurrentDesktopSettings: () => ({ notificationsEnabled: true, closeBehavior }),
     isAgentWorkActive: async () => busy,
     saveCloseBehavior: async () => {},
+    sendAppCommand: (command) => calls.appCommands.push(command),
     agentService: { init: (...args) => { calls.init.push(args); return initialization.promise; } },
     updateService: {
       setBeforeInstall: (callback) => { beforeInstall = callback; },
@@ -187,6 +192,46 @@ test('startup restores the agent in parallel and keeps the splash until the rend
   assert.equal(harness.calls.startUpdates, 1);
   await harness.rendererReady(main);
   assert.equal(main.showCount, 1, 'duplicate ready notifications do not reveal or restart services twice');
+});
+
+test('tray settings requested during startup open once the renderer is ready', { skip: process.platform !== 'win32' }, async (t) => {
+  const harness = await createStartupHarness(t);
+  harness.calls.trayOptions.onOpenSettings();
+  assert.deepEqual(harness.calls.appCommands, [], 'the request is retained before the IPC bridge loads');
+  const main = await harness.start();
+  harness.calls.trayOptions.onOpenSettings();
+  main.load.resolve();
+  main.emit('ready-to-show');
+  harness.initialization.resolve();
+  await settle();
+  assert.equal(main.showCount, 0, 'opening settings must not bypass the startup reveal gate');
+  assert.deepEqual(harness.calls.appCommands, []);
+  await harness.rendererReady(main);
+  assert.deepEqual(harness.calls.appCommands, [{ type: 'open-settings' }]);
+  await harness.rendererReady(main);
+  assert.equal(harness.calls.appCommands.length, 1, 'duplicate clicks or readiness notifications do not reopen settings');
+});
+
+test('tray settings restore a hidden or minimized window before opening settings', { skip: process.platform !== 'win32' }, async (t) => {
+  const harness = await createStartupHarness(t, { closeBehavior: 'tray' });
+  const main = await harness.start();
+  main.load.resolve();
+  main.emit('ready-to-show');
+  harness.initialization.resolve();
+  await harness.rendererReady(main);
+  main.emit('close', { preventDefault() {} });
+  await settle();
+  assert.equal(main.isVisible(), false);
+  assert.equal(main.isDestroyed(), false);
+  harness.calls.trayOptions.onOpenSettings();
+  assert.equal(main.isVisible(), true);
+  assert.equal(main.focusCount, 1);
+  assert.deepEqual(harness.calls.appCommands, [{ type: 'open-settings' }]);
+  main.minimized = true;
+  harness.calls.trayOptions.onOpenSettings();
+  assert.equal(main.isMinimized(), false);
+  assert.equal(main.focusCount, 2);
+  assert.equal(harness.calls.appCommands.length, 2);
 });
 
 test('pai boot uses an isolated profile, opens a fresh cwd, and closes without a tray or updater', async (t) => {

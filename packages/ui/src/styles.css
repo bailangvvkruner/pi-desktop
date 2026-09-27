@@ -209,14 +209,18 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 /* --- Draft composer context chips (project + branch pickers) --- */
 /* Chips + editor share one card (zcode): the header row pads itself inside the shell. */
 .pd-composer-header { display: flex; flex-wrap: wrap; align-items: center; gap: 0; min-width: 0; padding: 6px 6px 0; }
-.pd-composer-context { display: flex; flex-wrap: wrap; align-items: center; gap: 0; }
+.pd-composer-context { display: flex; flex-wrap: wrap; align-items: center; gap: 0; min-width: 0; max-width: 100%; }
 .pd-context-chip-wrap { position: relative; }
-.pd-context-project { display: inline-flex; align-items: center; }
-.pd-context-project-clear { display: grid; flex: 0 0 auto; place-items: center; width: 24px; height: 27px; padding: 0; border: 0; border-radius: 999px; background: transparent; color: var(--pd-text-weak); cursor: pointer; }
-.pd-context-project-clear:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
-.pd-context-project-clear:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: 1px; }
+.pd-context-project { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; }
+.pd-context-project-control { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; border-radius: 999px; }
+.pd-context-project-control.is-attached { border: 1px solid var(--pd-border); transition: background 0.12s ease; }
+.pd-context-project-control.is-attached:has(button:hover:not(:disabled)), .pd-context-project-control.is-attached:focus-within { background: var(--pd-surface-hover); }
+.pd-context-project-clear { display: grid; flex: 0 0 25px; place-items: center; height: 25px; padding: 0; border: 0; border-radius: 999px 0 0 999px; background: transparent; color: var(--pd-text-weak); cursor: pointer; }
+.pd-context-project-clear:hover:not(:disabled) { color: var(--pd-text); }
+.pd-context-project-clear:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; }
 .pd-context-project-clear:disabled { opacity: 0.5; cursor: default; }
-.pd-context-project-clear + .pd-context-chip { padding-left: 5px; }
+.pd-context-project-control.is-attached > .pd-context-chip { min-width: 0; height: 25px; padding-left: 3px; border-radius: 0 999px 999px 0; background: transparent; }
+.pd-context-project-control.is-attached > .pd-context-chip:focus-visible { outline-offset: -2px; }
 .pd-context-chip { display: inline-flex; align-items: center; gap: 6px; height: 27px; max-width: 260px; padding: 0 11px; border: 0; border-radius: 999px; background: transparent; color: var(--pd-text); font-size: var(--pd-font-caption); cursor: pointer; transition: background 0.12s ease, color 0.12s ease; }
 .pd-context-chip:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-context-chip:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: 1px; }
@@ -605,16 +609,27 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-section-heading { height: 29px; min-height: 29px; padding: 0 3px 0 13px; }
 .pd-session-group + .pd-session-group { margin-top: 3px; }
 .pd-session-group-label { height: 25px; padding-left: 11px; }
-.pd-session-item { position: relative; display: flex; align-items: center; min-height: 34px; border-radius: 7px; }
-.pd-session-item:hover { background: var(--pd-surface-hover); }
-.pd-session-item.is-active { background: var(--pd-selected); }
+.pd-session-item { --pd-session-background: var(--pd-sidebar); --pd-session-actions-width: 56px; position: relative; display: flex; align-items: center; min-height: 34px; border-radius: 7px; }
+.pd-session-item:hover { --pd-session-background: var(--pd-surface-hover); background: var(--pd-session-background); }
+.pd-session-item.is-active { --pd-session-background: var(--pd-selected); background: var(--pd-session-background); }
 .pd-session-item .pd-session-row { min-height: 34px; width: 100%; padding: 0 9px; background: transparent; }
-.pd-session-item[data-session-path] .pd-session-row { padding-right: 62px; }
 .pd-session-item .pd-session-row:hover:not(:disabled), .pd-session-item .pd-session-row.is-active { background: transparent; }
 .pd-session-item .pd-session-copy strong { font-size: var(--pd-font-caption); }
 .pd-session-unread { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--pd-brand); }
-.pd-session-actions { position: absolute; top: 3px; right: 3px; z-index: 2; display: flex; align-items: center; gap: 2px; opacity: 0; pointer-events: none; }
+.pd-session-actions { position: absolute; top: 3px; right: 3px; z-index: 2; display: flex; align-items: center; gap: 2px; border-radius: 0 6px 6px 0; background: var(--pd-session-background); opacity: 0; pointer-events: none; }
+.pd-session-actions::before { content: ''; position: absolute; top: 0; bottom: 0; right: 100%; width: 12px; background: linear-gradient(to right, transparent, var(--pd-session-background)); pointer-events: none; }
 .pd-session-item:hover .pd-session-actions, .pd-session-item:has(:focus-visible) .pd-session-actions { opacity: 1; pointer-events: auto; }
+.pd-session-copy .pd-session-title { width: 100%; }
+.pd-session-title-text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-session-item:is(:hover, :has(:focus-visible)) .pd-session-title { width: calc(100% - var(--pd-session-actions-width)); }
+@keyframes pd-session-title-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(var(--pd-title-travel)); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .pd-session-item:not(.is-drag-source):is(:hover, :has(:focus-visible)) .pd-session-title.is-overflowing { text-overflow: clip; mask-image: linear-gradient(to right, transparent, #000 8px, #000 calc(100% - 8px), transparent); }
+  .pd-session-item:not(.is-drag-source):is(:hover, :has(:focus-visible)) .pd-session-title.is-overflowing .pd-session-title-text { width: max-content; padding: 0 8px; overflow: visible; animation: pd-session-title-scroll var(--pd-title-duration) var(--pd-title-easing) infinite alternate; }
+}
 .pd-session-action { width: 27px; height: 27px; }
 .pd-session-action[aria-pressed='true'] { color: var(--pd-brand); }
 .pd-session-menu { position: fixed; z-index: 70; display: flex; flex-direction: column; width: 128px; padding: 5px; border: 1px solid var(--pd-border); border-radius: 9px; background: var(--pd-surface); box-shadow: 0 12px 26px #0005; }

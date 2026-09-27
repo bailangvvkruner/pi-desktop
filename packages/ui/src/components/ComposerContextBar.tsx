@@ -36,10 +36,11 @@ function ProjectChip({ isHome }: { isHome: boolean }) {
 	const cwd = useChatStore((state) => state.cwd);
 	const workspaces = useChatStore((state) => state.workspaces);
 	const conversationWorkspaces = useChatStore((state) => state.conversationWorkspaces);
-	const newSession = useChatStore((state) => state.newSession);
+	const detachProject = useChatStore((state) => state.detachProject);
 	const switchWorkspace = useChatStore((state) => state.switchWorkspace);
 	const pickWorkspace = useChatStore((state) => state.pickWorkspace);
 	const navigationPending = useChatStore((state) => state.navigationPending);
+	const preparingSession = useChatStore((state) => state.sessionPreparation !== null);
 	const anchorRef = useRef<HTMLButtonElement>(null);
 	const [open, setOpen] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -49,10 +50,10 @@ function ProjectChip({ isHome }: { isHome: boolean }) {
 		if (!canDetach || navigationPending) return;
 		setOpen(false);
 		setError(null);
-		void newSession().catch((cause) => setError(errorText(cause)));
+		void detachProject().catch((cause) => setError(errorText(cause)));
 	}
 
-	if (!cwd) {
+	if (!cwd && !preparingSession) {
 		return (
 			<div className="pd-context-chip-wrap" onKeyDown={(event) => { if (event.key === 'Escape' && error) { event.stopPropagation(); setError(null); } }}>
 				<button type="button" className="pd-context-chip" disabled={navigationPending} aria-label={t('composer.projectChoose')} onClick={() => { setError(null); void pickWorkspace({ fresh: true }).catch((cause) => setError(errorText(cause))); }}>
@@ -67,14 +68,16 @@ function ProjectChip({ isHome }: { isHome: boolean }) {
 
 	return (
 		<div className="pd-context-chip-wrap pd-context-project" onKeyDown={(event) => { if (event.key === 'Escape' && error) { event.stopPropagation(); setError(null); } }}>
-			{canDetach && <button type="button" className="pd-context-project-clear" disabled={navigationPending} aria-label={t('composer.projectClear')} title={t('composer.projectClear')} onClick={clearProject}>
-				<Icon name="close" width="13" height="13" />
-			</button>}
-			<button ref={anchorRef} type="button" className="pd-context-chip" disabled={navigationPending} aria-haspopup="menu" aria-expanded={open} aria-label={t('composer.projectMenuLabel')} onClick={() => { setError(null); setOpen((value) => !value); }}>
-				<Icon name="folder" width="15" height="15" />
-				<span className="pd-context-chip-label">{isHome ? t('composer.projectChoose') : workspaceName(cwd)}</span>
-				<Icon name="chevronDown" width="13" height="13" />
-			</button>
+			<div className={`pd-context-project-control${canDetach ? ' is-attached' : ''}`} role="group" aria-label={t('composer.projectMenuLabel')}>
+				{canDetach && <button type="button" className="pd-context-project-clear" disabled={navigationPending} aria-label={t('composer.projectClear')} title={t('composer.projectClear')} onClick={clearProject}>
+					<Icon name="close" width="13" height="13" />
+				</button>}
+				<button ref={anchorRef} type="button" className="pd-context-chip" disabled={navigationPending} aria-haspopup="menu" aria-expanded={open} aria-label={t('composer.projectMenuLabel')} onClick={() => { setError(null); setOpen((value) => !value); }}>
+					<Icon name="folder" width="15" height="15" />
+					<span className="pd-context-chip-label">{isHome ? t('composer.projectChoose') : workspaceName(cwd)}</span>
+					<Icon name="chevronDown" width="13" height="13" />
+				</button>
+			</div>
 			{open && anchorRef.current && <SidebarPopover anchor={anchorRef.current} label={t('composer.projectMenuLabel')} placement="top" onClose={() => setOpen(false)}>
 				{projects.map((workspace) => (
 					<button type="button" key={workspace} role="menuitemradio" aria-checked={workspace === cwd} className="pd-context-menu-row is-wide" disabled={navigationPending || workspace === cwd} onClick={() => { setOpen(false); void switchWorkspace(workspace, { fresh: true }).catch((cause) => setError(errorText(cause))); }}>

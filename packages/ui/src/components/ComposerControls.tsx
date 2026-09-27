@@ -31,6 +31,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	const levels = useChatStore((s) => s.availableThinkingLevels);
 	const usage = useChatStore((s) => s.contextUsage);
 	const status = useChatStore((s) => s.status);
+	const preparingSession = useChatStore((s) => s.sessionPreparation !== null);
 	const loading = useChatStore((s) => s.settingsLoading);
 	const sessionPath = useChatStore((s) => s.sessionPath);
 	const sessionId = useChatStore((s) => s.sessionId);
@@ -57,7 +58,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	const pickerId = useId();
 	const generation = useRef(0);
 	const pickerRevision = useRef(0);
-	const canChange = status === 'idle' && !loading && !pending;
+	const canChange = status === 'idle' && !preparingSession && !loading && !pending;
 	const canThink = levels.length > 1;
 	const currentModel = models.find((item) => item.id === model && item.provider === provider);
 	const modelLabel = model ? modelName?.trim() || model : t('composer.selectModel');
@@ -98,6 +99,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	}
 
 	function toggle(picker: Picker) {
+		if (preparingSession) return;
 		if (picker === 'thinking' && !canThink) return;
 		pickerRevision.current += 1;
 		setError(null);
@@ -117,7 +119,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 	}
 
 	useEffect(() => {
-		if (!open) return;
+		if (!open || preparingSession) return;
 		let active = true;
 		if (open === 'model') {
 			void Promise.allSettled([refreshModels(), refreshModelProviders(), refreshProviderAuth()]).then((results) => {
@@ -139,7 +141,7 @@ export function ComposerControls({ onOpenModelManagement, hasImages = false }: {
 			document.removeEventListener('pointerdown', outside);
 			document.removeEventListener('focusin', outside);
 		};
-	}, [open, refreshModels, refreshModelProviders, refreshProviderAuth]);
+	}, [open, preparingSession, refreshModels, refreshModelProviders, refreshProviderAuth]);
 
 	useLayoutEffect(() => {
 		// The first portal render is hidden until measured; hidden controls cannot focus.

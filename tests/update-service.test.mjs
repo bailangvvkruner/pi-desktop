@@ -288,7 +288,7 @@ test('an installer error during shutdown prevents a later installer invocation',
   } finally { shutdown.resolve(); service.stop(); }
 });
 
-test('automatic checks start after 15 seconds and repeat every four hours', (context) => {
+test('automatic checks start after 5 seconds and repeat every four hours', (context) => {
   context.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   const service = createService();
   let checks = 0;
@@ -296,11 +296,11 @@ test('automatic checks start after 15 seconds and repeat every four hours', (con
   try {
     service.start();
     service.start();
-    context.mock.timers.tick(14_999);
+    context.mock.timers.tick(4_999);
     assert.equal(checks, 0);
     context.mock.timers.tick(1);
     assert.equal(checks, 1);
-    context.mock.timers.tick(4 * 60 * 60 * 1_000 - 15_001);
+    context.mock.timers.tick(4 * 60 * 60 * 1_000 - 5_001);
     assert.equal(checks, 1);
     context.mock.timers.tick(1);
     assert.equal(checks, 2);
