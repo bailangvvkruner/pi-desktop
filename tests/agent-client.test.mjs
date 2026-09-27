@@ -36,7 +36,7 @@ function createHost() {
 
 async function startCall(client, host, method, rejectionPattern) {
   const result = client.call(method);
-  // Short RPC deadlines can elapse before setImmediate under parallel test load.
+  // Observe rejections before a test advances its mocked RPC deadline.
   const rejection = rejectionPattern ? assert.rejects(result, rejectionPattern) : undefined;
   host.emit('message', { kind: 'ready' });
   await settle();
@@ -67,7 +67,8 @@ test('model requests resolve the OS proxy in Electron without opening an extensi
   }
 });
 
-test('unanswered RPC rejects while the Pi host remains alive for later calls', async () => {
+test('unanswered RPC rejects while the Pi host remains alive for later calls', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const host = createHost();
   const client = new AgentHostClient({
     requestProjectTrust: async () => ({ trusted: false, remember: false }),
@@ -75,7 +76,11 @@ test('unanswered RPC rejects while the Pi host remains alive for later calls', a
   }, () => 20);
 
   const { rejection: snapshotError } = await startCall(client, host, 'getSnapshot', /响应超时/);
+  t.mock.timers.tick(19);
+  assert.equal(client.pending.size, 1);
+  t.mock.timers.tick(1);
   await snapshotError;
+  assert.equal(client.pending.size, 0);
   assert.equal(host.kills, 0, 'a timeout must not kill a running Pi tool');
 
   const abort = client.call('abort');
@@ -87,7 +92,8 @@ test('unanswered RPC rejects while the Pi host remains alive for later calls', a
   await client.dispose();
 });
 
-test('RPC timeout waits while an extension dialog needs user input', async () => {
+test('RPC timeout waits while an extension dialog needs user input', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const host = createHost();
   let finishDialog;
   const dialog = new Promise((resolve) => { finishDialog = resolve; });
@@ -99,17 +105,27 @@ test('RPC timeout waits while an extension dialog needs user input', async () =>
   const { rejection: initError } = await startCall(client, host, 'init', /响应超时/);
   const initCallId = host.messages.at(-1).id;
   host.emit('message', { kind: 'ui-request', id: 1, callId: initCallId, request: { kind: 'extension', dialog: { kind: 'confirm', title: 'Continue?' } } });
-  await new Promise((resolve) => setTimeout(resolve, 40));
-  assert.equal(client.pending.size, 1);
+  assert.equal(client.activeDialogs.size, 1);
+  for (let deadline = 0; deadline < 3; deadline += 1) {
+    t.mock.timers.tick(15);
+    await settle();
+    assert.equal(client.pending.size, 1, 'the owning RPC stays pending across every dialog deadline');
+  }
 
   finishDialog(true);
   await settle();
+  assert.equal(client.activeDialogs.size, 0);
+  t.mock.timers.tick(14);
+  assert.equal(client.pending.size, 1);
+  t.mock.timers.tick(1);
   await initError;
+  assert.equal(client.pending.size, 0);
   assert.equal(host.kills, 0);
   await client.dispose();
 });
 
-test('an unrelated dialog does not extend another RPC timeout', async () => {
+test('an unrelated dialog does not extend another RPC timeout', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const host = createHost();
   let finishDialog;
   const dialog = new Promise((resolve) => { finishDialog = resolve; });
@@ -119,7 +135,11 @@ test('an unrelated dialog does not extend another RPC timeout', async () => {
   }, () => 15);
   const { rejection: snapshotError } = await startCall(client, host, 'getSnapshot', /响应超时/);
   host.emit('message', { kind: 'ui-request', id: 1, callId: 999, request: { kind: 'extension', dialog: { kind: 'confirm', title: 'Other session?' } } });
+  t.mock.timers.tick(14);
+  assert.equal(client.pending.size, 1);
+  t.mock.timers.tick(1);
   await snapshotError;
+  assert.equal(client.pending.size, 0);
   assert.equal(client.activeDialogs.size, 1);
   finishDialog(true);
   await settle();

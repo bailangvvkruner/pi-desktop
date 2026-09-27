@@ -7,6 +7,10 @@ import { setTimeout } from 'node:timers/promises';
 import { test } from 'node:test';
 import { installPaiCommand, resolvePaiTarget } from '../scripts/install-pai.mjs';
 
+// Cold Windows PowerShell startup can exceed 15 seconds on a shared CI runner.
+// These integration tests verify argument handling, not shell startup latency.
+const launcherTimeoutMs = 60_000;
+
 function fixture(t) {
   const parent = realpathSync.native(tmpdir());
   const root = mkdtempSync(join(parent, 'pi-pai-launcher-'));
@@ -67,8 +71,8 @@ for (const mode of ['cmd-current-directory', 'powershell-current-directory', 'cm
     const explicit = mode.includes('explicit');
     const powershell = mode.startsWith('powershell');
     const result = powershell
-      ? spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(bin, 'pai.ps1'), ...(explicit ? ['-Cwd', cwd] : [])], { cwd: explicit ? root : cwd, encoding: 'utf8', timeout: 15000, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } })
-      : spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', explicit ? `pai.cmd "${cwd}"` : 'pai.cmd'], { cwd: explicit ? root : cwd, encoding: 'utf8', windowsVerbatimArguments: true, timeout: 15000, env: { ...process.env, PATH: `${bin};${process.env.PATH}`, ELECTRON_RUN_AS_NODE: '1' } });
+      ? spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(bin, 'pai.ps1'), ...(explicit ? ['-Cwd', cwd] : [])], { cwd: explicit ? root : cwd, encoding: 'utf8', timeout: launcherTimeoutMs, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } })
+      : spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', explicit ? `pai.cmd "${cwd}"` : 'pai.cmd'], { cwd: explicit ? root : cwd, encoding: 'utf8', windowsVerbatimArguments: true, timeout: launcherTimeoutMs, env: { ...process.env, PATH: `${bin};${process.env.PATH}`, ELECTRON_RUN_AS_NODE: '1' } });
     assert.equal(result.status, 0, result.stderr || result.error?.message);
     const captured = await readCaptured(captureFile);
     assert.deepEqual(captured.args, [...specialArguments, '--pai', '--cwd', cwd]);
@@ -82,7 +86,7 @@ test('pai reports invalid directories without starting the application', { skip:
   const file = join(root, 'not-a-directory.txt');
   writeFileSync(file, 'file');
   installPaiCommand({ commandDirectory: bin, target: { executable: process.execPath } });
-  const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(bin, 'pai.ps1'), '-Cwd', file], { cwd: root, encoding: 'utf8', timeout: 15000 });
+  const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', join(bin, 'pai.ps1'), '-Cwd', file], { cwd: root, encoding: 'utf8', timeout: launcherTimeoutMs });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /filesystem directory/);
 });
