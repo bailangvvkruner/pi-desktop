@@ -27,6 +27,7 @@ class Capture {
 
 const shellExecuteSource = String.raw`using System;
 using System.Diagnostics;
+using System.Security.Principal;
 using Microsoft.Win32;
 class ShellExecuteReview {
   static int Main(string[] args) {
@@ -34,14 +35,20 @@ class ShellExecuteReview {
       string token = Guid.Parse(args[1]).ToString();
       string alias = "pai-review-" + token + ".exe";
       string keyName = @"Software\Microsoft\Windows\CurrentVersion\App Paths\" + alias;
+      // Elevated ShellExecute does not resolve per-user App Paths. Exercise the
+      // matching installer scope: machine for elevated runners, user otherwise.
+      bool elevated = new WindowsPrincipal(WindowsIdentity.GetCurrent())
+        .IsInRole(WindowsBuiltInRole.Administrator);
+      RegistryKey scope = elevated ? Registry.LocalMachine : Registry.CurrentUser;
       if (args[0] == "register") {
-        using (RegistryKey existing = Registry.CurrentUser.OpenSubKey(keyName)) {
+        using (RegistryKey existing = scope.OpenSubKey(keyName)) {
           if (existing != null) throw new InvalidOperationException("Test registration already exists.");
         }
-        using (RegistryKey key = Registry.CurrentUser.CreateSubKey(keyName)) {
+        using (RegistryKey key = scope.CreateSubKey(keyName)) {
           key.SetValue("PiTestToken", token);
           key.SetValue("", args[2]);
         }
+        Console.WriteLine(scope.Name);
       } else if (args[0] == "launch") {
         ProcessStartInfo start = new ProcessStartInfo(alias);
         start.UseShellExecute = true;
@@ -52,19 +59,19 @@ class ShellExecuteReview {
             throw new InvalidOperationException("The test launcher did not exit successfully.");
         }
       } else if (args[0] == "cleanup") {
-        using (RegistryKey key = Registry.CurrentUser.OpenSubKey(keyName)) {
+        using (RegistryKey key = scope.OpenSubKey(keyName)) {
           if (key == null) return 0;
           if (!String.Equals(key.GetValue("PiTestToken") as string, token, StringComparison.Ordinal))
             throw new InvalidOperationException("Refusing to delete a registry key not owned by this test.");
         }
-        Registry.CurrentUser.DeleteSubKey(keyName);
-        using (RegistryKey key = Registry.CurrentUser.OpenSubKey(keyName)) {
+        scope.DeleteSubKey(keyName);
+        using (RegistryKey key = scope.OpenSubKey(keyName)) {
           if (key != null) throw new InvalidOperationException("Test registry cleanup failed.");
         }
       } else throw new ArgumentException("Unknown test operation.");
       return 0;
     } catch (Exception error) {
-      Console.Error.WriteLine(error.Message);
+      Console.Error.WriteLine(error.ToString());
       return 1;
     }
   }
@@ -137,7 +144,7 @@ test('native pai opens the current folder and supports repeated launches with sa
     });
   }
 
-  await t.test('ShellExecute resolves an App Paths alias and forwards its working directory', async () => {
+  await t.test('ShellExecute resolves an App Paths alias and forwards its working directory', async (t) => {
     const shellSource = join(root, 'shell-execute.cs');
     const shellHelper = join(root, 'shell-execute.exe');
     writeFileSync(shellSource, shellExecuteSource);
@@ -155,6 +162,8 @@ test('native pai opens the current folder and supports repeated launches with sa
     try {
       const registration = invoke('register', launcher);
       assert.equal(registration.status, 0, registration.error?.message || registration.stderr);
+      assert.match(registration.stdout.trim(), /^HKEY_(CURRENT_USER|LOCAL_MACHINE)$/);
+      t.diagnostic(`ShellExecute App Paths scope: ${registration.stdout.trim()}`);
       const result = invoke('launch', cwd);
       assert.equal(result.status, 0, result.error?.message || result.stderr);
       const [capture] = await captured(output, 1);
