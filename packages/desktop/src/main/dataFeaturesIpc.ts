@@ -1,12 +1,23 @@
 import { dialog } from 'electron';
 import { basename, dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { realpath } from 'node:fs/promises';
 import { DATA_FEATURE_CHANNELS, type ProjectSearchRequest, type ProjectSearchRules, type RecoverableSessionMetadata, type SessionSearchRequest, type SessionTrashEntry, type TrashCleanupRequest, type TrashRestoreRequest } from '../../../shared/src/dataFeatures.ts';
 import { handleRendererInvoke, requireRendererSender } from './rendererIpc.ts';
 import { createSessionTrash } from './sessionTrash.ts';
 import { createCompleteBackup, createSessionImporter, readBoundedImport, validateNativeSession, type BackupSource } from './sessionImport.ts';
 import { readStateFileAsync, writeStateFileAsync } from './stateFiles.ts';
 import type * as Search from './indexedSearch.ts';
+
+async function backupFileIdentity(path: string): Promise<string> {
+	let canonical: string;
+	try { canonical = await realpath(path); }
+	catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+		canonical = resolve(path);
+	}
+	return process.platform === 'win32' ? canonical.toLowerCase() : canonical;
+}
 
 export interface DataFeaturesIpcContext {
 	userData: string; sessionsRoot: string; trash: ReturnType<typeof createSessionTrash>;
@@ -86,8 +97,10 @@ export function registerDataFeaturesIpc(context: DataFeaturesIpcContext): { appl
 		return context.getSearchRules(cwd);
 	});
 	handleRendererInvoke(DATA_FEATURE_CHANNELS.setProjectSearchRules, (_event, rules: ProjectSearchRules) => {
+		// A queued save still belongs to the project visible when it was submitted.
+		const requestedCwd = context.getWorkspace();
 		const result = rulesQueue.then(async () => {
-			const cwd = await ensureWorkspace(context.getWorkspace());
+			const cwd = await ensureWorkspace(requestedCwd);
 			await context.setSearchRules(cwd, rules);
 			const saved = await storedRules(); saved[cwd] = await context.getSearchRules(cwd); await writeStateFileAsync(rulesPath, saved);
 		});
@@ -115,7 +128,11 @@ export function registerDataFeaturesIpc(context: DataFeaturesIpcContext): { appl
 		// Re-enumerate and revalidate the complete set immediately before reading.
 		const sources = await context.listSources();
 		if (!sources.length) throw new Error('没有可备份的会话');
-		if (sources.some((item) => resolve(item.path) === resolve(chosen.filePath!))) throw new Error('备份目标不能覆盖原会话');
+		// Directory junctions and Windows case aliases can name the same transcript.
+		// Atomic replacement would otherwise overwrite it through the chosen alias.
+		const destination = await backupFileIdentity(chosen.filePath);
+		const sourcePaths = await Promise.all(sources.map(item => backupFileIdentity(item.path)));
+		if (sourcePaths.includes(destination)) throw new Error('备份目标不能覆盖原会话');
 		await writeStateFileAsync(chosen.filePath, await createCompleteBackup(sources)); return chosen.filePath;
 	});
 	return { applyProjectRules };

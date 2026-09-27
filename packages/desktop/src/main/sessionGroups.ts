@@ -132,7 +132,10 @@ export class SessionGroupService {
 		} else if (change.type === 'reorder-groups') {
 			const byId = new Map(groups.map((group) => [group.id, group]));
 			const reordered = change.ids.map((id) => byId.get(id)).filter((group) => group !== undefined);
-			if (reordered.length !== new Set(change.ids).size) throw new Error('分组顺序无效');
+			// A stale renderer may omit a group created after it loaded the list.
+			// Reordering must be a complete permutation, never an implicit deletion.
+			if (reordered.length !== groups.length || reordered.length !== change.ids.length
+				|| reordered.length !== new Set(change.ids).size) throw new Error('分组顺序无效');
 			groups.splice(0, groups.length, ...change.ids.map((id) => byId.get(id)!));
 		} else {
 			const target = change.groupId === null ? undefined : groups.find((group) => group.id === change.groupId);

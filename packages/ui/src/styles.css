@@ -176,7 +176,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-session-copy { flex: 1; min-width: 0; }
 .pd-session-copy strong { display: block; overflow: hidden; font-size: var(--pd-font-caption); font-weight: 400; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .pd-session-row.is-active .pd-session-copy strong { font-weight: 500; }
-.pd-session-row time, .pd-session-unsaved { flex: 0 0 auto; max-width: 58px; overflow: hidden; color: var(--pd-text-weak); font-size: var(--pd-font-xs); text-overflow: ellipsis; white-space: nowrap; }
+.pd-session-unsaved { flex: 0 0 auto; max-width: 58px; overflow: hidden; color: var(--pd-text-weak); font-size: var(--pd-font-xs); text-overflow: ellipsis; white-space: nowrap; }
 .pd-session-empty { padding: 12px 10px; color: var(--pd-text-weak); font-size: var(--pd-font-caption); line-height: 1.5; }
 .pd-sidebar-footer { display: flex; flex-direction: column; gap: 4px; padding: 8px; border-top: 1px solid var(--pd-sidebar-surface); }
 .pd-sidebar-footer-actions { display: flex; align-items: center; gap: 4px; width: 100%; }
@@ -196,7 +196,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-chat-workspace > .pd-chat-workspace-error { max-width: min(320px, calc(100vw - 48px)); }
 .pd-chat-heading h1 { min-width: 0; margin: 0; overflow: hidden; font-size: var(--pd-font-base); font-weight: 600; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .pd-chat-content { position: relative; display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
-.pd-conversation-body { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
+.pd-conversation-body { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
 .pd-conversation-body.is-empty { overflow-y: auto; overflow-x: hidden; }
 .pd-conversation-body.is-empty::before { content: ''; flex: 0 1 29dvh; min-height: 72px; }
 .pd-conversation-body.is-empty::after { content: ''; flex: 1 0 24px; }
@@ -264,14 +264,14 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-conv-rail { position: absolute; left: 10px; top: 50%; z-index: 3; transform: translateY(-50%); }
 .pd-conv-rail-list { display: flex; flex-direction: column; max-height: min(70vh, 640px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
 .pd-conv-rail-list::-webkit-scrollbar { display: none; }
-.pd-conv-rail-item { display: flex; align-items: center; width: 36px; height: 10px; padding: 0; border: 0; background: transparent; cursor: pointer; outline: none; }
-.pd-conv-rail-line { display: block; width: 26px; height: 2px; border-radius: 1px; background: currentColor; color: var(--pd-text-weak); opacity: 0.5; transform: scaleX(0.23); transform-origin: left center; transition: transform 160ms cubic-bezier(.23, 1, .32, 1), opacity 160ms linear, color 160ms linear; }
-.pd-conv-rail-item:hover .pd-conv-rail-line, .pd-conv-rail-item:focus-visible .pd-conv-rail-line { transform: scaleX(1); opacity: 1; color: var(--pd-text); }
+.pd-conv-rail-item { display: flex; flex: 0 0 10px; align-items: center; width: 36px; height: 10px; padding: 0; border: 0; background: transparent; cursor: pointer; outline: none; }
+.pd-conv-rail-line { display: block; width: 26px; height: 2px; border-radius: 1px; background: currentColor; color: var(--pd-text-weak); opacity: 0.5; transform: scaleX(0.23); transform-origin: left center; transition: transform 80ms cubic-bezier(.23, 1, .32, 1), opacity 80ms linear, color 80ms linear; }
+.pd-conv-rail-item[data-previewed='true'] .pd-conv-rail-line, .pd-conv-rail-item:focus-visible .pd-conv-rail-line { transform: scaleX(1); opacity: 1; color: var(--pd-text); }
 .pd-conv-rail-item:focus-visible .pd-conv-rail-line { opacity: 1; }
 .pd-conv-rail-item[aria-current='true'] .pd-conv-rail-line { color: var(--pd-text); opacity: 0.75; }
-.pd-conv-rail-item:has(+ .pd-conv-rail-item:hover) .pd-conv-rail-line, .pd-conv-rail-item:hover + .pd-conv-rail-item .pd-conv-rail-line { transform: scaleX(0.7); opacity: 0.8; }
-.pd-conv-rail-item:has(+ .pd-conv-rail-item + .pd-conv-rail-item:hover) .pd-conv-rail-line, .pd-conv-rail-item:hover + .pd-conv-rail-item + .pd-conv-rail-item .pd-conv-rail-line { transform: scaleX(0.45); opacity: 0.7; }
-.pd-conv-rail-item:has(+ .pd-conv-rail-item + .pd-conv-rail-item + .pd-conv-rail-item:hover) .pd-conv-rail-line, .pd-conv-rail-item:hover + .pd-conv-rail-item + .pd-conv-rail-item + .pd-conv-rail-item .pd-conv-rail-line { transform: scaleX(0.3); opacity: 0.6; }
+.pd-conv-rail-item:has(+ .pd-conv-rail-item[data-previewed='true']) .pd-conv-rail-line, .pd-conv-rail-item[data-previewed='true'] + .pd-conv-rail-item .pd-conv-rail-line { transform: scaleX(0.7); opacity: 0.8; }
+.pd-conv-rail-item:has(+ .pd-conv-rail-item + .pd-conv-rail-item[data-previewed='true']) .pd-conv-rail-line, .pd-conv-rail-item[data-previewed='true'] + .pd-conv-rail-item + .pd-conv-rail-item .pd-conv-rail-line { transform: scaleX(0.45); opacity: 0.7; }
+.pd-conv-rail-item:has(+ .pd-conv-rail-item + .pd-conv-rail-item + .pd-conv-rail-item[data-previewed='true']) .pd-conv-rail-line, .pd-conv-rail-item[data-previewed='true'] + .pd-conv-rail-item + .pd-conv-rail-item + .pd-conv-rail-item .pd-conv-rail-line { transform: scaleX(0.3); opacity: 0.6; }
 @media (prefers-reduced-motion: reduce) { .pd-conv-rail-line { transition: none; } }
 .pd-conv-rail-preview { position: fixed; z-index: 1000; width: 320px; max-width: calc(100vw - 16px); padding: 8px 11px; border: 1px solid var(--pd-border); border-radius: 12px; background: var(--pd-surface-raised); box-shadow: 0 10px 32px rgba(0, 0, 0, 0.32); color: var(--pd-text); font-size: var(--pd-font-base); line-height: 1.45; pointer-events: none; animation: pd-rail-preview-in 130ms cubic-bezier(.23, 1, .32, 1); }
 .pd-conv-rail-preview-title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -317,8 +317,6 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-model-chip { display: block; max-width: 190px; overflow: hidden; padding: 4px 7px; border: 1px solid var(--pd-border); border-radius: 6px; color: var(--pd-text-subtle); font-family: ui-monospace, Consolas, monospace; font-size: var(--pd-font-sm); text-overflow: ellipsis; white-space: nowrap; }
 .pd-keyboard-hint { overflow: hidden; color: var(--pd-text-weak); font-size: var(--pd-font-sm); text-overflow: ellipsis; white-space: nowrap; }
 .pd-composer-actions { display: flex; flex: 1; align-items: center; justify-content: flex-end; gap: 6px; min-width: 0; }
-.pd-composer-action { display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 30px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; color: var(--pd-text); font-size: var(--pd-font-caption); white-space: nowrap; }
-.pd-composer-action:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-send-button { display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 30px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--pd-send-bg); color: var(--pd-send-ink); font-size: var(--pd-font-caption); font-weight: 600; white-space: nowrap; }
 .pd-composer-retry { padding-inline: 12px; }
 .pd-composer-error { margin-bottom: 8px; padding: 8px 10px; border: 1px solid var(--pd-danger-border); border-radius: 8px; color: var(--pd-danger); font-size: var(--pd-font-caption); overflow-wrap: anywhere; }
@@ -366,8 +364,6 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 
 @media (max-width: 450px) {
   .pd-model-chip { display: none; }
-  .pd-composer-action span { display: none; }
-  .pd-composer-action { min-width: 30px; padding: 0 6px; }
 }
 
 /* Session navigation */
@@ -609,7 +605,6 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-session-item .pd-session-row { min-height: 34px; width: 100%; padding: 0 32px 0 9px; background: transparent; }
 .pd-session-item .pd-session-row:hover:not(:disabled), .pd-session-item .pd-session-row.is-active { background: transparent; }
 .pd-session-item .pd-session-copy strong { font-size: var(--pd-font-caption); }
-.pd-session-item .pd-session-row time { max-width: 55px; }
 .pd-session-unread { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--pd-brand); }
 .pd-session-actions { position: absolute; top: 3px; right: 3px; z-index: 2; }
 .pd-session-more { width: 27px; height: 27px; opacity: 0; }
@@ -643,7 +638,8 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-chat-title { position: relative; flex: 0 1 auto; min-width: 0; max-width: 100%; -webkit-app-region: no-drag; }
 .pd-chat-title.is-editing { flex: 0 1 auto; }
 .pd-chat-heading:has(.pd-chat-title.is-editing) { max-width: min(520px, 80%); }
-.pd-chat-title-edit { display: inline-grid; overflow: hidden; min-width: 140px; max-width: min(480px, 100%); -webkit-app-region: no-drag; }
+/* Let the sizing text shrink its grid track so long titles cannot clip the input border. */
+.pd-chat-title-edit { display: inline-grid; grid-template-columns: minmax(0, 1fr); overflow: hidden; min-width: min(140px, 100%); max-width: min(480px, 100%); -webkit-app-region: no-drag; }
 .pd-chat-title-edit > * { grid-area: 1 / 1; }
 .pd-chat-title-measure { visibility: hidden; white-space: pre; padding: 0 6px; border: 1px solid transparent; font: inherit; pointer-events: none; }
 .pd-chat-header-more { flex: 0 0 auto; width: 24px; height: 24px; border-radius: 6px; color: var(--pd-text); }
@@ -751,28 +747,7 @@ html.pd-popover-open :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading,
 .pd-timeline-tool-group { width: 100%; }
 .pd-timeline-tool-group .pd-tool-panel { margin-top: 0; }
 
-/* Extension interaction supplied by Pi's uiContext. */
-.pd-extension-dialog-overlay, .pd-extension-backdrop { position: fixed; inset: 0; z-index: 52; display: grid; place-items: center; padding: 22px; background: var(--pd-overlay); }
-.pd-extension-dialog { width: min(520px, 100%); max-height: min(720px, calc(100vh - 44px)); overflow-y: auto; padding: 21px; border: 1px solid var(--pd-border); border-radius: 13px; background: var(--pd-sidebar); color: var(--pd-text); box-shadow: 0 22px 60px #0008; }
-dialog.pd-extension-dialog { margin: auto; width: min(520px, calc(100vw - 44px)); }
-dialog.pd-extension-dialog::backdrop { background: var(--pd-overlay); }
-.pd-extension-dialog header { margin-bottom: 16px; }
-.pd-extension-eyebrow, .pd-extension-dialog-head span { color: var(--pd-brand); font-size: var(--pd-font-xs); font-weight: 700; letter-spacing: .1em; }
-.pd-extension-dialog h2 { margin: 6px 0 0; font-size: var(--pd-font-xl); line-height: 1.35; overflow-wrap: anywhere; }
-.pd-extension-message, .pd-extension-dialog-message { margin: 0 0 17px; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
-.pd-extension-options { display: flex; flex-direction: column; gap: 5px; max-height: min(45vh, 320px); overflow-y: auto; }
-.pd-extension-options button { width: 100%; min-height: 38px; padding: 8px 11px; border: 1px solid var(--pd-border); border-radius: 7px; background: var(--pd-surface); color: var(--pd-text); font-size: var(--pd-font-caption); text-align: left; overflow-wrap: anywhere; }
-.pd-extension-options button:hover:not(:disabled), .pd-extension-options button:focus-visible { border-color: var(--pd-brand); background: var(--pd-selected); }
-.pd-extension-empty, .pd-extension-options p { margin: 0; padding: 10px; color: var(--pd-text-weak); font-size: var(--pd-font-caption); }
-.pd-extension-dialog input, .pd-extension-dialog textarea { display: block; width: 100%; padding: 10px 11px; border: 1px solid var(--pd-border); border-radius: 7px; outline: 0; background: var(--pd-surface); color: var(--pd-text); font-size: var(--pd-font-caption); line-height: 1.55; }
-.pd-extension-dialog textarea { min-height: 145px; max-height: 45vh; resize: vertical; font-family: ui-monospace, Consolas, monospace; }
-.pd-extension-dialog input:focus, .pd-extension-dialog textarea:focus { border-color: var(--pd-brand); }
-.pd-extension-dialog footer, .pd-extension-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 19px; }
-.pd-extension-dialog footer button, .pd-extension-actions button { min-width: 67px; min-height: 32px; padding: 0 10px; border: 1px solid var(--pd-border); border-radius: 7px; background: var(--pd-surface); color: var(--pd-text); font-size: var(--pd-font-caption); }
-.pd-extension-dialog footer button:hover:not(:disabled), .pd-extension-actions button:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
-.pd-extension-dialog footer .pd-extension-submit, .pd-extension-actions .is-primary { border-color: var(--pd-brand); background: var(--pd-brand); color: var(--pd-brand-ink); font-weight: 600; }
-.pd-extension-dialog footer .pd-extension-submit:hover:not(:disabled), .pd-extension-actions .is-primary:hover:not(:disabled) { background: var(--pd-brand-hover); color: var(--pd-brand-ink); }
-.pd-extension-error, .pd-extension-dialog-error { margin: 10px 0 0; color: var(--pd-danger); font-size: var(--pd-font-sm); overflow-wrap: anywhere; }
+/* Extension notifications; inline request cards live in extensionRequests.css. */
 .pd-extension-notifications { position: fixed; top: 66px; right: 16px; z-index: 72; display: flex; flex-direction: column; gap: 8px; width: min(360px, calc(100vw - 32px)); pointer-events: none; }
 .pd-extension-notification, .pd-extension-notice { display: flex; align-items: start; gap: 10px; min-height: 40px; padding: 10px 12px; border: 1px solid var(--pd-border); border-left: 3px solid var(--pd-brand); border-radius: 8px; background: var(--pd-surface); color: var(--pd-text); box-shadow: 0 7px 20px #0004; font-size: var(--pd-font-caption); line-height: 1.5; pointer-events: auto; overflow-wrap: anywhere; }
 .pd-extension-notification.is-warning, .pd-extension-notice.is-warning { border-left-color: var(--pd-warning); }
@@ -782,13 +757,6 @@ dialog.pd-extension-dialog::backdrop { background: var(--pd-overlay); }
 .pd-extension-notice p { margin: 4px 0 0; color: var(--pd-text-subtle); }
 .pd-extension-notification button, .pd-extension-notice button { display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: var(--pd-text); }
 .pd-extension-notification button:hover, .pd-extension-notice button:hover { color: var(--pd-text); }
-.is-frameless .pd-extension-dialog-overlay, .is-frameless .pd-extension-backdrop { top: 56px; }
-.is-frameless .pd-extension-dialog { max-height: min(720px, calc(100vh - 100px)); }
-.is-frameless dialog.pd-extension-dialog { top: 56px; }
-:root[data-theme='light'] .pd-extension-dialog-overlay, :root[data-theme='light'] .pd-extension-backdrop { background: #1b253b70; }
-:root[data-theme='light'] .pd-extension-dialog { box-shadow: 0 22px 60px #1b253b35; }
-:root[data-theme='light'] dialog.pd-extension-dialog::backdrop { background: #1b253b70; }
-
 /* Composer model picker and attachments */
 .pd-composer-config { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .pd-composer-control { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 5px; min-height: 28px; padding: 0 7px; border: 0; border-radius: 8px; background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); line-height: 1.5; white-space: nowrap; }
@@ -856,7 +824,6 @@ dialog.pd-extension-dialog::backdrop { background: var(--pd-overlay); }
 @container (max-width: 520px) {
   .pd-composer-model-trigger { max-width: 190px; }
   .pd-composer-thinking-trigger > span { display: none; }
-  .pd-composer-action > span { display: none; }
 }
 @container (max-width: 360px) {
   .pd-composer-toolbar { gap: 5px; }
@@ -1008,7 +975,7 @@ dialog.pd-extension-dialog::backdrop { background: var(--pd-overlay); }
 .pd-composer-config-popover, .pd-context-picker, .pd-slash-picker, .pd-sidebar-popover, .pd-hover-tooltip {
   animation: pd-popover-enter var(--pd-motion-fast) var(--pd-ease-enter) both;
 }
-.pd-settings-dialog, .pd-search-dialog, .pd-extension-dialog {
+.pd-settings-dialog, .pd-search-dialog {
   animation: pd-dialog-enter var(--pd-motion-normal) var(--pd-ease-enter) both;
 }
 @keyframes pd-popover-enter { from { opacity: 0; translate: 0 4px; } to { opacity: 1; translate: 0 0; } }

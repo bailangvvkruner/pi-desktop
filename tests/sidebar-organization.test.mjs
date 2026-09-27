@@ -3,17 +3,24 @@ import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import {
   buildSidebarGroups,
+  buildSidebarProjectGroups,
   collectSidebarSessions,
   clearPinnedProjects,
   groupSessionsByDate,
+  mergeSidebarProjectOrder,
+  orderSidebarProjects,
   readSidebarPreferences,
   readPinnedProjects,
+  reorderSidebarProjectPositions,
   saveSidebarPreferences,
   savePinnedProjects,
   selectSidebarSessions,
+  sidebarProjectPaths,
+  sidebarWorkspaceKey,
+  splitSidebarProjects,
 } from '../packages/ui/src/sidebarOrganization.ts';
 
-const defaults = { mode: 'grouped', projectView: 'project', sort: 'newest', filter: 'all', collapsed: [] };
+const defaults = { mode: 'grouped', projectView: 'project', sort: 'newest', filter: 'all', collapsed: [], projectOrder: [] };
 const session = (path, overrides = {}) => ({
   path, id: path, firstMessage: path, modified: '2026-09-24T08:00:00Z', messageCount: 1,
   workspace: 'first-project', ...overrides,
@@ -30,7 +37,7 @@ test('sidebar preferences survive storage and tolerate corrupt or unavailable st
     setItem(key, value) { assert.equal(key, 'pi-desktop.sidebar-organization.v1'); stored = value; },
   };
   assert.deepEqual(readSidebarPreferences(storage), defaults);
-  const preferred = { mode: 'project', projectView: 'timeline', sort: 'oldest', filter: 'unread', collapsed: ['project:a', 'group:b'] };
+  const preferred = { mode: 'project', projectView: 'timeline', sort: 'oldest', filter: 'unread', collapsed: ['project:a', 'group:b'], projectOrder: ['b', 'a'] };
   saveSidebarPreferences(preferred, storage);
   assert.deepEqual(readSidebarPreferences(storage), preferred);
   stored = '{invalid';
@@ -61,7 +68,79 @@ test('sidebar preference validation preserves valid fields and supplies independ
   });
   const first = read(null);
   first.collapsed.push('changed');
+  first.projectOrder.push('changed');
   assert.deepEqual(read(null), defaults);
+  assert.deepEqual(read({ projectOrder: ['b', null, '', 'b', 1, 'a'] }).projectOrder, ['b', 'a']);
+});
+
+test('project ordering is persisted independently of workspace MRU and respects pin partitions', () => {
+  const saved = ['C:/second', 'C:/first', 'C:/pinned', 'C:/temporarily-unavailable'];
+  const current = ['C:/first', 'C:/second', 'C:/pinned', 'C:/new'];
+  const pinned = new Set(['C:/pinned']);
+  const expected = ['C:/pinned', 'C:/second', 'C:/first', 'C:/new'];
+  assert.deepEqual(orderSidebarProjects(current, saved, pinned), expected);
+  assert.deepEqual(orderSidebarProjects([...current].reverse(), saved, pinned), expected, 'switching workspaces must not reshuffle project headers');
+  assert.deepEqual(mergeSidebarProjectOrder(saved, ['C:/first']), saved, 'a partial startup registry must not erase other saved positions');
+  assert.deepEqual(mergeSidebarProjectOrder(saved, current), [...saved, 'C:/new']);
+  assert.deepEqual(orderSidebarProjects(['b', 'a', 'b'], [], new Set()), ['b', 'a']);
+  assert.deepEqual(orderSidebarProjects(['a', 'b', 'c', 'd'], ['d', 'b', 'c', 'a'], new Set(['a', 'c'])), ['c', 'a', 'd', 'b']);
+});
+
+test('project pin sections preserve manual positions through pin and unpin changes', () => {
+  const saved = ['D:/fourth', 'D:/second', 'D:/third', 'D:/first'];
+  const workspaces = ['D:/first', 'D:/second', 'D:/third', 'D:/fourth'];
+  const projectSections = (pins) => splitSidebarProjects(orderSidebarProjects(workspaces, saved, pins), pins);
+  assert.deepEqual(projectSections(new Set()), { pinned: [], unpinned: saved });
+  assert.deepEqual(projectSections(new Set(['D:/first', 'D:/third'])), {
+    pinned: ['D:/third', 'D:/first'], unpinned: ['D:/fourth', 'D:/second'],
+  });
+  assert.deepEqual(projectSections(new Set(['D:/first'])), {
+    pinned: ['D:/first'], unpinned: ['D:/fourth', 'D:/second', 'D:/third'],
+  });
+  assert.deepEqual(projectSections(new Set()), { pinned: [], unpinned: saved });
+  assert.deepEqual(saved, ['D:/fourth', 'D:/second', 'D:/third', 'D:/first']);
+  assert.deepEqual(workspaces, ['D:/first', 'D:/second', 'D:/third', 'D:/fourth']);
+});
+
+test('project pin sections match Windows aliases, deduplicate projects, and ignore stale pins', () => {
+  const workspaces = ['D:/Projects/One', 'd:\\projects\\one\\', '//Server/share/Two', '/src/One', '/src/one'];
+  const pins = new Set(['d:\\PROJECTS\\ONE\\', '\\\\server\\SHARE\\two\\', '/src/one', 'D:/removed']);
+  assert.deepEqual(splitSidebarProjects(workspaces, pins), {
+    pinned: ['D:/Projects/One', '//Server/share/Two', '/src/one'], unpinned: ['/src/One'],
+  });
+  assert.deepEqual(splitSidebarProjects([], pins), { pinned: [], unpinned: [] });
+  assert.deepEqual([...pins], ['d:\\PROJECTS\\ONE\\', '\\\\server\\SHARE\\two\\', '/src/one', 'D:/removed']);
+});
+
+test('dragging one project section preserves the other section positions after unpinning', () => {
+  const saved = Object.freeze(['A', 'B', 'C', 'D']);
+  const pins = new Set(['B', 'D']);
+  const movedRegular = reorderSidebarProjectPositions(saved, ['C', 'A']);
+  assert.deepEqual(orderSidebarProjects(saved, movedRegular, pins), ['B', 'D', 'C', 'A']);
+  assert.deepEqual(orderSidebarProjects(saved, movedRegular, new Set()), ['C', 'B', 'A', 'D']);
+  const movedPinned = reorderSidebarProjectPositions(movedRegular, ['D', 'B']);
+  assert.deepEqual(orderSidebarProjects(saved, movedPinned, pins), ['D', 'B', 'C', 'A']);
+  assert.deepEqual(orderSidebarProjects(saved, movedPinned, new Set()), ['C', 'D', 'A', 'B']);
+  assert.deepEqual(reorderSidebarProjectPositions(saved, ['A', 'C']), saved, 'dropping back in place must not move pinned projects to the beginning of saved order');
+});
+
+test('project reordering retains unavailable positions and normalizes reordered Windows aliases', () => {
+  const saved = ['D:/one', 'D:/offline', 'D:/pinned', 'd:\\two\\', 'd:\\ONE\\'];
+  assert.deepEqual(reorderSidebarProjectPositions(saved, ['D:/Two', 'd:/ONE', 'D:/new', 'd:\\two\\']), [
+    'D:/Two', 'D:/offline', 'D:/pinned', 'd:/ONE', 'D:/new',
+  ]);
+  assert.deepEqual(reorderSidebarProjectPositions([], ['new', 'other', 'new']), ['new', 'other']);
+});
+
+test('project ordering keeps saved positions across Windows aliases and stale project pins', () => {
+  const workspaces = ['D:/Projects/One', 'D:/Projects/Two', 'd:\\projects\\one\\', 'D:/Projects/Three'];
+  const saved = ['d:\\projects\\three\\', 'd:\\projects\\two\\', 'D:/removed', 'd:\\projects\\one\\'];
+  assert.deepEqual(orderSidebarProjects(workspaces, saved, new Set(['d:\\PROJECTS\\two\\', 'D:/removed'])), [
+    'D:/Projects/Two', 'D:/Projects/Three', 'D:/Projects/One',
+  ]);
+  assert.deepEqual(orderSidebarProjects(workspaces, saved, new Set()), [
+    'D:/Projects/Three', 'D:/Projects/Two', 'D:/Projects/One',
+  ]);
 });
 
 test('collecting sessions uses paths, retaining equal SDK ids in different projects', () => {
@@ -73,6 +152,59 @@ test('collecting sessions uses paths, retaining equal SDK ids in different proje
   assert.deepEqual(paths(collected), ['/a/one.jsonl', '/b/one.jsonl']);
   assert.deepEqual(collected.map((entry) => entry.workspace), ['a', 'b']);
   assert.equal(a.workspace, 'first-project');
+});
+
+test('project list excludes the default conversation workspace and deduplicates Windows aliases', () => {
+  const workspacePaths = ['C:/Users/me/PiDesktopWorkspace', 'D:/Projects/One', 'd:\\projects\\one\\', '/src/One', '/src/one'];
+  assert.deepEqual(sidebarProjectPaths(workspacePaths, 'c:\\users\\me\\pidesktopworkspace\\'), [
+    'D:/Projects/One', '/src/One', '/src/one',
+  ]);
+  assert.deepEqual(sidebarProjectPaths(workspacePaths, null), [
+    'C:/Users/me/PiDesktopWorkspace', 'D:/Projects/One', '/src/One', '/src/one',
+  ]);
+  assert.equal(sidebarWorkspaceKey('C:\\'), sidebarWorkspaceKey('c:/'));
+  assert.equal(sidebarWorkspaceKey('\\\\server\\share\\'), sidebarWorkspaceKey('//SERVER/share'));
+  assert.notEqual(sidebarWorkspaceKey('/src/One'), sidebarWorkspaceKey('/src/one'));
+});
+
+test('project grouping keeps default and unregistered conversations below projects without duplicate pins', () => {
+  const home = 'C:/Users/me/PiDesktopWorkspace';
+  const workspaces = [home, 'D:/Projects/One', 'D:/Projects/Empty'];
+  const sessions = collectSidebarSessions([...workspaces, 'D:/Projects/Removed'], {
+    [home]: [session('general'), session('general-pin', { pinned: true })],
+    'D:/Projects/One': [session('project'), session('project-pin', { pinned: true })],
+    'D:/Projects/Removed': [session('removed')],
+  });
+  const original = structuredClone(sessions);
+  const grouped = buildSidebarProjectGroups([...sessions, sessions[0]], sidebarProjectPaths(workspaces, home));
+  assert.deepEqual(grouped.projects.map(project => [project.workspace, paths(project.sessions)]), [
+    ['D:/Projects/One', ['project']], ['D:/Projects/Empty', []],
+  ]);
+  assert.deepEqual(paths(grouped.unassigned), ['general', 'removed']);
+  assert.deepEqual(paths(buildSidebarGroups(sessions, []).pinned), ['general-pin', 'project-pin']);
+  assert.deepEqual(sessions, original);
+});
+
+test('project membership uses exact normalized workspaces and preserves filtering and manual order', () => {
+  const sessions = [
+    session('manual-general', { workspace: 'home', order: 4 }),
+    session('new-general', { workspace: 'home' }),
+    session('alias', { workspace: 'd:\\projects\\one\\', order: 2 }),
+    session('project', { workspace: 'D:/Projects/One', order: 1 }),
+    session('nested', { workspace: 'D:/Projects/One/other', unread: true }),
+    session('archived-general', { workspace: 'home', archived: true }),
+  ];
+  const projectPaths = ['D:/Projects/One', 'd:\\projects\\one'];
+  const grouped = buildSidebarProjectGroups(selectActive(sessions), projectPaths);
+  assert.deepEqual(grouped.projects.map(project => [project.workspace, paths(project.sessions)]), [
+    ['D:/Projects/One', ['project', 'alias']],
+  ]);
+  assert.deepEqual(paths(grouped.unassigned), ['new-general', 'nested', 'manual-general']);
+  const unread = buildSidebarProjectGroups(selectActive(sessions, { filter: 'unread' }), projectPaths);
+  assert.deepEqual(paths(unread.unassigned), ['nested']);
+  assert.deepEqual(unread.projects[0].sessions, []);
+  const archive = buildSidebarProjectGroups(selectActive(sessions, { archived: true }), projectPaths);
+  assert.deepEqual(paths(archive.unassigned), ['archived-general']);
 });
 
 test('session filters separate archives and apply unread or pinned within that scope', () => {

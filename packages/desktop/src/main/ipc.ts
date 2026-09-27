@@ -24,6 +24,7 @@ import { SessionGroupService } from './sessionGroups';
 import { createSessionTrash } from './sessionTrash';
 import { broadcastToRenderers, handleRendererInvoke, requireRendererSender } from './rendererIpc';
 import { normalizeSessionPath, pruneMissingSessionMeta } from './sessionPaths';
+import { prepareWorkspaceDrop } from './workspaceDrop';
 import { createDesktopNotifier } from './notifications';
 import { readDesktopSettings, writeDesktopSettings, type DesktopSettings } from './desktopSettings';
 import { readWorkspaceContext, validateContextRequest } from './contextService';
@@ -298,7 +299,7 @@ async function saveWorkspaceAsync(cwd: string): Promise<void> {
 async function listWorkspaces(): Promise<string[]> {
 	await workspaceSettingsQueue;
 	const saved = await readWorkspaceSettingsAsync();
-	const candidates = [...new Set([...(Array.isArray(saved.workspaces) ? saved.workspaces : []), saved.cwd, activeWorkspace]
+	const candidates = [...new Set([...(Array.isArray(saved.workspaces) ? saved.workspaces : []), saved.cwd, activeWorkspace, join(app.getPath('home'), 'PiDesktopWorkspace')]
 		.filter((value): value is string => typeof value === 'string' && value.length > 0))];
 	const existing = await Promise.all(candidates.map(async (cwd) => {
 		try { return (await stat(cwd)).isDirectory(); }
@@ -441,11 +442,11 @@ async function requireSessionOwners(paths: string[], allowCurrentDraft = false):
 	return result;
 }
 
-function activateWorkspace(cwd: string, initialize: boolean): Promise<void> {
+function activateWorkspace(cwd: string, initialize: boolean, fresh = false): Promise<void> {
 	if (pluginMutationActive) return Promise.reject(new Error('插件正在更新，请完成后再切换项目'));
 	if (automaticRecoveryTimer) clearTimeout(automaticRecoveryTimer);
 	automaticRecoveryTimer = null;
-	return queueWorkspaceActivation(() => performWorkspaceActivation(cwd, initialize));
+	return queueWorkspaceActivation(() => performWorkspaceActivation(cwd, initialize, fresh));
 }
 
 function queueWorkspaceActivation<T>(action: () => Promise<T>): Promise<T> {
@@ -457,10 +458,12 @@ function queueWorkspaceActivation<T>(action: () => Promise<T>): Promise<T> {
 	return result;
 }
 
-async function performWorkspaceActivation(cwd: string, initialize: boolean): Promise<void> {
+async function performWorkspaceActivation(cwd: string, initialize: boolean, fresh: boolean): Promise<void> {
 	if (typeof cwd !== 'string') throw new Error('未知工作区');
 	const saved = await readWorkspaceSettingsAsync();
-	const known = [activeWorkspace, saved.cwd, ...(saved.workspaces ?? [])];
+	// Detaching a draft must also work before the built-in home workspace has
+	// ever been selected or added to the saved workspace list.
+	const known = [activeWorkspace, saved.cwd, join(app.getPath('home'), 'PiDesktopWorkspace'), ...(saved.workspaces ?? [])];
 	if (!known.includes(cwd) && !pickedWorkspaces.has(cwd)) throw new Error('未知工作区');
 	try { if (!(await stat(cwd)).isDirectory()) throw new Error('工作区目录无效'); }
 	catch { throw new Error('工作区目录无效'); }
@@ -469,7 +472,8 @@ async function performWorkspaceActivation(cwd: string, initialize: boolean): Pro
 	activeWorkspace = cwd;
 	try {
 		const excludeSessionPaths = automationExecutor.sessionPaths(cwd);
-		if (initialize) await agentService.init(excludeSessionPaths.length ? { cwd, excludeSessionPaths } : { cwd });
+		if (fresh) await agentService.init({ cwd, fresh: true });
+		else if (initialize) await agentService.init(excludeSessionPaths.length ? { cwd, excludeSessionPaths } : { cwd });
 		else if (excludeSessionPaths.length) await agentService.switchWorkspace(cwd, excludeSessionPaths);
 		else await agentService.switchWorkspace(cwd);
 	} catch (error) {
@@ -719,11 +723,24 @@ export function registerIpc(options: {
 		return selected;
 	});
 	handleRendererInvoke(IPC_CHANNELS.agentListWorkspaces, () => listWorkspaces());
+	handleRendererInvoke(IPC_CHANNELS.workspaceAddDropped, (_event, paths: unknown) => withWorkspaceSettings(async (previous) => {
+		const registered = [...(previous.workspaces ?? []), previous.cwd, activeWorkspace]
+			.filter((cwd): cwd is string => typeof cwd === 'string' && cwd.length > 0);
+		const result = await prepareWorkspaceDrop(paths, registered);
+		if (result.added.length > 0) {
+			await writeStateFileAsync(workspaceSettingsPath(), { ...previous, workspaces: result.workspaces });
+			invalidateAppTrayData();
+		}
+		return result.accepted;
+	}));
 	handleRendererInvoke(IPC_CHANNELS.workspaceListPinned, () => listPinnedWorkspaces());
 	handleRendererInvoke(IPC_CHANNELS.workspaceSetPinned, (_event, cwds: unknown) => setPinnedWorkspaces(cwds));
 	handleRendererInvoke(IPC_CHANNELS.agentListSessionGroups, () => groups.list());
 	handleRendererInvoke(IPC_CHANNELS.agentUpdateSessionGroups, (_event, change: UiSidebarGroupChange) => groups.update(change));
-	handleRendererInvoke(IPC_CHANNELS.workspaceSwitch, (_event, cwd: string) => activateWorkspace(cwd, false));
+	handleRendererInvoke(IPC_CHANNELS.workspaceSwitch, (_event, cwd: string, options?: unknown) => {
+		if (options !== undefined && (!isRecord(options) || (options.fresh !== undefined && typeof options.fresh !== 'boolean'))) throw new Error('项目切换选项无效');
+		return activateWorkspace(cwd, false, isRecord(options) && options.fresh === true);
+	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceDefault, () => {
 		// The detach target is always the home workspace, not the last-saved cwd
 		// that defaultWorkspace() restores.

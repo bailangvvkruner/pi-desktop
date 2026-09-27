@@ -7,7 +7,7 @@ import { useChatStore } from './store';
 export function useInputQueue(items: UiQueuedMessage[]) {
   const bridge = useChatStore(state => state.bridge) as Partial<InputFeatureBridge> | null;
   const cwd = useChatStore(state => state.cwd), sessionPath = useChatStore(state => state.sessionPath), sessionId = useChatStore(state => state.sessionId);
-  const loading = useChatStore(state => state.sessionLoading), status = useChatStore(state => state.status);
+  const loading = useChatStore(state => state.sessionLoading || state.navigationPending), status = useChatStore(state => state.status);
   const available = Boolean(cwd && sessionId && !loading && (status === 'busy' || status === 'idle'));
   const scope = useMemo<UiInputQueueScope>(() => ({ cwd, sessionPath, sessionId: sessionId ?? '' }), [cwd, sessionPath, sessionId]);
   const [queue, setQueue] = useState<UiInputQueue | null>(null);

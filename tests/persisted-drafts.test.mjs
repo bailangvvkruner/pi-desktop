@@ -34,3 +34,41 @@ test('draft saves coalesce pending edits, reuse immutable attachment identities,
   assert.deepEqual(writes.filter(write => write.cwd === 'A').map(write => [write.text, write.expectedVersion]), [['first', 0], ['last', 1]]);
   assert.equal(puts.length, 1); assert.equal(writes.find(write => write.cwd === 'B').expectedVersion, 0);
 });
+
+test('an edit arriving as the previous save settles is persisted instead of stranded on the completed worker', async () => {
+  const scope = { cwd: 'A', sessionPath: 'one' }, writes = [];
+  let finish, started;
+  const ready = new Promise(resolve => { started = resolve; });
+  const drafts = new PersistedComposerDrafts({
+    getInputDraft: async () => ({ version: 0, text: '', attachments: [], missing: [] }),
+    saveInputDraft: request => {
+      writes.push(request);
+      if (writes.length === 1) return new Promise(resolve => { finish = resolve; started(); });
+      return Promise.resolve({ version: request.expectedVersion + 1 });
+    },
+  });
+  const first = drafts.save(scope, { text: 'first', attachments: [] });
+  await ready;
+  finish({ version: 1 });
+  let last;
+  // The original worker consumes the first result before this edit, but its
+  // returned promise has not completed its external handlers yet.
+  await Promise.resolve().then(() => { last = drafts.save(scope, { text: 'last edit', attachments: [] }); });
+  await Promise.all([first, last]);
+  assert.deepEqual(writes.map(write => [write.text, write.expectedVersion]), [['first', 0], ['last edit', 1]]);
+});
+
+test('a failed draft save releases its worker and lets a later edit retry', async () => {
+  const scope = { cwd: 'A', sessionPath: 'one' }, writes = [];
+  const drafts = new PersistedComposerDrafts({
+    getInputDraft: async () => ({ version: 0, text: '', attachments: [], missing: [] }),
+    saveInputDraft: async request => {
+      writes.push(request);
+      if (writes.length === 1) throw new Error('Disk temporarily unavailable');
+      return { version: request.expectedVersion + 1 };
+    },
+  });
+  await assert.rejects(drafts.save(scope, { text: 'first', attachments: [] }), /Disk temporarily unavailable/);
+  await drafts.save(scope, { text: 'retry', attachments: [] });
+  assert.deepEqual(writes.map(write => [write.text, write.expectedVersion]), [['first', 0], ['retry', 0]]);
+});

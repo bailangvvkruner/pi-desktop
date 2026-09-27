@@ -297,7 +297,11 @@ class SingleAgentService {
 
 	getLiveSidebarEntry(runtime: UiSessionRuntimeState): UiSessionSummary | null {
 		if (!this.state.sessionPath || !this.state.sessionId || runtime.phase === 'idle') return null;
-		return { path: this.state.sessionPath, id: this.state.sessionId, firstMessage: this.state.messages.find((message) => message.role === 'user')?.text ?? '',
+		const manager = this.runtime?.session.sessionManager;
+		const firstUser = manager?.getEntries().find((entry) => entry.type === 'message' && entry.message.role === 'user');
+		const firstMessage = firstUser?.type === 'message' && firstUser.message.role === 'user'
+			? userText(firstUser.message) : this.state.messages.find((message) => message.role === 'user')?.text ?? '';
+		return { path: this.state.sessionPath, id: this.state.sessionId, name: manager?.getSessionName(), firstMessage,
 			modified: this.runtimeModified, messageCount: this.state.messages.length, runtime };
 	}
 
@@ -639,8 +643,10 @@ class SingleAgentService {
 		return useSystemProxy === undefined ? discover() : runWithProviderNetwork(useSystemProxy, discover);
 	}
 
-	lockProviderConfiguration(): () => void {
-		if (this.closing || !this.canEvict) throw new Error('有会话仍在运行或更新设置，请等待全部会话空闲后修改供应商');
+	lockProviderConfiguration(allowWhileRunning = false): () => void {
+		if (this.closing || this.lifecycleOperation || this.activeConfigurationCalls > 0 || (!allowWhileRunning && !this.canEvict)) {
+			throw new Error('有会话仍在运行或更新设置，请等待全部会话空闲后修改供应商');
+		}
 		this.activeConfigurationCalls += 1;
 		return () => { this.activeConfigurationCalls -= 1; };
 	}
@@ -928,6 +934,7 @@ class SingleAgentService {
 		const promptText = withTextAttachments(text, attachments);
 		const images = imageAttachments(attachments);
 		const tracker = this.conversationRuns;
+		const inputQueue = this.inputQueue, inputId = this.inputRequest.getStore()?.id;
 		const startedRun = session.isIdle && !tracker?.active ? tracker?.begin() : undefined;
 		if (this.state.status === 'idle') this.fire({ type: 'status', status: 'busy' });
 		this.activePromptCalls += 1;
@@ -943,13 +950,16 @@ class SingleAgentService {
 				preflightResult: (accepted) => {
 					// SDK abort only cancels an already-started agent loop. A request
 					// cancelled during auth/hooks must not start a fresh loop afterward.
+					if (accepted && this.closing) throw new Error('会话已关闭，输入未发送');
 					if (accepted && startedRun && tracker?.wasCancelled(startedRun.id)) throw new Error('请求已取消');
 					if (accepted && !acknowledged) {
 						acknowledged = true;
 						resolve();
 					}
 				},
-			})).catch((error: unknown) => {
+			})).then(() => {
+				if (inputId) inputQueue?.completePrompt(inputId);
+			}).catch((error: unknown) => {
 				if (session.isIdle) { this.finishInterruptedAssistant(errorMessage(error)); tracker?.finish('failed'); }
 				this.fire({ type: 'error', message: errorMessage(error) });
 				if (!acknowledged) {
@@ -1925,7 +1935,16 @@ export class AgentService {
 			if (service.cwd !== cwd) continue;
 			const summary = this.runtimeSummary(service);
 			const live = summary && service.getLiveSidebarEntry(summary.runtime);
-			if (live && !result.some((entry) => entry.path === live.path)) result.push(live);
+			if (!live) continue;
+			const listed = result.find((entry) => entry.path === live.path);
+			if (!listed) result.push(live);
+			else {
+				// Pi may have persisted only the header while the first prompt is
+				// already streaming. Do not let that stale disk row erase its title.
+				if (live.firstMessage && (listed.messageCount === 0 || !listed.firstMessage.trim())) listed.firstMessage = live.firstMessage;
+				listed.name = live.name ?? listed.name;
+				listed.messageCount = Math.max(listed.messageCount, live.messageCount);
+			}
 		}
 		return result;
 	}
@@ -2330,7 +2349,9 @@ export class AgentService {
 		if (this.transition || this.credentialOperation || this.trimOperation) throw new Error('会话或设置正在更新，请稍后再试');
 		const contexts = [...this.contexts.values()];
 		const releases: (() => void)[] = [];
-		try { for (const context of contexts) releases.push(context.lockProviderConfiguration()); }
+		// Creating a distinct provider refreshes its catalog only; it never
+		// rebinds the model or credentials used by an in-flight conversation.
+		try { for (const context of contexts) releases.push(context.lockProviderConfiguration(request?.mode === 'create')); }
 		catch (error) { for (const release of releases) release(); throw error; }
 		const operation = Promise.resolve().then(async () => {
 			const directory = service.agentDirectory;
@@ -2345,7 +2366,7 @@ export class AgentService {
 			if (!request && !existing?.custom) throw new Error('自定义供应商不存在');
 			for (const context of contexts) {
 				const selected = context.getSnapshot();
-				if (selected.modelProvider === provider && (!request || !request.models.some((model) => model.id === selected.model))) {
+				if (selected.modelProvider === provider && (request?.mode === 'create' || !request || !request.models.some((model) => model.id === selected.model))) {
 					throw new Error('供应商或模型仍被已打开的会话使用，请先为这些会话切换模型');
 				}
 			}
@@ -2408,6 +2429,7 @@ export class AgentService {
 		}, this.mcp);
 		service.onEvent(({ event }) => {
 			if (this.active === service) this.fire(event);
+			else if (event.type === 'user-message') this.fire({ type: 'sessions-changed', cwd: service.cwd });
 			else if (event.type === 'assistant-end' || (event.type === 'tool' && event.activity.status === 'done')) {
 				const snapshot = service.getSnapshot();
 				if (snapshot.sessionPath) {

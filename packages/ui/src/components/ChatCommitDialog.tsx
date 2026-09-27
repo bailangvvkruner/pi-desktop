@@ -53,6 +53,7 @@ export function ChatCommitDialog({ onClose }: { onClose(): void }) {
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
+			if (event.target instanceof Element && event.target.closest('.pd-extension-request')) return;
 			if (event.key === 'Escape' && !busy) { event.stopPropagation(); onClose(); }
 		};
 		window.addEventListener('keydown', onKey, true);

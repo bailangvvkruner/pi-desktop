@@ -376,6 +376,11 @@ export default async function composerQueueScenarios(review) {
   await openMenu('queue-keyboard-001');
   await clickVisibleButton(review, '关闭默认排队', '.pd-queue-menu');
   await review.assert(`localStorage.getItem('pi-desktop:busy-input-behavior') === 'steer' && ${q}.currentQueue().paused === false`, 'Turning off default queueing changes the next-send preference without pausing existing input');
+  await review.click('.pd-settings-entry');
+  await review.clickText('.pd-settings-nav button', '常规');
+  await review.assert(`document.querySelector('[data-setting="busy-input-behavior"] button[aria-pressed="true"]').textContent.trim() === '引导'`, 'General settings immediately reflect a follow-up preference changed through the queue menu');
+  await review.key('Escape');
+  await review.waitFor('!document.querySelector(".pd-settings-dialog")');
   for (const [text, modifiers, behavior] of [
     ['快捷键：Enter 默认引导', {}, 'steer'],
     ['快捷键：Ctrl+Enter 反向排队', { ctrl: true }, 'followUp'],
@@ -385,8 +390,14 @@ export default async function composerQueueScenarios(review) {
     await review.waitFor(`${q}.calls.some(call=>call.name==='submit' && call.request.text===${JSON.stringify(text)})`);
     await review.assert(`${q}.calls.filter(call=>call.name==='submit').at(-1).request.behavior === ${JSON.stringify(behavior)}`, 'Busy submit follows the selected default or its alternate shortcut: ' + text);
   }
+  await review.click('.pd-settings-entry');
+  await review.clickText('.pd-settings-nav button', '常规');
+  await review.clickText('[data-setting="busy-input-behavior"] button', '排队');
+  await review.key('Escape');
+  await review.waitFor('!document.querySelector(".pd-settings-dialog")');
   await openMenu('queue-keyboard-001');
-  await clickVisibleButton(review, '启用默认排队', '.pd-queue-menu');
+  await review.assert(`document.querySelector('.pd-queue-menu [role="menuitemcheckbox"]').getAttribute('aria-checked') === 'true' && document.querySelector('.pd-queue-menu').textContent.includes('关闭默认排队') && ${q}.currentQueue().paused === false`, 'The queue menu immediately reflects General settings without changing queue pause state');
+  await review.key('Escape');
   for (const [text, modifiers, behavior] of [
     ['快捷键：Enter 默认排队', {}, 'followUp'],
     ['快捷键：Ctrl+Enter 反向引导', { ctrl: true }, 'steer'],
@@ -396,11 +407,11 @@ export default async function composerQueueScenarios(review) {
     await review.waitFor(`${q}.calls.some(call=>call.name==='submit' && call.request.text===${JSON.stringify(text)})`);
     await review.assert(`${q}.calls.filter(call=>call.name==='submit').at(-1).request.behavior === ${JSON.stringify(behavior)}`, 'Queue-default submit and its alternate shortcut stay distinct: ' + text);
   }
-  await review.fill('.pd-composer-shell > textarea', '快捷键：主发送按钮遵循默认排队');
-  await review.click('.pd-send-button');
-  await review.waitFor(`${q}.calls.some(call=>call.name==='submit' && call.request.text==='快捷键：主发送按钮遵循默认排队')`);
-  await review.assert(`${q}.calls.filter(call=>call.name==='submit').at(-1).request.behavior === 'followUp'`, 'The main send button uses the same busy default as Enter');
-  await review.evaluate(`${q}.setStatus('idle')`);
+  await review.fill('.pd-composer-shell > textarea', '快捷键：停止任务后仍应保留的草稿');
+  await review.evaluate(`${q}.submitsBeforeStop=${q}.calls.filter(call=>call.name==='submit').length`);
+  await review.click('.pd-send-button[data-action="stop"]');
+  await review.waitFor(`${q}.calls.some(call=>call.name==='abort') && document.querySelector('.pd-send-button[data-action="send"]') !== null`);
+  await review.assert(`${q}.calls.filter(call=>call.name==='submit').length === ${q}.submitsBeforeStop && document.querySelector('.pd-composer-shell > textarea').value === '快捷键：停止任务后仍应保留的草稿'`, 'The busy primary button stops the task without submitting or clearing the draft');
   await review.fill('.pd-composer-shell > textarea', '快捷键：空闲时直接发送');
   await review.key('Enter');
   await review.waitFor(`${q}.calls.some(call=>call.name==='submit' && call.request.text==='快捷键：空闲时直接发送')`);

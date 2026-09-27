@@ -6,6 +6,7 @@ export interface SidebarPreferences {
   sort: 'newest' | 'oldest';
   filter: 'all' | 'unread' | 'pinned';
   collapsed: string[];
+  projectOrder: string[];
 }
 
 export type SidebarSession = UiSessionSummary & { workspace: string };
@@ -24,7 +25,67 @@ function normalizePreferences(value: unknown): SidebarPreferences {
     collapsed: Array.isArray(source.collapsed)
       ? [...new Set(source.collapsed.filter((id): id is string => typeof id === 'string' && id.length > 0))]
       : [],
+    projectOrder: Array.isArray(source.projectOrder)
+      ? [...new Set(source.projectOrder.filter((path): path is string => typeof path === 'string' && path.length > 0))]
+      : [],
   };
+}
+
+/** Retain known positions while the workspace registry is still loading. */
+export function mergeSidebarProjectOrder(saved: readonly string[], workspaces: readonly string[]): string[] {
+  return [...new Set([...saved, ...workspaces])];
+}
+
+/** Reorder one visible section without moving the saved slots of other projects. */
+export function reorderSidebarProjectPositions(saved: readonly string[], reordered: readonly string[]): string[] {
+  const projects = sidebarProjectPaths(reordered, null);
+  const keys = new Set(projects.map(sidebarWorkspaceKey));
+  let index = 0;
+  return sidebarProjectPaths([...saved, ...projects], null)
+    .map(path => keys.has(sidebarWorkspaceKey(path)) ? projects[index++]! : path);
+}
+
+/** Navigation may update the workspace MRU; explicit sidebar positions stay put. */
+export function orderSidebarProjects(workspaces: readonly string[], saved: readonly string[], pinned: ReadonlySet<string>): string[] {
+  const available = new Map(sidebarProjectPaths(workspaces, null).map(path => [sidebarWorkspaceKey(path), path]));
+  const ordered = mergeSidebarProjectOrder(saved, workspaces)
+    .map(path => available.get(sidebarWorkspaceKey(path)))
+    .filter((path): path is string => path !== undefined);
+  const sections = splitSidebarProjects(ordered, pinned);
+  return [...sections.pinned, ...sections.unpinned];
+}
+
+/** Compare Windows workspace aliases without treating POSIX paths as case-insensitive. */
+export function sidebarWorkspaceKey(path: string): string {
+  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '');
+  return /^[a-z]:(?:\/|$)/i.test(normalized) || normalized.startsWith('//')
+    ? normalized.toLowerCase()
+    : normalized;
+}
+
+/** The default working directory holds conversations that have no selected project. */
+export function sidebarProjectPaths(workspaces: readonly string[], defaultWorkspace: string | null): string[] {
+  const defaultKey = defaultWorkspace === null ? null : sidebarWorkspaceKey(defaultWorkspace);
+  const seen = new Set<string>();
+  return workspaces.filter((workspace) => {
+    const key = sidebarWorkspaceKey(workspace);
+    if (key === defaultKey || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** Pinning changes sections without changing the saved position within the project list. */
+export function splitSidebarProjects(workspaces: readonly string[], pinned: ReadonlySet<string>): {
+  pinned: string[];
+  unpinned: string[];
+} {
+  const pinnedKeys = new Set([...pinned].map(sidebarWorkspaceKey));
+  const sections = { pinned: [] as string[], unpinned: [] as string[] };
+  for (const workspace of sidebarProjectPaths(workspaces, null)) {
+    (pinnedKeys.has(sidebarWorkspaceKey(workspace)) ? sections.pinned : sections.unpinned).push(workspace);
+  }
+  return sections;
 }
 
 export function readSidebarPreferences(storage?: Pick<Storage, 'getItem'>): SidebarPreferences {
@@ -151,6 +212,27 @@ export function buildSidebarGroups(sessions: SidebarSession[], groups: UiSession
   }
   for (const bucket of groupById.values()) bucket.sessions = orderSessions(bucket.sessions);
   return { pinned, groups: [...groupById.values()], ungrouped: orderSessions(ungrouped) };
+}
+
+/** Keep conversations outside the project registry in their own section below projects. */
+export function buildSidebarProjectGroups(sessions: SidebarSession[], projectPaths: readonly string[]): {
+  projects: { workspace: string; sessions: SidebarSession[] }[];
+  unassigned: SidebarSession[];
+} {
+  const projects = sidebarProjectPaths(projectPaths, null).map((workspace) => ({ workspace, sessions: [] as SidebarSession[] }));
+  const projectByWorkspace = new Map(projects.map((project) => [sidebarWorkspaceKey(project.workspace), project]));
+  const unassigned: SidebarSession[] = [];
+  const seen = new Set<string>();
+  for (const session of sessions) {
+    if (seen.has(session.path)) continue;
+    seen.add(session.path);
+    // Pinned conversations already have a shared section above the project list.
+    if (session.pinned) continue;
+    const project = projectByWorkspace.get(sidebarWorkspaceKey(session.workspace));
+    (project ? project.sessions : unassigned).push(session);
+  }
+  for (const project of projects) project.sessions = orderSessions(project.sessions);
+  return { projects, unassigned: orderSessions(unassigned) };
 }
 
 /**

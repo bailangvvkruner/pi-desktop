@@ -88,7 +88,7 @@ interface ChatState {
 	loadOlderMessages(pageSize?: number): Promise<boolean>;
 	refreshWorkspaces(): Promise<void>;
 	refreshWorkspaceSessions(cwd: string): Promise<void>;
-	switchWorkspace(cwd: string): Promise<void>;
+	switchWorkspace(cwd: string, options?: { fresh?: boolean }): Promise<void>;
 	removeWorkspace(cwd: string): Promise<void>;
 	updateSessionMeta(path: string, patch: UiSessionMetaPatch): Promise<void>;
 	/** Moves a conversation to the app trash after a confirmation; active sessions switch away first (3.3). */
@@ -117,7 +117,7 @@ interface ChatState {
 	updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void>;
 	abort(): Promise<void>;
 	newSession(): Promise<void>;
-	pickWorkspace(): Promise<void>;
+	pickWorkspace(options?: { fresh?: boolean }): Promise<void>;
 }
 
 const sessionListRequests = new Map<string, number>();
@@ -169,11 +169,13 @@ function endSettingsRequest(generation: number): void {
 // loading placeholder (logo) instead of the previous conversation while the
 // agent host loads the target session.
 let activeSessionLoads = 0;
-function beginSessionLoadIndicator(set: (partial: Partial<ChatState>) => void): void {
+function beginSessionLoadIndicator(set: (partial: Partial<ChatState>) => void): number {
 	activeSessionLoads += 1;
 	set({ sessionLoading: true });
+	return bridgeGeneration;
 }
-function finishSessionLoadIndicator(set: (partial: Partial<ChatState>) => void): void {
+function finishSessionLoadIndicator(set: (partial: Partial<ChatState>) => void, generation: number): void {
+	if (generation !== bridgeGeneration) return;
 	activeSessionLoads = Math.max(0, activeSessionLoads - 1);
 	set({ sessionLoading: activeSessionLoads > 0 });
 }
@@ -224,6 +226,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		unsubscribeAgentEvent?.();
 		unsubscribeAgentEvent = null;
 		bridgeGeneration += 1;
+		activeSessionLoads = 0;
 		historyLoadRequest += 1;
 		const generation = bridgeGeneration;
 		sessionListRequests.clear();
@@ -452,10 +455,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				return;
 			case 'user-message':
 				set((s) => ({
+					...acceptedSessionTitle(s, event.text),
 					messages: [...s.messages, { id: event.id, order: event.order, runId: event.runId, role: 'user', text: event.text, attachments: event.attachments, attachmentsOmitted: event.attachmentsOmitted, attachmentReferences: event.attachmentReferences, status: 'done' }],
 					historyTotal: s.historyTotal + 1,
 					timelineRevision: s.timelineRevision + 1,
 				}));
+				// Refresh only after the accepted message has updated the row. This also
+				// supersedes list requests started before the first input was accepted.
+				void get().refreshSessions();
 				return;
 			case 'assistant-start':
 				set((s) => ({
@@ -608,12 +615,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 	refreshWorkspaceSessions: (cwd) => refreshSessionCache(cwd),
 
-	async switchWorkspace(cwd) {
+	async switchWorkspace(cwd, options) {
 		const bridge = get().bridge;
-		if (!bridge || !cwd || (cwd === get().cwd && !get().navigationPending)) return;
+		if (!bridge || !cwd || (cwd === get().cwd && !get().navigationPending && !options?.fresh)) return;
 		const request = beginSessionNavigation();
 		try {
-			await bridge.switchWorkspace(cwd);
+			await bridge.switchWorkspace(cwd, options);
 			if (!currentSessionNavigation(bridge, request)) return;
 			await Promise.all([get().refreshWorkspaces(), get().refreshWorkspaceSessions(cwd)]);
 		} catch (error) {
@@ -821,7 +828,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		const bridge = get().bridge;
 		if (!bridge) return;
 		const request = beginSessionNavigation();
-		beginSessionLoadIndicator(set);
+		const loadingGeneration = beginSessionLoadIndicator(set);
 		try {
 			await bridge.switchSession(path);
 			if (!currentSessionNavigation(bridge, request)) return;
@@ -829,14 +836,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		} catch (error) {
 			if (currentSessionNavigation(bridge, request)) set({ error: errorMessage(error) });
 			throw error;
-		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set); }
+		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, loadingGeneration); }
 	},
 
 	async selectSession(cwd, path) {
 		const bridge = get().bridge;
 		if (!bridge || !cwd || !path) return false;
 		const request = beginSessionNavigation();
-		beginSessionLoadIndicator(set);
+		const loadingGeneration = beginSessionLoadIndicator(set);
 		const workspaceChanged = get().cwd !== cwd;
 		try {
 			if (workspaceChanged) {
@@ -851,14 +858,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			if (!currentSessionNavigation(bridge, request)) return false;
 			set({ error: errorMessage(error) });
 			throw error;
-		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set); }
+		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, loadingGeneration); }
 	},
 
 	async send(text, behavior, attachments, inputId) {
-		const { bridge, status, cwd, sessionId } = get();
+		const { bridge, status, cwd, sessionId, navigationPending, sessionLoading } = get();
 		const trimmed = text.trim();
 		if (!bridge || (!trimmed && !attachments?.length)) return;
-		if (status !== 'idle' && status !== 'busy') {
+		const command = parseSlashCommand(trimmed);
+		// A new-session command is itself navigation; ordinary input must stay
+		// with its visible draft until the selected conversation is ready.
+		if (status !== 'idle' && status !== 'busy' || (navigationPending || sessionLoading) && command?.name !== 'new') {
 			const error = new Error(translate('store.agentNotReady'));
 			set({ error: error.message });
 			throw error;
@@ -866,7 +876,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		set({ error: null });
 		let navigationRequest: number | undefined;
 		try {
-			const command = parseSlashCommand(trimmed);
 			const delivery = inputId ? behavior : behavior ?? (status === 'busy' ? 'followUp' : undefined);
 			if (command) {
 				if (!sessionId) throw new Error(translate('store.agentNotReady'));
@@ -954,9 +963,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	},
 
 	async abort() {
-		const { bridge, cwd, sessionId, navigationRequestId } = get();
+		const { bridge, cwd, sessionId, navigationRequestId, navigationPending, sessionLoading } = get();
+		if (!bridge || navigationPending || sessionLoading) return;
+		set({ error: null });
 		try {
-			await bridge?.abort();
+			await bridge.abort();
 		} catch (error) {
 			if (bridge && currentSessionNavigation(bridge, navigationRequestId) && get().cwd === cwd && get().sessionId === sessionId) set({ error: errorMessage(error) });
 		}
@@ -976,7 +987,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		} finally { finishSessionNavigation(bridge, request); }
 	},
 
-	async pickWorkspace() {
+	async pickWorkspace(options) {
 		const bridge = get().bridge;
 		if (!bridge) return;
 		const request = beginSessionNavigation();
@@ -984,7 +995,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			const cwd = await bridge.pickWorkspace();
 			if (!currentSessionNavigation(bridge, request)) return;
 			if (cwd) {
-				await bridge.switchWorkspace(cwd);
+				await bridge.switchWorkspace(cwd, options);
 				if (!currentSessionNavigation(bridge, request)) return;
 				await Promise.all([get().refreshWorkspaces(), get().refreshWorkspaceSessions(cwd)]);
 			}
@@ -997,6 +1008,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function acceptedSessionTitle(state: ChatState, text: string): Partial<ChatState> {
+	const { cwd, sessionPath: path, sessionId: id } = state;
+	if (!cwd || !path || !id || !text.trim() || state.messages.some((message) => message.role === 'user')) return {};
+	const cached = state.sessionsByWorkspace[cwd] ?? state.sessions;
+	const existing = cached.find((session) => session.path === path && session.id === id);
+	if (existing?.firstMessage.trim() && existing.messageCount > 0) return {};
+	// Use the accepted event, never the editable draft or a delayed prompt promise.
+	// Keep an explicit name and sidebar metadata intact; only fill the fallback title.
+	const entry: UiSessionSummary = { ...existing, path, id, firstMessage: text,
+		modified: new Date().toISOString(), messageCount: Math.max(existing?.messageCount ?? 0, 1) };
+	const sessions = [...cached.filter((session) => session.path !== path), entry];
+	return { sessions, sessionsByWorkspace: { ...state.sessionsByWorkspace, [cwd]: sessions } };
 }
 
 async function refreshModelSettings(): Promise<void> {

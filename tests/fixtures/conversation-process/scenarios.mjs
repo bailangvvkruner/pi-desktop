@@ -176,6 +176,43 @@ export default async function conversationProcessScenarios(review) {
   await review.evaluate(`window.__processReview.restoreTick = ${elapsed('restored-running')}`);
   await review.waitFor(`${elapsed('restored-running')} >= window.__processReview.restoreTick + 900`);
 
+  // Normal disclosure animation and a long real scrollport must keep the latest
+  // reasoning visible, without overriding a reader who scrolls back deliberately.
+  await review.reducedMotion(false);
+  await review.evaluate(`(() => {
+    const s=window.__processReview;
+    s.ready(s.path+'-thinking-scroll');
+    s.start('long-thinking','检查长思考的实时显示');
+    s.assistant('long-thinking','long-thinking-a');
+    s.send({type:'assistant-thinking',id:'long-thinking-a',thinking:'',thinkingStatus:'streaming'});
+  })()`);
+  await review.waitFor(expanded('long-thinking', true));
+  await review.assert('window.__processReview.visible(document.querySelector("[data-run-id=long-thinking] .pd-thinking-summary")) && document.querySelector("[data-run-id=long-thinking] .pd-thinking-summary").textContent.includes("思考")', 'A thinking-start event shows activity before its first content token');
+  await review.evaluate(`(() => {
+    const s=window.__processReview;
+    s.longThinking=Array.from({length:32},(_,i)=>'第 '+(i+1)+' 步：检查实时内容、工具衔接与结束折叠。').join('\\n\\n');
+    s.send({type:'assistant-thinking',id:'long-thinking-a',thinking:s.longThinking,thinkingStatus:'streaming'});
+  })()`);
+  await review.waitFor('(() => { const node=document.querySelector("[data-run-id=long-thinking] .pd-thinking-markdown"); return node && node.clientHeight > 200 && node.scrollHeight-node.scrollTop-node.clientHeight < 3; })()');
+  await review.assert('(() => { const node=document.querySelector("[data-run-id=long-thinking] .pd-thinking-markdown"), tail=node.lastElementChild; const box=node.getBoundingClientRect(), tailBox=tail.getBoundingClientRect(); return window.__processReview.visible(node) && tailBox.bottom <= box.bottom+2 && tailBox.bottom > box.top && box.bottom <= document.querySelector(".pd-transcript").getBoundingClientRect().bottom+2; })()', 'Long thinking follows its latest line in the visible conversation during normal animation');
+  await review.evaluate(`(() => { const s=window.__processReview; s.longThinking+='\\n\\n后续实时思考仍应可见。'; s.send({type:'assistant-thinking',id:'long-thinking-a',thinking:s.longThinking,thinkingStatus:'streaming'}); })()`);
+  await review.waitFor('(() => { const node=document.querySelector("[data-run-id=long-thinking] .pd-thinking-markdown"); return node.scrollHeight-node.scrollTop-node.clientHeight < 3; })()');
+  await review.screenshot('process-long-thinking-live');
+  await review.evaluate('(() => { const node=document.querySelector("[data-run-id=long-thinking] .pd-thinking-markdown"); node.scrollTop=0; node.dispatchEvent(new Event("scroll")); })()');
+  await review.evaluate(`(() => { const s=window.__processReview; s.longThinking+='\\n\\n读者向上查看时保留其位置。'; s.send({type:'assistant-thinking',id:'long-thinking-a',thinking:s.longThinking,thinkingStatus:'streaming'}); })()`);
+  await review.assert('document.querySelector("[data-run-id=long-thinking] .pd-thinking-markdown").scrollTop < 2', 'New reasoning tokens preserve a reader who scrolled back to earlier thinking');
+  await review.evaluate(`(() => { const s=window.__processReview; s.send({type:'assistant-thinking',id:'long-thinking-a',thinking:s.longThinking,thinkingStatus:'done'}); s.send({type:'assistant-delta',id:'long-thinking-a',delta:'思考结束后仍在生成最终回答。'}); })()`);
+  await review.assert('window.__processReview.visible(document.querySelector("[data-run-id=long-thinking] .pd-thinking-markdown")) && document.querySelector("[data-run-id=long-thinking] .pd-thinking-summary").getAttribute("aria-expanded")==="true"', 'Thinking-end leaves the reasoning visible while the answer continues streaming');
+  await review.evaluate(`(() => { const s=window.__processReview; s.send({type:'assistant-end',id:'long-thinking-a',text:'完成实时思考检查。'}); s.finish('long-thinking'); })()`);
+  await review.waitFor(expanded('long-thinking', false));
+  await review.click(summary('long-thinking'));
+  await review.assert('window.__processReview.visible(document.querySelector("[data-run-id=long-thinking] .pd-thinking-markdown")) && document.querySelector("[data-run-id=long-thinking] .pd-thinking-markdown").textContent.includes("读者向上查看")', 'Completed long reasoning remains available after expanding the completed process');
+  await review.click('[data-run-id=long-thinking] .pd-thinking-summary');
+  await review.evaluate(`(() => { const s=window.__processReview; s.start('next-thinking','再执行一轮'); s.assistant('next-thinking','next-thinking-a'); s.send({type:'assistant-thinking',id:'next-thinking-a',thinking:'新一轮思考应自动展开。',thinkingStatus:'streaming'}); })()`);
+  await review.waitFor(expanded('next-thinking', true));
+  await review.assert('window.__processReview.visible(document.querySelector("[data-run-id=next-thinking] .pd-thinking-markdown")) && document.querySelector("[data-run-id=next-thinking] .pd-thinking-summary").getAttribute("aria-expanded")==="true"', 'Collapsing an earlier reasoning block never hides thinking in the next run');
+  await review.reducedMotion(true);
+
   // Layout evidence uses real built styles and the public theme control.
   await review.evaluate('(() => { const s=window.__processReview, snapshot=s.completedSnapshot; s.ready(s.path+"-layout",snapshot.messages,snapshot.activities,snapshot.runs); })()');
   await review.waitFor(expanded('live', false));

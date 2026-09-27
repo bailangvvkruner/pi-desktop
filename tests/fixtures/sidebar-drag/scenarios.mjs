@@ -133,7 +133,7 @@ export default async function sidebarDragScenarios(review) {
         hitSession:hit?.closest('[data-session-path]')?.dataset.sessionPath,
         preview:[...document.querySelectorAll('.pd-sidebar-group[data-section-key]')].map(section=>({key:section.dataset.sectionKey,
           expanded:section.querySelector('.pd-sidebar-group-toggle')?.getAttribute('aria-expanded'),
-          count:section.querySelector('.pd-sidebar-group-toggle > small')?.textContent,
+          hasCountBadge:Boolean(section.querySelector('.pd-sidebar-group-toggle > small')),
           paths:[...section.querySelectorAll('[data-session-path]')].map(row=>row.dataset.sessionPath)})),writes:${state}.writes.length};
     })()`);
     if (followLayout) await review.assert(`(() => { const node=document.querySelector(${q(selector)}), hit=document.elementFromPoint(${p.x},${p.y}); return Boolean(node && (node===hit || node.contains(hit))); })()`, 'Final pointer still hits the intended heading after preview layout changes');
@@ -152,12 +152,12 @@ export default async function sidebarDragScenarios(review) {
     const before = await writes();
     const expectedPreview = await review.evaluate(`(() => {
       const source=document.querySelector(${q(row(id))}).closest('[data-section-key]');
-      return {source:source.dataset.sectionKey,sourceCount:Number(source.querySelector('.pd-sidebar-group-toggle > small').textContent)-1,
-        targetCount:Number(document.querySelector(${q(toggle(key) + ' > small')}).textContent)+1};
+      return {source:source.dataset.sectionKey};
     })()`);
     await press(id);
     await hover(heading(key));
-    await review.assert(`Number(document.querySelector(${q(toggle(key) + ' > small')}).textContent)===${expectedPreview.targetCount} && Number(document.querySelector(${q(toggle(expectedPreview.source) + ' > small')}).textContent)===${expectedPreview.sourceCount}`, 'Final cross-group preview updates the intended source and destination counts, including collapsed groups');
+    await review.assert(`!document.querySelector(${q(section(expectedPreview.source))}).querySelector(${q(row(id))}) && ${uniqueRows}`, 'Final cross-group preview removes the old source membership without duplicating a row, including collapsed destinations');
+    await review.assert(`!document.querySelector('.pd-sidebar-group-toggle > small')`, 'Group headings do not reintroduce total-session count badges while dragging');
     await review.assert(`document.querySelector(${q(toggle(key))}).getAttribute('aria-expanded')==='false' || ${inSection(id, key)}`, 'Expanded destination contains the dragged session before pointer release');
     await noEarlySave(before, id + ' → ' + key);
     await release();
@@ -166,6 +166,7 @@ export default async function sidebarDragScenarios(review) {
     await review.waitFor(groupId === null
       ? `${state}.groups.every(group=>!group.sessionPaths.includes(${q(paths[id])}))`
       : `${state}.groups.find(group=>group.id===${q(groupId)}).sessionPaths.includes(${q(paths[id])})`);
+    await review.assert(`${state}.groups.filter(group=>group.id!==${q(groupId)}).every(group=>!group.sessionPaths.includes(${q(paths[id])})) && ${uniqueRows}`, 'Saved membership belongs only to the destination and rendered rows remain unique');
     await review.settle();
   }
 

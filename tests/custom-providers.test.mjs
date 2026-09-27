@@ -290,7 +290,7 @@ test('cached sessions protect their selected provider and model, while same-mode
   } finally { await f.cleanup(); }
 });
 
-test('a busy background SDK session blocks provider writes until its command has finished', async () => {
+test('running SDK sessions permit new providers without changing the active request and protect existing configuration', async () => {
   let release;
   let started;
   const commandStarted = new Promise((resolveStarted) => { started = resolveStarted; });
@@ -302,16 +302,39 @@ test('a busy background SDK session blocks provider writes until its command has
     },
   });
   let command;
+  let commandFinished = false;
   try {
     await f.service.saveCustomProvider(request('desktop-busy-delete'));
-    command = f.service.prompt('/hold-provider-test');
+    await f.service.saveCustomProvider(request('desktop-busy-current', { apiKey: 'current-request-fixture-key' }));
+    await f.service.setModel('desktop-busy-current', 'custom-one');
+    const session = f.service.active.runtime.session;
+    const selectedModel = session.model;
+    assert.equal(selectedModel.provider, 'desktop-busy-current');
+    const selectedThinking = session.thinkingLevel;
+    command = f.service.prompt('/hold-provider-test').finally(() => { commandFinished = true; });
     await commandStarted;
+    await f.service.saveCustomProvider(request('desktop-busy-active-create', { apiKey: 'active-new-provider-key' }));
+    assert.equal(f.service.getSnapshot().status, 'busy');
+    assert.equal(commandFinished, false, 'creating a provider must not abort the active SDK command');
+    assert.equal(f.service.active.runtime.session, session, 'creating a provider preserves the active runtime');
+    assert.equal(session.model, selectedModel, 'creating a provider does not rebind the active model');
+    assert.equal(session.thinkingLevel, selectedThinking);
+    assert.ok(f.service.listModels().some((model) => model.provider === 'desktop-busy-active-create'));
+    await assert.rejects(f.service.setModel('desktop-busy-active-create', 'custom-one'), /运行|空闲/);
     await f.service.switchWorkspace(f.otherCwd);
+    await f.service.saveCustomProvider(request('desktop-busy-background-create', { apiKey: 'background-new-provider-key' }));
+    assert.ok(f.service.listModels().some((model) => model.provider === 'desktop-busy-background-create'));
+    assert.equal(session.model, selectedModel, 'background runtime retains its request model');
+    assert.equal(commandFinished, false, 'background command continues running after catalog refresh');
     const before = f.disk();
-    await assert.rejects(f.service.saveCustomProvider(request('desktop-busy-create', { apiKey: 'not-written' })));
-    assert.deepEqual(f.disk(), before);
+    await assert.rejects(f.service.saveCustomProvider(request('desktop-busy-delete', { mode: 'update', name: 'Must not change while busy' })));
+    assert.deepEqual(f.disk(), before, 'existing provider edits remain blocked');
+    await assert.rejects(f.service.saveCustomProvider(request('desktop-busy-current', { mode: 'update', apiKey: 'must-not-change-running-key' })));
+    assert.deepEqual(f.disk(), before, 'running model credentials remain unchanged');
     await assert.rejects(f.service.removeCustomProvider('desktop-busy-delete'));
     assert.deepEqual(f.disk(), before);
+    await assert.rejects(f.service.saveCustomProvider(request('desktop-busy-active-create', { apiKey: 'must-not-replace-existing' })));
+    assert.deepEqual(f.disk(), before, 'create mode cannot overwrite an existing provider while busy');
     release();
     await command;
     await new Promise((resolveTurn) => setImmediate(resolveTurn));

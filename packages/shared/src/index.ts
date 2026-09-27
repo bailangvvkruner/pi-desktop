@@ -91,6 +91,7 @@ export const IPC_CHANNELS = {
   agentListExtensions: 'agent:list-extensions',
   agentSetExtensionEnabled: 'agent:set-extension-enabled',
   workspacePick: 'workspace:pick',
+  workspaceAddDropped: 'workspace:add-dropped',
   workspaceSwitch: 'workspace:switch',
   workspaceDefault: 'workspace:default',
   workspaceRemove: 'workspace:remove',
@@ -810,6 +811,8 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   closeWindow(): Promise<void>;
   /** Opens a native directory picker. Returns null when cancelled. */
   pickWorkspace(): Promise<string | null>;
+  /** Accepts native File objects; registers their directories without switching conversations. Regular files are ignored. */
+  addDroppedWorkspaces(files: unknown[]): Promise<string[]>;
   openWorkspaceFolder(cwd: string): Promise<void>;
   listWorkspaceEntries(relativePath?: string): Promise<WorkspaceEntry[]>;
   searchWorkspaceFiles(query: string, options?: { includeDirectories?: boolean }): Promise<{ files: WorkspaceEntry[]; truncated: boolean; skipped?: number; ignoredDirectories?: string[] }>;
@@ -848,7 +851,8 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   /** (Re-)creates the agent session bound to a working directory. */
   initAgent(cwd: string): Promise<void>;
   listWorkspaces(): Promise<string[]>;
-  switchWorkspace(cwd: string): Promise<void>;
+  /** Restores the workspace's last session, or opens a fresh conversation when requested. */
+  switchWorkspace(cwd: string, options?: { fresh?: boolean }): Promise<void>;
   getDefaultWorkspace(): Promise<string>;
   /** Removes a project from the saved workspace list (sessions stay on disk). */
   removeWorkspace(cwd: string): Promise<void>;

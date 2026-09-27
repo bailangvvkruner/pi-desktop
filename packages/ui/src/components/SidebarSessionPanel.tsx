@@ -5,15 +5,15 @@ import { useT } from '../i18n';
 import { managementCopy } from '../managementCopy';
 import { summarizeSessionStates } from '../managementState';
 import { operationFeedback } from '../operationFeedback';
-import { changedSidebarOrders, moveSidebarSession } from '../sidebarDrag';
+import { changedSidebarOrders, moveSidebarProject, moveSidebarSession } from '../sidebarDrag';
 import { SessionTrashDialog } from './SessionTrashDialog';
-import { buildSidebarGroups, clearPinnedProjects, collectSidebarSessions, groupSessionsByDate, orderSessions, readPinnedProjects, readSidebarPreferences, saveSidebarPreferences, selectSidebarSessions, type SidebarPreferences, type SidebarSession } from '../sidebarOrganization';
+import { buildSidebarGroups, buildSidebarProjectGroups, clearPinnedProjects, collectSidebarSessions, groupSessionsByDate, mergeSidebarProjectOrder, orderSidebarProjects, readPinnedProjects, readSidebarPreferences, reorderSidebarProjectPositions, saveSidebarPreferences, selectSidebarSessions, sidebarProjectPaths, sidebarWorkspaceKey, splitSidebarProjects, type SidebarPreferences, type SidebarSession } from '../sidebarOrganization';
 import { HoverTooltip } from './HoverTooltip';
 import { Icon } from './Icons';
 import { SidebarPopover } from './SidebarPopover';
 import './sidebarOrganization.css';
 
-type Popup = { anchor: HTMLElement } & (
+type Popup = { anchor: HTMLElement; trigger?: HTMLElement } & (
 	| { kind: 'filter' }
 	| { kind: 'session' | 'move'; session: SidebarSession }
 	| { kind: 'group'; group: UiSessionGroup }
@@ -26,7 +26,8 @@ type DragSection = { key: string; sessions: SidebarSession[] };
 
 type DragItem =
 	| { kind: 'session'; path: string; from: string }
-	| { kind: 'group'; id: string };
+	| { kind: 'group'; id: string }
+	| { kind: 'project'; workspace: string };
 
 /**
  * Live drag arrangement following zcode's sidebar logic: rows reorder in
@@ -36,11 +37,15 @@ type DragItem =
  */
 type DragState = {
 	item: DragItem;
+	pointerId: number;
 	direction: 'before' | 'after';
 	/** Complete arrangement: a dragged session belongs to exactly one container. */
 	orders: Map<string, string[]>;
 	/** Preview group order while dragging a group heading. */
 	groupOrder: string[] | null;
+	/** Project rows stay in place until drop, with a precise insertion indicator. */
+	projectOrder: string[] | null;
+	projectDrop: { workspace: string; edge: 'before' | 'after' } | null;
 	ghost: { x: number; y: number; width: number };
 };
 
@@ -48,16 +53,19 @@ const workspaceName = (path: string) => path.split(/[\\/]/).filter(Boolean).at(-
 const groupKey = (id: string) => `group:${id}`;
 const projectKey = (path: string) => `project:${path}`;
 const UNGROUPED_KEY = 'ungrouped';
+const UNASSIGNED_KEY = 'unassigned';
 const DRAG_THRESHOLD = 5;
+const PROJECT_DRAG_THRESHOLD = 6;
 const EDGE_SCROLL_MARGIN = 28;
 const EDGE_SCROLL_STEP = 9;
 
-export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible: boolean; onNavigate(): void; onError(value: string | null): void }) {
+export function SidebarSessionPanel({ visible, projectRevealRequest = 0, onNavigate, onError }: { visible: boolean; projectRevealRequest?: number; onNavigate(): void; onError(value: string | null): void }) {
 	const { t, locale } = useT();
 	const copy = managementCopy(locale);
 	const bridge = useChatStore((s) => s.bridge);
 	const cwd = useChatStore((s) => s.cwd);
 	const status = useChatStore((s) => s.status);
+	const workspaceNavigationPending = useChatStore((s) => s.navigationPending);
 	const sessionId = useChatStore((s) => s.sessionId);
 	const sessionPath = useChatStore((s) => s.sessionPath);
 	const workspaces = useChatStore((s) => s.workspaces);
@@ -95,33 +103,51 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 	const renameRef = useRef<HTMLInputElement>(null);
 	const renameCancelled = useRef(false);
 	const [pinnedProjects, setPinnedProjects] = useState<string[]>(readPinnedProjects);
-	const workspacePaths = useMemo(() => cwd && !workspaces.includes(cwd) ? [cwd, ...workspaces] : workspaces, [cwd, workspaces]);
-	const pinnedWorkspaceSet = useMemo(() => new Set(pinnedProjects), [pinnedProjects]);
-	// Pinned projects float to the top (stable sort keeps relative order).
-	const orderedWorkspaces = useMemo(() => [...workspacePaths].sort((a, b) => Number(pinnedWorkspaceSet.has(b)) - Number(pinnedWorkspaceSet.has(a))), [workspacePaths, pinnedWorkspaceSet]);
+	const [pinsLoading, setPinsLoading] = useState(true);
+	const [pinsReady, setPinsReady] = useState(false);
+	const [pinSaving, setPinSaving] = useState(false);
+	const pinWritePending = useRef(false);
+	const pinRequest = useRef(0);
+	const [defaultWorkspace, setDefaultWorkspace] = useState<string | null>(null);
+	const workspacePaths = useMemo(() => {
+		const paths = cwd && !workspaces.includes(cwd) ? [cwd, ...workspaces] : workspaces;
+		return defaultWorkspace && !paths.some(path => sidebarWorkspaceKey(path) === sidebarWorkspaceKey(defaultWorkspace)) ? [...paths, defaultWorkspace] : paths;
+	}, [cwd, workspaces, defaultWorkspace]);
+	const projectPaths = useMemo(() => sidebarProjectPaths(workspacePaths, defaultWorkspace), [workspacePaths, defaultWorkspace]);
+	const pinnedWorkspaceSet = useMemo(() => new Set(splitSidebarProjects(projectPaths, new Set(pinnedProjects)).pinned), [projectPaths, pinnedProjects]);
+	const pinnedWorkspaceKeys = useMemo(() => new Set([...pinnedWorkspaceSet].map(sidebarWorkspaceKey)), [pinnedWorkspaceSet]);
+	const orderedWorkspaces = useMemo(() => orderSidebarProjects(projectPaths, preferences.projectOrder, pinnedWorkspaceSet), [projectPaths, preferences.projectOrder, pinnedWorkspaceSet]);
+	const projectPartitions = useMemo(() => splitSidebarProjects(orderedWorkspaces, pinnedWorkspaceSet), [orderedWorkspaces, pinnedWorkspaceSet]);
 	const allSessions = useMemo(() => collectSidebarSessions(workspacePaths, sessionsByWorkspace), [workspacePaths, sessionsByWorkspace]);
 	const sessions = useMemo(() => selectSidebarSessions(allSessions, { archived, filter: preferences.filter, sort: preferences.sort }), [allSessions, archived, preferences.filter, preferences.sort]);
-	const grouped = useMemo(() => buildSidebarGroups(sessions, groups), [sessions, groups]);
+	const bodySessions = useMemo(() => archived ? sessions : sessions.filter(session => session.pinned || !pinnedWorkspaceKeys.has(sidebarWorkspaceKey(session.workspace))), [sessions, archived, pinnedWorkspaceKeys]);
+	const grouped = useMemo(() => buildSidebarGroups(bodySessions, groups), [bodySessions, groups]);
+	const projectGroups = useMemo(() => buildSidebarProjectGroups(sessions, orderedWorkspaces), [sessions, orderedWorkspaces]);
+	const projectByWorkspace = useMemo(() => new Map(projectGroups.projects.map(project => [project.workspace, project])), [projectGroups]);
 	const sessionByPath = useMemo(() => new Map(sessions.map((session) => [session.path, session])), [sessions]);
 	const dragMode = !archived && preferences.mode === 'grouped';
+	const projectDragMode = !archived && ((preferences.mode === 'project' && preferences.projectView === 'project') || projectPartitions.pinned.length > 0);
 	const dragSections = useMemo<DragSection[]>(() => {
 		if (!dragMode) return [];
 		return [...grouped.groups.map((group) => ({ key: groupKey(group.id), sessions: group.sessions })),
 			{ key: UNGROUPED_KEY, sessions: grouped.ungrouped }];
 	}, [dragMode, grouped]);
 	const dates = useMemo(() => {
-		const result = groupSessionsByDate(archived ? sessions : sessions.filter((session) => !session.pinned));
+		const result = groupSessionsByDate(archived ? bodySessions : bodySessions.filter((session) => !session.pinned));
 		return preferences.sort === 'oldest' ? result.reverse() : result;
-	}, [sessions, preferences.sort, archived]);
+	}, [bodySessions, preferences.sort, archived]);
 	const collapsed = useMemo(() => new Set(preferences.collapsed), [preferences.collapsed]);
 	const loadingSessions = workspacePaths.some((path) => !workspaceRequests[path] || workspaceRequests[path]?.phase === 'loading');
 	const showUnsaved = !archived && preferences.filter === 'all' && Boolean(cwd && sessionId && !allSessions.some((s) => s.path === sessionPath));
+	const unsavedProject = projectPaths.find(path => sidebarWorkspaceKey(path) === sidebarWorkspaceKey(cwd));
+	const showBodyUnsaved = showUnsaved && !pinnedWorkspaceKeys.has(sidebarWorkspaceKey(cwd));
+	const hasPinned = !archived && (grouped.pinned.length > 0 || projectPartitions.pinned.length > 0);
 	const totalArchived = allSessions.filter((s) => s.archived).length;
 	const bodySectionKeys = archived || (preferences.mode === 'project' && preferences.projectView === 'timeline')
 		? dates.map((date) => `${archived ? 'archive' : 'date'}:${date.id}`)
-		: preferences.mode === 'project' ? workspacePaths.map(projectKey)
+		: preferences.mode === 'project' ? [...projectPartitions.unpinned.map(projectKey), UNASSIGNED_KEY]
 			: [...groups.map((group) => groupKey(group.id)), UNGROUPED_KEY];
-	const sectionKeys = !archived && grouped.pinned.length ? ['pinned', ...bodySectionKeys] : bodySectionKeys;
+	const sectionKeys = hasPinned ? ['pinned', ...projectPartitions.pinned.map(projectKey), ...bodySectionKeys] : bodySectionKeys;
 	const allExpanded = sectionKeys.length > 0 && sectionKeys.every((key) => !collapsed.has(key));
 
 	// --- Drag state (zcode-style live reordering) -------------------------------
@@ -133,7 +159,9 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 	dragRef.current = drag;
 	/** Container orders frozen at drag start, like zcode's origin view snapshot. */
 	const dragSnapshot = useRef<Map<string, string[]> | null>(null);
-	const pressRef = useRef<{ item: DragItem; startX: number; startY: number; width: number } | null>(null);
+	const pressRef = useRef<{ item: DragItem; pointerId: number; startX: number; startY: number; width: number; element: HTMLElement } | null>(null);
+	const projectDragOrder = useRef<string[] | null>(null);
+	const dragCapture = useRef<{ element: HTMLElement; pointerId: number } | null>(null);
 	const scrollRef = useRef<HTMLDivElement | null>(null);
 	const scrollFrameRef = useRef<number | null>(null);
 	const pointerRef = useRef({ x: 0, y: 0 });
@@ -147,24 +175,48 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 	}, [trashTarget]);
 
 	useEffect(() => { saveSidebarPreferences(preferences); }, [preferences]);
+	useEffect(() => {
+		if (!projectRevealRequest) return;
+		setPreferences(current => ({ ...current, mode: 'project', projectView: 'project' }));
+		setArchived(false);
+		setPopup(null);
+	}, [projectRevealRequest]);
+	useEffect(() => {
+		if (!bridge) return;
+		let cancelled = false;
+		setDefaultWorkspace(null);
+		void bridge.getDefaultWorkspace().then(path => { if (!cancelled) setDefaultWorkspace(path); })
+			.catch((error: unknown) => { if (!cancelled) onError(error instanceof Error ? error.message : String(error)); });
+		return () => { cancelled = true; };
+	}, [bridge, onError]);
+	useEffect(() => {
+		setPreferences(current => {
+			const projectOrder = mergeSidebarProjectOrder(current.projectOrder, projectPaths);
+			return projectOrder.length === current.projectOrder.length ? current : { ...current, projectOrder };
+		});
+	}, [projectPaths]);
 	useEffect(() => { if (!visible) setPopup(null); }, [visible]);
 	useEffect(() => {
-		if (!bridge || workspacePaths.length === 0) return;
+		if (!bridge || workspacePaths.length === 0 || pinSaving || pinWritePending.current) return;
 		let cancelled = false;
+		const request = ++pinRequest.current;
+		setPinsLoading(true);
+		setPinsReady(false);
 		const legacy = readPinnedProjects();
 		void (async () => {
 			const persisted = await bridge.listPinnedWorkspaces();
-			const registered = new Set(workspacePaths);
-			const migration = legacy.filter((path) => registered.has(path));
+			if (cancelled || request !== pinRequest.current) return;
+			const migration = splitSidebarProjects(workspacePaths, new Set(legacy)).pinned;
 			const next = persisted.length === 0 && migration.length > 0 ? await bridge.setPinnedWorkspaces(migration) : persisted;
-			if (cancelled) return;
+			if (cancelled || request !== pinRequest.current) return;
 			setPinnedProjects(next);
+			setPinsReady(true);
 			clearPinnedProjects();
 		})().catch((error: unknown) => {
-			if (!cancelled) onError(error instanceof Error ? error.message : String(error));
-		});
+			if (!cancelled && request === pinRequest.current) onError(error instanceof Error ? error.message : String(error));
+		}).finally(() => { if (!cancelled && request === pinRequest.current) setPinsLoading(false); });
 		return () => { cancelled = true; };
-	}, [bridge, workspacePaths, onError]);
+	}, [bridge, workspacePaths, onError, pinSaving]);
 	useEffect(() => {
 		if (!bridge) return;
 		const request = ++groupRequest.current;
@@ -188,6 +240,8 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 	useEffect(() => () => {
 		pressRef.current = null;
 		dragRef.current = null;
+		const capture = dragCapture.current;
+		if (capture?.element.hasPointerCapture(capture.pointerId)) capture.element.releasePointerCapture(capture.pointerId);
 		if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
 		document.body.classList.remove('pd-sidebar-dragging');
 	}, []);
@@ -232,6 +286,19 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 
 	function applyDropPreview(state: DragState): DragState {
 		const item = state.item;
+		if (item.kind === 'project') {
+			const element = document.elementFromPoint(pointerRef.current.x, pointerRef.current.y);
+			const target = element?.closest<HTMLElement>('[data-project-path]');
+			const workspace = target?.dataset.projectPath;
+			const initial = projectDragOrder.current;
+			if (!target || !workspace || !initial || !scrollRef.current?.contains(target) || workspace === item.workspace
+				|| pinnedWorkspaceSet.has(workspace) !== pinnedWorkspaceSet.has(item.workspace)) {
+				return { ...state, projectOrder: null, projectDrop: null };
+			}
+			const rect = (target.querySelector<HTMLElement>('.pd-sidebar-group-heading') ?? target).getBoundingClientRect();
+			const edge = pointerRef.current.y < rect.top + rect.height / 2 ? 'before' : 'after';
+			return { ...state, projectOrder: moveSidebarProject(initial, item.workspace, workspace, edge, pinnedWorkspaceSet), projectDrop: { workspace, edge } };
+		}
 		if (item.kind === 'group') {
 			const element = document.elementFromPoint(pointerRef.current.x, pointerRef.current.y);
 			const heading = element?.closest<HTMLElement>('[data-drag-heading]')?.dataset.dragHeading;
@@ -256,34 +323,54 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 		if (!dragRef.current || !container) { scrollFrameRef.current = null; return; }
 		const rect = container.getBoundingClientRect();
 		const y = pointerRef.current.y;
-		if (y < rect.top + EDGE_SCROLL_MARGIN) container.scrollTop -= EDGE_SCROLL_STEP;
-		else if (y > rect.bottom - EDGE_SCROLL_MARGIN) container.scrollTop += EDGE_SCROLL_STEP;
+		const previous = container.scrollTop;
+		if (pointerRef.current.x >= rect.left && pointerRef.current.x <= rect.right) {
+			if (y < rect.top + EDGE_SCROLL_MARGIN) container.scrollTop -= EDGE_SCROLL_STEP;
+			else if (y > rect.bottom - EDGE_SCROLL_MARGIN) container.scrollTop += EDGE_SCROLL_STEP;
+		}
+		if (container.scrollTop !== previous && dragRef.current) {
+			const next = applyDropPreview(dragRef.current);
+			dragRef.current = next; setDrag(next);
+		}
 		scrollFrameRef.current = requestAnimationFrame(edgeScroll);
 	}
 
 	function beginDrag(item: DragItem, event: ReactPointerEvent): void {
-		if (event.button !== 0 || !event.isPrimary || !dragMode) return;
-		if (status === 'starting' || navigating || dragRef.current || savingDragRef.current || pendingRef.current || groupsLoading || groupsError) return;
+		if (event.button !== 0 || !event.isPrimary || !(item.kind === 'project' ? projectDragMode : dragMode)) return;
+		if (pressRef.current && pressRef.current.pointerId !== event.pointerId) return;
+		if (status === 'starting' || navigating || dragRef.current || savingDragRef.current || pendingRef.current || (item.kind !== 'project' && (groupsLoading || groupsError))) return;
 		if (item.kind === 'session' && renaming === item.path) return;
 		if ((event.target as Element).closest('.pd-session-actions, input, textarea')) return;
 		const row = event.currentTarget as HTMLElement;
-		pressRef.current = { item, startX: event.clientX, startY: event.clientY, width: row.getBoundingClientRect().width || 240 };
+		pressRef.current = { item, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, width: row.getBoundingClientRect().width || 240, element: row };
 	}
 
 	function onPointerMove(event: PointerEvent): void {
-		pointerRef.current = { x: event.clientX, y: event.clientY };
 		const press = pressRef.current;
+		const activePointer = dragRef.current?.pointerId ?? press?.pointerId;
+		if (activePointer === undefined || activePointer !== event.pointerId) return;
+		if ((event.buttons & 1) === 0) { finishDrag(false, event.pointerId); return; }
+		pointerRef.current = { x: event.clientX, y: event.clientY };
 		if (press) {
-			if (Math.abs(event.clientX - press.startX) < DRAG_THRESHOLD && Math.abs(event.clientY - press.startY) < DRAG_THRESHOLD) return;
+			const threshold = press.item.kind === 'project' ? PROJECT_DRAG_THRESHOLD : DRAG_THRESHOLD;
+			if (Math.abs(event.clientX - press.startX) < threshold && Math.abs(event.clientY - press.startY) < threshold) return;
 			pressRef.current = null;
 			suppressDragClick.current = true;
 			setPopup(null);
 			dragSnapshot.current = new Map(dragSections.map((section) => [section.key, section.sessions.map((session) => session.path)]));
+			projectDragOrder.current = press.item.kind === 'project' ? [...orderedWorkspaces] : null;
+			if (press.item.kind === 'project') {
+				press.element.setPointerCapture(event.pointerId);
+				dragCapture.current = { element: press.element, pointerId: event.pointerId };
+			}
 			let next: DragState = {
 				item: press.item,
+				pointerId: press.pointerId,
 				direction: event.clientY >= press.startY ? 'after' : 'before',
 				orders: new Map(dragSnapshot.current),
 				groupOrder: null,
+				projectOrder: null,
+				projectDrop: null,
 				ghost: { x: event.clientX, y: event.clientY, width: press.width },
 			};
 			next = applyDropPreview(next);
@@ -302,18 +389,28 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 		setDrag(next);
 	}
 
-	function finishDrag(commit: boolean): void {
+	function finishDrag(commit: boolean, pointerId?: number): void {
 		const state = dragRef.current;
+		if (pointerId !== undefined && pointerId !== (state?.pointerId ?? pressRef.current?.pointerId)) return;
 		const snapshot = dragSnapshot.current;
 		pressRef.current = null;
 		if (scrollFrameRef.current !== null) { cancelAnimationFrame(scrollFrameRef.current); scrollFrameRef.current = null; }
 		document.body.classList.remove('pd-sidebar-dragging');
-		if (!state) { setDrag(null); return; }
 		dragRef.current = null;
 		dragSnapshot.current = null;
+		projectDragOrder.current = null;
+		const capture = dragCapture.current; dragCapture.current = null;
+		if (capture?.element.hasPointerCapture(capture.pointerId)) capture.element.releasePointerCapture(capture.pointerId);
 		setDrag(null);
-		if (!commit || !snapshot) return;
+		if (!state || !commit || !snapshot) return;
 		const item = state.item;
+		if (item.kind === 'project') {
+			if (state.projectDrop && state.projectOrder) {
+				const reordered = state.projectOrder.filter(path => pinnedWorkspaceSet.has(path) === pinnedWorkspaceSet.has(item.workspace));
+				setPreferences(current => ({ ...current, projectOrder: reorderSidebarProjectPositions(current.projectOrder, reordered) }));
+			}
+			return;
+		}
 		if (item.kind === 'group') {
 			if (!state.groupOrder || state.groupOrder.join(',') === groups.map((group) => group.id).join(',')) return;
 			saveDragPreview(state, async () => { await changeGroups({ type: 'reorder-groups', ids: state.groupOrder! }); });
@@ -350,11 +447,18 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 	// Window-level drag phase listeners stay bound for the panel's lifetime:
 	// the press→drag transition itself must be observed (the first move fires
 	// outside the pressed row), and closures are refreshed through a ref.
-	const dragHandlers = useRef({ move: (_: PointerEvent) => {}, up: () => {}, cancel: () => {}, key: (_: KeyboardEvent) => {} });
+	const dragHandlers = useRef({ move: (_: PointerEvent) => {}, up: (_: PointerEvent) => {}, cancel: (_?: number) => {}, key: (_: KeyboardEvent) => {} });
 	dragHandlers.current = {
 		move: (event) => onPointerMove(event),
-		up: () => finishDrag(true),
-		cancel: () => finishDrag(false),
+		up: (event) => {
+			const state = dragRef.current;
+			if (state?.pointerId === event.pointerId && state.item.kind === 'project') {
+				pointerRef.current = { x: event.clientX, y: event.clientY };
+				dragRef.current = applyDropPreview(state);
+			}
+			finishDrag(true, event.pointerId);
+		},
+		cancel: (pointerId) => finishDrag(false, pointerId),
 		key: (event) => {
 			if (event.key === 'Escape' && (dragRef.current || pressRef.current)) {
 				event.preventDefault(); event.stopImmediatePropagation(); finishDrag(false);
@@ -363,10 +467,11 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 	};
 	useEffect(() => {
 		const move = (event: PointerEvent) => dragHandlers.current.move(event);
-		const up = () => dragHandlers.current.up();
-		const cancel = () => dragHandlers.current.cancel();
+		const up = (event: PointerEvent) => dragHandlers.current.up(event);
+		const cancel = (event: PointerEvent) => dragHandlers.current.cancel(event.pointerId);
+		const blur = () => dragHandlers.current.cancel();
 		const key = (event: KeyboardEvent) => dragHandlers.current.key(event);
-		const down = () => { suppressDragClick.current = false; };
+		const down = () => { if (!pressRef.current && !dragRef.current) suppressDragClick.current = false; };
 		const click = (event: MouseEvent) => {
 			if (!suppressDragClick.current || event.detail === 0) return;
 			suppressDragClick.current = false;
@@ -377,22 +482,26 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 		window.addEventListener('pointermove', move);
 		window.addEventListener('pointerup', up);
 		window.addEventListener('pointercancel', cancel);
+		window.addEventListener('lostpointercapture', cancel);
 		window.addEventListener('keydown', key, true);
-		window.addEventListener('blur', cancel);
+		window.addEventListener('blur', blur);
 		return () => {
 			window.removeEventListener('pointermove', move);
 			window.removeEventListener('pointerup', up);
 			window.removeEventListener('pointercancel', cancel);
+			window.removeEventListener('lostpointercapture', cancel);
 			window.removeEventListener('keydown', key, true);
-			window.removeEventListener('blur', cancel);
+			window.removeEventListener('blur', blur);
 			window.removeEventListener('pointerdown', down, true);
 			window.removeEventListener('click', click, true);
 		};
 	}, []);
+	const projectMembership = JSON.stringify([...projectPaths].sort());
+	const projectPins = JSON.stringify([...pinnedProjects].sort());
 	useEffect(() => {
 		finishDrag(false);
 		setSavingDrag(null);
-	}, [visible, preferences.mode, preferences.filter, preferences.sort, archived]);
+	}, [visible, preferences.mode, preferences.projectView, preferences.filter, preferences.sort, archived, projectMembership, projectPins]);
 
 	function preference(patch: Partial<SidebarPreferences>) { setPreferences((current) => ({ ...current, ...patch })); }
 	function toggleSection(key: string) {
@@ -406,11 +515,39 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 		try { await action(); if (navigate) onNavigate(); }
 		catch (error) { onError(error instanceof Error ? error.message : String(error)); }
 	}
+	function toggleProjectPin(workspace: string, anchor: HTMLElement) {
+		if (!bridge || !pinsReady || pinsLoading || pinWritePending.current) return;
+		const wasPinned = pinnedWorkspaceSet.has(workspace);
+		const next = wasPinned ? pinnedProjects.filter(path => sidebarWorkspaceKey(path) !== sidebarWorkspaceKey(workspace)) : [...pinnedProjects, workspace];
+		pinWritePending.current = true;
+		setPinSaving(true);
+		const request = ++pinRequest.current;
+		setPopup(null);
+		void perform(async () => {
+			try {
+				const saved = await bridge.setPinnedWorkspaces(next);
+				if (useChatStore.getState().bridge !== bridge || request !== pinRequest.current) return;
+				setPinnedProjects(saved);
+				clearPinnedProjects();
+				if (!wasPinned) setPreferences(current => ({ ...current, collapsed: current.collapsed.filter(key => key !== 'pinned') }));
+				requestAnimationFrame(() => {
+					if (document.activeElement !== document.body && document.activeElement !== anchor) return;
+					const row = [...(scrollRef.current?.querySelectorAll<HTMLElement>('[data-project-path]') ?? [])].find(element => element.dataset.projectPath === workspace);
+					const focus = row?.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')
+						?? scrollRef.current?.querySelector<HTMLButtonElement>('[data-section-key="pinned"] > .pd-sidebar-group-heading .pd-sidebar-group-toggle')
+						?? document.querySelector<HTMLButtonElement>('.pd-sidebar-mode [aria-selected="true"]');
+					if (focus?.getClientRects().length) focus.focus();
+				});
+			} finally { pinWritePending.current = false; setPinSaving(false); }
+		});
+	}
 	async function refresh() {
 		setRefreshing(true);
 		try {
+			const home = defaultWorkspace ?? (bridge ? await bridge.getDefaultWorkspace() : null);
+			if (home !== defaultWorkspace) setDefaultWorkspace(home);
 			await refreshWorkspaces();
-			await Promise.all(useChatStore.getState().workspaces.map(refreshWorkspaceSessions));
+			await Promise.all([...new Set([...useChatStore.getState().workspaces, ...(home ? [home] : [])])].map(refreshWorkspaceSessions));
 			if (bridge && !pendingRef.current) {
 				const request = ++groupRequest.current;
 				const value = await bridge.listSessionGroups();
@@ -459,19 +596,7 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 		});
 	}
 	const titleOf = (session: SidebarSession) => session.name?.trim() || session.firstMessage.trim().split(/\r?\n/)[0] || t('sidebar.unnamed');
-	function dateLabel(value: string) {
-		const date = new Date(value);
-		if (Number.isNaN(date.getTime())) return '';
-		const now = new Date();
-		if (date.toDateString() === now.toDateString()) {
-			const minutes = Math.floor((now.getTime() - date.getTime()) / 60000);
-			if (minutes === 0) return t('sidebar.justNow');
-			if (minutes > 0 && minutes < 60) return t('sidebar.minutesAgo', { count: minutes });
-			return new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(date);
-		}
-		return new Intl.DateTimeFormat(locale, { month: 'numeric', day: 'numeric' }).format(date);
-	}
-	function renderSession(session: SidebarSession, container: string | null, source = true) {
+	function renderSession(session: SidebarSession, container: string | null) {
 		const active = session.workspace === cwd && session.path === sessionPath;
 		const title = titleOf(session);
 		const dragItem = drag?.item;
@@ -486,34 +611,43 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 				<HoverTooltip title={title} description={`${session.workspace} · ${t('sidebar.messageCount', { count: session.messageCount })}`} side="right" align="start">
 					<button type="button" className="pd-session-row" onClick={() => openSession(session)} disabled={status === 'starting' || navigating} aria-current={active ? 'page' : undefined}>
 						{session.unread && <span className="pd-session-unread" aria-label={t('sidebar.unread')} />}
-						<span className="pd-session-copy"><strong>{title}</strong>{source && <small>{workspaceName(session.workspace)}</small>}{session.runtime && session.runtime.phase !== 'idle' && <span className={`pd-session-runtime is-${session.runtime.phase}`} title={session.runtime.message}>{copy[session.runtime.phase]}</span>}</span>
+						<span className="pd-session-copy"><strong>{title}</strong>{session.runtime && session.runtime.phase !== 'idle' && <span className={`pd-session-runtime is-${session.runtime.phase}`} title={session.runtime.message}>{copy[session.runtime.phase]}</span>}</span>
 						{!archived && session.pinned && <Icon name="pin" width="11" height="11" className="pd-session-pin" />}
-						<time dateTime={session.modified}>{dateLabel(session.modified)}</time>
 					</button>
 				</HoverTooltip>
 				<div className="pd-session-actions"><HoverTooltip title={t('sidebar.menuTitle')} side="right"><button type="button" className="pd-session-more pd-icon-button" aria-label={t('sidebar.menuLabel', { title })} aria-haspopup="menu" aria-expanded={(popup?.kind === 'session' || popup?.kind === 'move') && popup.session.path === session.path} onClick={(event) => setPopup({ kind: 'session', anchor: event.currentTarget, session })}><Icon name="more" width="15" height="15" /></button></HoverTooltip></div>
 			</>}
 		</div>;
 	}
-	function renderOrdered(key: string, source = true) {
-		return previewOrder(key).map((path) => sessionByPath.get(path)).filter((session): session is SidebarSession => Boolean(session)).map((session) => renderSession(session, key, source));
+	function renderOrdered(key: string) {
+		return previewOrder(key).map((path) => sessionByPath.get(path)).filter((session): session is SidebarSession => Boolean(session)).map((session) => renderSession(session, key));
 	}
-	function unsaved(source = true) {
-		return <div className="pd-session-item is-active"><div className="pd-session-row" aria-current="page"><span className="pd-session-copy"><strong>{t('sidebar.newSession')}</strong>{source && <small>{workspaceName(cwd)}</small>}</span><span className="pd-session-unsaved">{t('sidebar.current')}</span></div></div>;
+	function unsaved() {
+		return <div className="pd-session-item is-active"><div className="pd-session-row" aria-current="page"><span className="pd-session-copy"><strong>{t('sidebar.newSession')}</strong></span><span className="pd-session-unsaved">{t('sidebar.current')}</span></div></div>;
 	}
-	function section(key: string, name: string, count: number, content: ReactNode, options: { icon?: 'hash' | 'folder' | 'pin' | 'clock'; group?: UiSessionGroup; workspace?: string } = {}) {
+	function renderProject(workspace: string) {
+		const items = projectByWorkspace.get(workspace)?.sessions ?? [];
+		return section(projectKey(workspace), workspaceName(workspace), <>
+			{showUnsaved && workspace === unsavedProject && unsaved()}
+			{items.map(session => renderSession(session, null))}
+			{!items.length && !(showUnsaved && workspace === unsavedProject) && workspaceRequests[workspace]?.phase !== 'error' && <div className="pd-session-empty">{t(!workspaceRequests[workspace] || workspaceRequests[workspace]?.phase === 'loading' ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : 'sidebar.noSessions')}</div>}
+		</>, { icon: 'folder', workspace });
+	}
+	function section(key: string, name: string, content: ReactNode, options: { icon?: 'hash' | 'folder' | 'pin' | 'clock'; group?: UiSessionGroup; workspace?: string } = {}) {
 		const aggregate = summarizeSessionStates(options.workspace ? allSessions.filter((session) => session.workspace === options.workspace && !session.archived) : options.group ? allSessions.filter((session) => options.group!.sessionPaths.includes(session.path) && !session.archived) : []);
 		const aggregateLabel = (Object.entries(aggregate) as [keyof typeof aggregate, number][]).filter(([, value]) => value > 0).map(([kind, value]) => `${copy[kind]} ${value}`).join(' · ');
 		const dragItem = drag?.item;
 		const draggingGroup = dragItem?.kind === 'group';
 		const isDraggedGroup = dragItem?.kind === 'group' && dragItem.id === options.group?.id;
+		const isDraggedProject = dragItem?.kind === 'project' && dragItem.workspace === options.workspace;
+		const projectDrop = options.workspace && drag?.projectDrop?.workspace === options.workspace ? drag.projectDrop.edge : undefined;
 		const expanded = !collapsed.has(key) && !isDraggedGroup;
 		const color = options.group ? ['#9290d2', '#72a699', '#bc9683', '#749cbe'][[...options.group.id].reduce((hash, character) => (hash * 31 + character.charCodeAt(0)) >>> 0, 0) % 4] : undefined;
 		const droppable = (options.group !== undefined || key === UNGROUPED_KEY) && dragMode;
-		return <section className={`pd-sidebar-group${options.group ? ' is-custom' : ''}${options.workspace === cwd ? ' is-current' : ''}`} key={key} data-section-key={key} style={{ '--pd-group-color': color } as CSSProperties}>
-			<HoverTooltip title={name} description={options.workspace} side="right" align="start"><div className="pd-sidebar-group-heading" data-drag-heading={droppable ? key : undefined} data-drag-container={droppable ? key : undefined} onContextMenu={options.workspace ? (event) => { event.preventDefault(); setPopup({ kind: 'project', anchor: event.currentTarget, workspace: options.workspace! }); } : undefined}>
-				<button type="button" className="pd-sidebar-group-toggle" aria-expanded={expanded} onPointerDown={options.group && dragMode && !draggingGroup ? (event) => beginDrag({ kind: 'group', id: options.group!.id }, event) : undefined} onClick={() => toggleSection(key)}>
-					<Icon name={options.icon ?? 'hash'} width="14" height="14" /><span>{name}</span><Icon name="chevronRight" width="12" height="12" className={expanded ? 'is-expanded' : ''} />{aggregateLabel && <span className="pd-session-state-counts" title={aggregateLabel} aria-label={aggregateLabel}>{aggregate.waiting > 0 && <b className="is-waiting">!{aggregate.waiting}</b>}{aggregate.running > 0 && <b className="is-running">↻{aggregate.running}</b>}{aggregate.failed > 0 && <b className="is-failed">×{aggregate.failed}</b>}{aggregate.unread > 0 && <b>•{aggregate.unread}</b>}</span>}<small>{count}</small>
+		return <section className={`pd-sidebar-group${key === 'pinned' ? ' is-pinned' : ''}${options.group ? ' is-custom' : ''}${options.workspace === cwd ? ' is-current' : ''}${isDraggedProject ? ' is-project-drag-source' : ''}`} key={key} data-section-key={key} data-project-path={options.workspace} data-project-drop={projectDrop} style={{ '--pd-group-color': color } as CSSProperties}>
+			<HoverTooltip title={name} description={options.workspace} side="right" align="start"><div className="pd-sidebar-group-heading" data-drag-heading={droppable ? key : undefined} data-drag-container={droppable ? key : undefined} onContextMenu={options.workspace ? (event) => { event.preventDefault(); const trigger = event.currentTarget.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]') ?? event.currentTarget; setPopup({ kind: 'project', anchor: event.currentTarget, trigger, workspace: options.workspace! }); } : undefined}>
+				<button type="button" className={`pd-sidebar-group-toggle${options.workspace && projectDragMode ? ' is-project-draggable' : ''}`} aria-expanded={expanded} onPointerDown={options.workspace && projectDragMode ? (event) => beginDrag({ kind: 'project', workspace: options.workspace! }, event) : options.group && dragMode && !draggingGroup ? (event) => beginDrag({ kind: 'group', id: options.group!.id }, event) : undefined} onClick={() => toggleSection(key)}>
+					<Icon name={options.icon ?? 'hash'} width="14" height="14" /><span>{name}</span><Icon name="chevronRight" width="12" height="12" className={expanded ? 'is-expanded' : ''} />{aggregateLabel && <span className="pd-session-state-counts" title={aggregateLabel} aria-label={aggregateLabel}>{aggregate.waiting > 0 && <b className="is-waiting">!</b>}{aggregate.running > 0 && <b className="is-running">↻</b>}{aggregate.failed > 0 && <b className="is-failed">×</b>}{aggregate.unread > 0 && <b>•</b>}</span>}
 				</button>
 				{options.group && <HoverTooltip title={t('sidebar.groupActions')} side="right"><button type="button" className="pd-icon-button pd-group-more" aria-label={t('sidebar.groupMenuLabel', { name })} aria-haspopup="menu" onClick={(event) => setPopup({ kind: 'group', anchor: event.currentTarget, group: options.group! })}><Icon name="more" width="15" height="15" /></button></HoverTooltip>}
 				{options.workspace && <HoverTooltip title={t('sidebar.projectNewChat')} side="right"><button type="button" className="pd-icon-button pd-group-more" aria-label={t('sidebar.projectNewChat')} disabled={status === 'starting' || navigating} onClick={() => {
@@ -521,7 +655,7 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 					navigationPending.current = true; setNavigating(true);
 					void perform(async () => { try { await switchWorkspace(options.workspace!); await newSession(); } finally { navigationPending.current = false; setNavigating(false); } }, true);
 				}}><Icon name="plus" width="14" height="14" /></button></HoverTooltip>}
-				{options.workspace && <HoverTooltip title={t('sidebar.projectActions')} side="right"><button type="button" className="pd-icon-button pd-group-more" aria-label={t('sidebar.projectMenuLabel', { name })} aria-haspopup="menu" aria-expanded={popup?.kind === 'project' && popup.workspace === options.workspace} onClick={(event) => setPopup({ kind: 'project', anchor: event.currentTarget, workspace: options.workspace! })}><Icon name="more" width="15" height="15" /></button></HoverTooltip>}
+				{options.workspace && <HoverTooltip title={t('sidebar.projectActions')} side="right"><button type="button" className="pd-icon-button pd-group-more" aria-label={t('sidebar.projectMenuLabel', { name })} aria-haspopup="menu" aria-expanded={popup?.kind === 'project' && popup.workspace === options.workspace} onClick={(event) => { const current = popupRef.current; setPopup(current?.kind === 'project' && current.workspace === options.workspace ? null : { kind: 'project', anchor: event.currentTarget, trigger: event.currentTarget, workspace: options.workspace! }); }}><Icon name="more" width="15" height="15" /></button></HoverTooltip>}
 			</div></HoverTooltip>
 			{expanded && <div className="pd-sidebar-group-content" data-drag-container={droppable ? key : undefined}>{content}{droppable && drag && <div className="pd-session-drop-zone" data-drag-footer />}</div>}
 		</section>;
@@ -535,6 +669,7 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 	const dragItem = drag?.item;
 	const ghostSession = dragItem?.kind === 'session' ? sessionByPath.get(dragItem.path) : null;
 	const ghostGroup = dragItem?.kind === 'group' ? groups.find((group) => group.id === dragItem.id) : null;
+	const ghostProject = dragItem?.kind === 'project' ? dragItem.workspace : null;
 	return <div className="pd-sidebar-detail pd-project-section pd-organized-sessions" onDragStart={(event) => event.preventDefault()}>
 		<div className="pd-sidebar-organize-toolbar">
 			<div className="pd-sidebar-mode" role="tablist" aria-label={t('sidebar.organize')}>
@@ -544,49 +679,51 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 			</div>
 			{iconButton(t(allExpanded ? 'sidebar.collapseAll' : 'sidebar.expandAll'), allExpanded ? 'collapseAll' : 'expandAll', toggleAll, { disabled: sectionKeys.length === 0 })}
 			<div className="pd-sidebar-organize-actions">
-				{iconButton(t('sidebar.newGroup'), 'hash', (anchor) => editGroup(anchor), { disabled: !bridge || groupsLoading || pending })}
+				{!archived && (preferences.mode === 'grouped'
+					? iconButton(t('sidebar.newGroup'), 'hash', (anchor) => editGroup(anchor), { disabled: !bridge || groupsLoading || pending })
+					: iconButton(t('sidebar.newProject'), 'plus', () => { setPopup(null); void perform(pickWorkspace); }, { disabled: !bridge || status === 'starting' || workspaceNavigationPending || navigating }))}
 				{iconButton(t('sidebar.filter'), 'filter', (anchor) => setPopup(popup?.kind === 'filter' ? null : { kind: 'filter', anchor }), { active: filtered, expanded: popup?.kind === 'filter' })}
 				{iconButton(t(archived ? 'sidebar.closeArchive' : 'sidebar.showArchive'), archived ? 'close' : 'archive', () => { setArchived((value) => !value); setPopup(null); }, { active: archived })}
 			</div>
 		</div>
 		{archived ? <div className="pd-sidebar-list-heading"><span>{t('sidebar.archived')} <small>{totalArchived}</small></span></div>
-			: <div className="pd-sidebar-list-heading"><span>{t(preferences.mode === 'grouped' ? 'sidebar.sessions' : preferences.projectView === 'timeline' ? 'sidebar.byTime' : 'sidebar.projects')} <small>{preferences.mode === 'project' && preferences.projectView === 'project' ? workspacePaths.length : sessions.length}</small></span><div className="pd-section-actions">
+			: <div className="pd-sidebar-list-heading"><span>{t(preferences.mode === 'grouped' ? 'sidebar.sessions' : preferences.projectView === 'timeline' ? 'sidebar.byTime' : 'sidebar.projects')} <small>{preferences.mode === 'project' && preferences.projectView === 'project' ? projectPaths.length : sessions.length}</small></span><div className="pd-section-actions">
 				{iconButton(t('sidebar.refreshProjects'), 'refresh', () => void perform(refresh), { disabled: refreshing })}
-				{iconButton(t('sidebar.openProject'), 'plus', () => void perform(pickWorkspace))}
 			</div></div>}
 		{filtered && <button type="button" className="pd-sidebar-filter-chip" aria-label={`${t(preferences.filter === 'unread' ? 'sidebar.onlyUnread' : 'sidebar.onlyPinned')} · ${t('sidebar.clearFilter')}`} onClick={() => preference({ filter: 'all' })}>{t(preferences.filter === 'unread' ? 'sidebar.onlyUnread' : 'sidebar.onlyPinned')}<Icon name="close" width="11" height="11" /></button>}
 		<div className="pd-project-list pd-organized-list" ref={scrollRef} tabIndex={-1} aria-label={t('sidebar.sessions')} onScroll={() => setPopup(null)}>
-			{!archived && grouped.pinned.length > 0 && section('pinned', t('sidebar.pinned'), grouped.pinned.length, grouped.pinned.map((s) => renderSession(s, null)), { icon: 'pin' })}
+			{hasPinned && section('pinned', t('sidebar.pinned'), <>
+				{grouped.pinned.map(session => renderSession(session, null))}
+				{projectPartitions.pinned.map(renderProject)}
+			</>, { icon: 'pin' })}
 			{archived || (preferences.mode === 'project' && preferences.projectView === 'timeline') ? <>
-				{showUnsaved && unsaved()}
-				{dates.map((date) => section(`${archived ? 'archive' : 'date'}:${date.id}`, t(`sidebar.${date.id}`), date.sessions.length, date.sessions.map((s) => renderSession(s, null)), { icon: 'clock' }))}
-				{!sessions.length && !showUnsaved && <div className="pd-session-empty">{t(loadingSessions ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : archived ? 'sidebar.noArchived' : 'sidebar.noSessions')}</div>}
+				{showBodyUnsaved && unsaved()}
+				{dates.map((date) => section(`${archived ? 'archive' : 'date'}:${date.id}`, t(`sidebar.${date.id}`), date.sessions.map((s) => renderSession(s, null)), { icon: 'clock' }))}
+				{!dates.length && !showBodyUnsaved && !hasPinned && <div className="pd-session-empty">{t(loadingSessions ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : archived ? 'sidebar.noArchived' : 'sidebar.noSessions')}</div>}
 			</> : preferences.mode === 'grouped' ? groupsLoading ? <div className="pd-session-empty">{t('sidebar.loading')}</div> : groupsError ? <button type="button" className="pd-sidebar-retry" onClick={() => void perform(refresh)}>{t('sidebar.retryGroups')}</button> : <>
 				{orderedGroupIds.map((id) => {
 					const group = grouped.groups.find((entry) => entry.id === id);
 					if (!group) return null;
 					const count = previewOrder(groupKey(group.id)).length;
-					return section(groupKey(group.id), group.name, count, <>
+					return section(groupKey(group.id), group.name, <>
 						{renderOrdered(groupKey(group.id))}
 						{!count && <div className="pd-session-empty pd-group-empty">{t(filtered ? 'sidebar.noMatches' : 'sidebar.emptyGroup')}</div>}
 					</>, { group: groups.find((g) => g.id === group.id) });
 				})}
-				{section(UNGROUPED_KEY, t('sidebar.ungrouped'), previewOrder(UNGROUPED_KEY).length + Number(showUnsaved), <>
-					{showUnsaved && unsaved()}
+				{section(UNGROUPED_KEY, t('sidebar.ungrouped'), <>
+					{showBodyUnsaved && unsaved()}
 					{renderOrdered(UNGROUPED_KEY)}
-					{!previewOrder(UNGROUPED_KEY).length && !showUnsaved && <div className="pd-session-empty pd-group-empty">{t(loadingSessions ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : 'sidebar.noSessions')}</div>}
+					{!previewOrder(UNGROUPED_KEY).length && !showBodyUnsaved && <div className="pd-session-empty pd-group-empty">{t(loadingSessions ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : 'sidebar.noSessions')}</div>}
 				</>)}
 			</> : <>
-				{orderedWorkspaces.map((workspace) => {
-					const items = sessions.filter((s) => s.workspace === workspace && !s.pinned);
-					return section(projectKey(workspace), workspaceName(workspace), items.length, <>
-						{showUnsaved && workspace === cwd && unsaved(false)}
-						{orderSessions(items).map((session) => renderSession(session, null, false))}
-						{!items.length && !(showUnsaved && workspace === cwd) && workspaceRequests[workspace]?.phase !== 'error' && <div className="pd-session-empty">{t(!workspaceRequests[workspace] || workspaceRequests[workspace]?.phase === 'loading' ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : 'sidebar.noSessions')}</div>}
-					</>, { icon: pinnedWorkspaceSet.has(workspace) ? 'pin' : 'folder', workspace });
-				})}
+				{projectPartitions.unpinned.map(renderProject)}
+				{section(UNASSIGNED_KEY, t('sidebar.unassigned'), <>
+					{showUnsaved && !unsavedProject && unsaved()}
+					{projectGroups.unassigned.map(session => renderSession(session, null))}
+					{!projectGroups.unassigned.length && !(showUnsaved && !unsavedProject) && <div className="pd-session-empty">{t(loadingSessions ? 'sidebar.loading' : filtered ? 'sidebar.noMatches' : 'sidebar.noSessions')}</div>}
+				</>)}
 			</>}
-			{!workspacePaths.length && !archived && <div className="pd-project-empty"><p>{t('sidebar.noProjects')}</p><button type="button" onClick={() => void perform(pickWorkspace)}>{t('sidebar.openFolder')}</button></div>}
+			{!projectPaths.length && !archived && <div className="pd-project-empty"><p>{t('sidebar.noProjects')}</p><button type="button" onClick={() => void perform(pickWorkspace)}>{t('sidebar.openFolder')}</button></div>}
 			{workspacePaths.map((workspace) => workspaceRequests[workspace]?.phase === 'error' ? <div key={workspace} className="pd-workspace-list-error" role="alert"><strong>{workspaceName(workspace)} · {copy.loadFailed}</strong><p>{workspaceRequests[workspace]?.error}</p><button type="button" onClick={() => void refreshWorkspaceSessions(workspace)}>{copy.retry}</button></div> : workspaceRequests[workspace]?.phase === 'refreshing' ? <div key={workspace} className="pd-workspace-list-refresh" role="status">{workspaceName(workspace)} · {copy.refreshing}</div> : null)}
 		</div>
 		{trashTarget && <SessionTrashDialog title={titleOf(trashTarget.session)} workspace={trashTarget.session.workspace} onDelete={() => useChatStore.getState().deleteSession(trashTarget.session.path)} onClose={(deleted) => {
@@ -595,10 +732,10 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 			setTrashTarget(null);
 			if (deleted) operationFeedback.show({ id: `session-trash:${target.session.path}`, kind: 'success', title: copy.deleted, detail: titleOf(target.session) });
 		}} />}
-		{drag && (ghostSession || ghostGroup) && <div className="pd-sidebar-drag-ghost" style={{ left: drag.ghost.x, top: drag.ghost.y, width: drag.ghost.width }} aria-hidden>
-			{ghostGroup ? <><Icon name="hash" width="14" height="14" /><span>{ghostGroup.name}</span></> : <span>{titleOf(ghostSession!)}</span>}
+		{drag && (ghostSession || ghostGroup || ghostProject) && <div className="pd-sidebar-drag-ghost" style={{ left: drag.ghost.x, top: drag.ghost.y, width: drag.ghost.width }} aria-hidden>
+			{ghostProject ? <><Icon name={pinnedWorkspaceSet.has(ghostProject) ? 'pin' : 'folder'} width="14" height="14" /><span>{workspaceName(ghostProject)}</span></> : ghostGroup ? <><Icon name="hash" width="14" height="14" /><span>{ghostGroup.name}</span></> : <span>{titleOf(ghostSession!)}</span>}
 		</div>}
-		{popup && <SidebarPopover key={popup.kind} anchor={popup.anchor} label={t(popup.kind === 'filter' ? 'sidebar.filter' : popup.kind === 'edit-group' ? popup.group ? 'sidebar.renameGroup' : 'sidebar.newGroup' : popup.kind === 'move' ? 'sidebar.moveToGroup' : popup.kind === 'group' ? 'sidebar.groupActions' : popup.kind === 'project' ? 'sidebar.projectActions' : 'sidebar.menuTitle')} dialog={popup.kind === 'edit-group'} onClose={() => setPopup(null)}>
+		{popup && <SidebarPopover key={popup.kind} anchor={popup.anchor} trigger={popup.trigger} label={t(popup.kind === 'filter' ? 'sidebar.filter' : popup.kind === 'edit-group' ? popup.group ? 'sidebar.renameGroup' : 'sidebar.newGroup' : popup.kind === 'move' ? 'sidebar.moveToGroup' : popup.kind === 'group' ? 'sidebar.groupActions' : popup.kind === 'project' ? 'sidebar.projectActions' : 'sidebar.menuTitle')} dialog={popup.kind === 'edit-group'} onClose={() => setPopup(null)}>
 			{popup.kind === 'filter' && <>
 				{preferences.mode === 'project' && !archived && <><div className="pd-sidebar-menu-label">{t('sidebar.organize')}</div>{radio(t('sidebar.byProject'), preferences.projectView === 'project', () => preference({ projectView: 'project' }))}{radio(t('sidebar.byTime'), preferences.projectView === 'timeline', () => preference({ projectView: 'timeline' }))}<hr /></>}
 				<div className="pd-sidebar-menu-label">{t('sidebar.filter')}</div>
@@ -628,24 +765,15 @@ export function SidebarSessionPanel({ visible, onNavigate, onError }: { visible:
 				<div className="pd-sidebar-form-actions"><button type="button" onClick={() => { setPopup(null); popup.anchor.focus(); }}>{t('sidebar.cancel')}</button><button type="submit" disabled={!groupDraft.trim() || pending}>{t(pending ? 'sidebar.saving' : 'sidebar.save')}</button></div>
 			</form>}
 			{popup.kind === 'project' && <>
+				<button type="button" role="menuitem" data-action={pinnedWorkspaceSet.has(popup.workspace) ? 'unpin-project' : 'pin-project'} disabled={!bridge || !pinsReady || pinsLoading || pinSaving} onClick={() => toggleProjectPin(popup.workspace, popup.trigger ?? popup.anchor)}>{t(pinnedWorkspaceSet.has(popup.workspace) ? 'sidebar.projectUnpin' : 'sidebar.projectPin')}</button>
 				<button type="button" role="menuitem" disabled={status === 'starting' || navigating} onClick={() => {
 					const workspace = popup.workspace;
 					if (navigationPending.current) return;
 					navigationPending.current = true; setNavigating(true); setPopup(null);
 					void perform(async () => { try { await switchWorkspace(workspace); } finally { navigationPending.current = false; setNavigating(false); } }, true);
 				}}>{t('sidebar.openProject')}</button>
-				<button type="button" role="menuitem" disabled={!bridge} onClick={() => {
-					const workspace = popup.workspace;
-					const next = pinnedWorkspaceSet.has(workspace) ? pinnedProjects.filter((path) => path !== workspace) : [...pinnedProjects, workspace];
-					setPopup(null);
-					void perform(async () => {
-						if (!bridge) return;
-						setPinnedProjects(await bridge.setPinnedWorkspaces(next));
-						clearPinnedProjects();
-					});
-				}}>{t(pinnedWorkspaceSet.has(popup.workspace) ? 'sidebar.projectUnpin' : 'sidebar.projectPin')}</button>
 				<button type="button" role="menuitem" onClick={() => { const workspace = popup.workspace; setPopup(null); void perform(() => bridge ? bridge.openWorkspaceFolder(workspace) : Promise.resolve()); }}>{t('sidebar.projectReveal')}</button>
-				<hr /><button type="button" role="menuitem" onClick={() => { const workspace = popup.workspace; setPopup(null); void perform(async () => { await removeWorkspace(workspace); setPinnedProjects((current) => current.filter((path) => path !== workspace)); }); }}>{t('sidebar.projectRemove')}</button>
+				<hr /><button type="button" role="menuitem" disabled={pinSaving} onClick={() => { const workspace = popup.workspace; setPopup(null); void perform(async () => { await removeWorkspace(workspace); setPinnedProjects((current) => current.filter((path) => sidebarWorkspaceKey(path) !== sidebarWorkspaceKey(workspace))); }); }}>{t('sidebar.projectRemove')}</button>
 				<p className="pd-sidebar-menu-note">{t('sidebar.projectRemoveHint')}</p>
 			</>}
 			{popup.kind === 'group' && <><button type="button" role="menuitem" onClick={() => editGroup(popup.anchor, popup.group)}>{t('sidebar.renameGroup')}</button><button type="button" role="menuitem" disabled={pending} onClick={() => { const group = popup.group; setPopup(null); void perform(async () => { await changeGroups({ type: 'delete', id: group.id }); }); }}>{t('sidebar.dissolveGroup')}</button><p className="pd-sidebar-menu-note">{t('sidebar.dissolveGroupHint')}</p></>}

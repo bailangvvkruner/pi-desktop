@@ -24,7 +24,6 @@ interface HoverState {
 }
 
 const MIN_ITEMS = 4;
-const HOVER_DELAY_MS = 140;
 const READING_LINE_RATIO = 0.4;
 const MIN_CONTENT_GAP = 52;
 const PREVIEW_ESTIMATE_HEIGHT = 96;
@@ -50,11 +49,14 @@ export const ConversationRail = memo(function ConversationRail({ messages, getSc
 		});
 		return result;
 	}, [messages]);
+	// Reply tokens change the previews, but not the history navigation structure.
+	const itemIdsKey = JSON.stringify(items.map((item) => item.id));
+	const itemIds = useMemo<string[]>(() => JSON.parse(itemIdsKey), [itemIdsKey]);
 
 	const [activeId, setActiveId] = useState<string | null>(null);
 	const [hover, setHover] = useState<HoverState | null>(null);
 	const [hasRoom, setHasRoom] = useState(true);
-	const hoverTimerRef = useRef<{ id: string; timer: number } | null>(null);
+	const hoverFrameRef = useRef<{ id: string; frame: number } | null>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 	const draggingRef = useRef<{ pointerId: number; itemId: string } | null>(null);
 	const suppressClickRef = useRef(false);
@@ -83,43 +85,47 @@ export const ConversationRail = memo(function ConversationRail({ messages, getSc
 		if (scrollToItem(id, behavior)) flashItem(id);
 	}, [scrollToItem, flashItem, onJumpToMessage]);
 
-	const clearHoverTimer = useCallback(() => {
-		const pending = hoverTimerRef.current;
-		if (!pending) return;
-		window.clearTimeout(pending.timer);
-		hoverTimerRef.current = null;
+	const clearHoverFrame = useCallback((id?: string) => {
+		const pending = hoverFrameRef.current;
+		if (!pending || (id !== undefined && pending.id !== id)) return;
+		cancelAnimationFrame(pending.frame);
+		hoverFrameRef.current = null;
 	}, []);
 
 	const openHover = useCallback((id: string, button: HTMLElement, immediate = false) => {
-		clearHoverTimer();
+		clearHoverFrame();
 		const place = () => {
+			if (!button.isConnected) return;
 			const rect = button.getBoundingClientRect();
 			const y = Math.min(Math.max(rect.top + rect.height / 2 - PREVIEW_ESTIMATE_HEIGHT / 2, 8), window.innerHeight - PREVIEW_ESTIMATE_HEIGHT - 8);
-			setHover({ id, x: rect.right + 12, y });
+			const x = rect.right + 12;
+			setHover((current) => current?.id === id && current.x === x && current.y === y ? current : { id, x, y });
 		};
 		if (immediate) { place(); return; }
-		hoverTimerRef.current = { id, timer: window.setTimeout(() => { hoverTimerRef.current = null; place(); }, HOVER_DELAY_MS) };
-	}, [clearHoverTimer]);
+		// Coalesce pointer events within a frame without delaying every new marker.
+		hoverFrameRef.current = { id, frame: requestAnimationFrame(() => { hoverFrameRef.current = null; place(); }) };
+	}, [clearHoverFrame]);
 
 	// Track the message at the reading line so the rail reflects the scroll position.
 	useLayoutEffect(() => {
 		const scroll = getScrollElement();
 		if (!scroll) return;
+		const ids = new Set(itemIds);
 		let frame = 0;
 		const update = () => {
 			frame = 0;
-			const ids = items.map((item) => item.id);
-			if (ids.length === 0) { setActiveId(null); return; }
+			if (itemIds.length === 0) { setActiveId(null); return; }
 			const rect = scroll.getBoundingClientRect();
 			const line = rect.top + rect.height * READING_LINE_RATIO;
 			let current: string | null = null;
-			for (const id of ids) {
-				const row = findRow(scroll, id);
-				if (!row) continue;
+			// Only inspect mounted user rows; virtualized history may contain thousands of IDs.
+			for (const row of scroll.querySelectorAll<HTMLElement>('.pd-message-row.is-user[data-message-id]')) {
+				const id = row.dataset.messageId!;
+				if (!ids.has(id)) continue;
 				if (row.getBoundingClientRect().top <= line) current = id;
 				else break;
 			}
-			setActiveId(current ?? ids[0]!);
+			setActiveId(current ?? itemIds[0]!);
 		};
 		const schedule = () => { if (frame === 0) frame = requestAnimationFrame(update); };
 		scroll.addEventListener('scroll', schedule, { passive: true });
@@ -133,7 +139,7 @@ export const ConversationRail = memo(function ConversationRail({ messages, getSc
 			observer.disconnect();
 			if (frame !== 0) cancelAnimationFrame(frame);
 		};
-	}, [items, getScrollElement]);
+	}, [itemIds, getScrollElement]);
 
 	// Hide the rail when the transcript content starts too close to the left edge.
 	useLayoutEffect(() => {
@@ -151,38 +157,47 @@ export const ConversationRail = memo(function ConversationRail({ messages, getSc
 		return () => { observer.disconnect(); window.removeEventListener('resize', measure); };
 	}, [items.length, getScrollElement]);
 
+	// Keep the reading position visible in long rails without moving targets under the pointer.
+	useLayoutEffect(() => {
+		const list = listRef.current;
+		if (!list || !activeId || draggingRef.current || list.matches(':hover') || list.contains(document.activeElement)) return;
+		const marker = list.querySelector<HTMLElement>(`[data-rail-id="${CSS.escape(activeId)}"]`);
+		if (!marker) return;
+		const bounds = list.getBoundingClientRect();
+		const rect = marker.getBoundingClientRect();
+		if (rect.top < bounds.top) list.scrollTop -= bounds.top - rect.top;
+		else if (rect.bottom > bounds.bottom) list.scrollTop += rect.bottom - bounds.bottom;
+	}, [activeId, hasRoom, itemIds]);
+
 	// Alt+ArrowUp/Down jumps to the previous/next user message.
 	useEffect(() => {
-		if (items.length < MIN_ITEMS) return;
+		if (itemIds.length < MIN_ITEMS) return;
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.defaultPrevented || event.isComposing) return;
 			const isPrev = matchesShortcut(event, bindingKeysFor('previousTurn'));
 			const isNext = matchesShortcut(event, bindingKeysFor('nextTurn'));
 			if (!isPrev && !isNext) return;
 			if (getScrollElement() == null) return;
-			const index = activeId != null ? items.findIndex((item) => item.id === activeId) : -1;
+			const index = activeId != null ? itemIds.indexOf(activeId) : -1;
 			const next = isNext
-				? (index === -1 ? 0 : Math.min(items.length - 1, index + 1))
-				: (index === -1 ? items.length - 1 : Math.max(0, index - 1));
-			const target = items[next];
+				? (index === -1 ? 0 : Math.min(itemIds.length - 1, index + 1))
+				: (index === -1 ? itemIds.length - 1 : Math.max(0, index - 1));
+			const target = itemIds[next];
 			if (!target) return;
 			event.preventDefault();
-			jump(target.id);
+			jump(target);
 		};
 		document.addEventListener('keydown', onKeyDown);
 		return () => document.removeEventListener('keydown', onKeyDown);
-	}, [items, activeId, jump, getScrollElement]);
+	}, [itemIds, activeId, jump, getScrollElement]);
 
-	useEffect(() => clearHoverTimer, [clearHoverTimer]);
+	useEffect(() => () => clearHoverFrame(), [clearHoverFrame]);
 
-	const markerFromPoint = useCallback((clientY: number): HTMLButtonElement | null => {
+	const markerFromPoint = useCallback((clientX: number, clientY: number): HTMLButtonElement | null => {
 		const list = listRef.current;
 		if (!list) return null;
-		for (const button of Array.from(list.querySelectorAll<HTMLButtonElement>('[data-rail-id]'))) {
-			const rect = button.getBoundingClientRect();
-			if (clientY >= rect.top && clientY <= rect.bottom) return button;
-		}
-		return null;
+		const button = document.elementFromPoint(clientX, clientY)?.closest<HTMLButtonElement>('[data-rail-id]');
+		return button && list.contains(button) ? button : null;
 	}, []);
 
 	const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -191,6 +206,7 @@ export const ConversationRail = memo(function ConversationRail({ messages, getSc
 		if (!button) return;
 		const id = button.dataset.railId;
 		if (!id) return;
+		suppressClickRef.current = false;
 		button.setPointerCapture(event.pointerId);
 		draggingRef.current = { pointerId: event.pointerId, itemId: id };
 		openHover(id, button, true);
@@ -200,27 +216,34 @@ export const ConversationRail = memo(function ConversationRail({ messages, getSc
 		const drag = draggingRef.current;
 		if (!drag || drag.pointerId !== event.pointerId) return;
 		draggingRef.current = null;
-	}, []);
+		if (event.type === 'pointercancel' || event.type === 'lostpointercapture') {
+			suppressClickRef.current = false;
+			clearHoverFrame();
+			setHover(null);
+		}
+	}, [clearHoverFrame]);
 
 	const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
 		const drag = draggingRef.current;
 		if (!drag || drag.pointerId !== event.pointerId) return;
 		if (event.buttons % 2 === 0) { endDrag(event); return; }
-		const button = markerFromPoint(event.clientY);
+		const button = markerFromPoint(event.clientX, event.clientY);
 		const id = button?.dataset.railId;
-		if (!button || !id || id === drag.itemId) return;
-		draggingRef.current = { ...drag, itemId: id };
-		suppressClickRef.current = true;
-		jump(id, 'auto');
-		openHover(id, button, true);
-};
+		if (!button || !id) { clearHoverFrame(); setHover(null); return; }
+		if (id !== drag.itemId) {
+			draggingRef.current = { ...drag, itemId: id };
+			suppressClickRef.current = true;
+			jump(id, 'auto');
+		}
+		openHover(id, button);
+	};
 
 	if (items.length < MIN_ITEMS || !hasRoom) return null;
 
 	const previewItem = hover ? items.find((item) => item.id === hover.id) ?? null : null;
 
 	return (
-		<nav className="pd-conv-rail" aria-label={t('rail.ariaLabel')} onPointerLeave={() => { clearHoverTimer(); setHover(null); }}>
+		<nav className="pd-conv-rail" aria-label={t('rail.ariaLabel')} onPointerLeave={() => { clearHoverFrame(); setHover(null); }}>
 			<div
 				ref={listRef}
 				className="pd-conv-rail-list"
@@ -236,16 +259,17 @@ export const ConversationRail = memo(function ConversationRail({ messages, getSc
 						type="button"
 						className={'pd-conv-rail-item' + (markedIds?.has(item.id) ? ' is-marked' : '')}
 						data-rail-id={item.id}
+						data-previewed={item.id === hover?.id ? 'true' : undefined}
 						aria-current={item.id === activeId ? 'true' : undefined}
 						aria-label={t('rail.jump', { position: String(index + 1) })}
-						onClick={() => {
-							if (suppressClickRef.current) { suppressClickRef.current = false; return; }
+						onClick={(event) => {
+							if (suppressClickRef.current && event.detail !== 0) { suppressClickRef.current = false; return; }
 							jump(item.id);
 						}}
 						onPointerEnter={(event) => { if (draggingRef.current == null) openHover(item.id, event.currentTarget); }}
-						onPointerLeave={() => { if (draggingRef.current == null) clearHoverTimer(); }}
+						onPointerLeave={() => { if (draggingRef.current == null) clearHoverFrame(item.id); }}
 						onFocus={(event) => openHover(item.id, event.currentTarget, true)}
-						onBlur={() => setHover((current) => current?.id === item.id ? null : current)}
+						onBlur={() => { clearHoverFrame(item.id); setHover((current) => current?.id === item.id ? null : current); }}
 					>
 						<span className="pd-conv-rail-line" />
 					</button>

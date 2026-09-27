@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useT } from '../i18n';
 import { parseKeys } from '../shortcuts/bindings';
 import { useShortcutBindings } from '../shortcuts/useShortcutBindings';
+import { useBusyInputBehavior } from '../busyInputBehavior';
 
 /**
  * Settings shortcuts page body (4.3): renders the declarative registry with
@@ -12,6 +13,7 @@ import { useShortcutBindings } from '../shortcuts/useShortcutBindings';
 export function ShortcutSettings({ isMac }: { isMac: boolean }) {
 	const { t } = useT();
 	const { overrides, setOverride, resetAll, conflicts, bindings } = useShortcutBindings();
+	const [busyInputBehavior] = useBusyInputBehavior();
 	const [capturing, setCapturing] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -46,9 +48,13 @@ export function ShortcutSettings({ isMac }: { isMac: boolean }) {
 				{bindings.map((binding) => {
 					const keys = overrides[binding.id] ?? binding.keys;
 					const conflict = conflicts.find((entry) => entry.ids.includes(binding.id));
+					const busyAction = binding.id === 'send' ? busyInputBehavior : busyInputBehavior === 'followUp' ? 'steer' : 'followUp';
+					const label = binding.id === 'send' || binding.id === 'steer'
+						? t('settings.shortcutSendWhileRunning', { action: t(busyAction === 'followUp' ? 'settings.busyInputQueue' : 'settings.busyInputSteer') })
+						: t(binding.labelKey);
 					return (
 						<li key={binding.id} className={conflict ? 'has-conflict' : undefined}>
-							<span className="pd-shortcut-label">{t(binding.labelKey)}</span>
+							<span className="pd-shortcut-label">{label}</span>
 							<span className="pd-shortcut-keys">
 								{binding.fixed
 									? <kbd>{display(keys)}</kbd>

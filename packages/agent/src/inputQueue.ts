@@ -131,6 +131,11 @@ export class DurableInputQueue {
 		return undefined;
 	}
 	acknowledge(id: string): void { const row = this.state.rows.find((item) => item.id === id); if (row?.state === 'reserved' && !this.messages.has(id)) this.transaction((next) => { next.rows.find((item) => item.id === id)!.state = 'accepted'; }); }
+	/** Handled commands/hooks complete without a transcript message_start event. */
+	completePrompt(id: string): void {
+		const row = this.state.rows.find((item) => item.id === id);
+		if (row && !row.enqueued && (row.state === 'reserved' || row.state === 'accepted')) this.consumed(undefined, id);
+	}
 	fail(id: string, error: unknown): void {
 		if (!this.state.rows.some((row) => row.id === id && row.state === 'reserved' && !row.enqueued)) return;
 		this.transaction((next) => { const row = next.rows.find((item) => item.id === id)!; row.state = 'failed'; row.retryable = true; row.reason = error instanceof Error ? error.message : String(error); row.message = undefined; row.text = ''; row.attachments = []; row.version++; });

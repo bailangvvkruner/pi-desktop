@@ -21,18 +21,24 @@ export class PersistedComposerDrafts {
 	}
 	save(scope: UiInputScope, draft: ComposerDraft): Promise<void> {
 		const entry = this.entry(scope); entry.requested = draft;
-		return entry.saving ??= (async () => {
-			await this.load(scope);
-			while (entry.requested) {
-				const next = entry.requested; entry.requested = undefined;
-				const attachmentIds: string[] = [];
-				for (const attachment of next.attachments) {
-					let id = entry.refs.get(attachment);
-					if (!id) { const ref = await this.bridge.putInputAttachment(scope, attachment); id = ref.id; entry.refs.set(attachment, id); }
-					attachmentIds.push(id);
+		return entry.saving ??= Promise.resolve().then(async () => {
+			try {
+				await this.load(scope);
+				while (entry.requested) {
+					const next = entry.requested; entry.requested = undefined;
+					const attachmentIds: string[] = [];
+					for (const attachment of next.attachments) {
+						let id = entry.refs.get(attachment);
+						if (!id) { const ref = await this.bridge.putInputAttachment(scope, attachment); id = ref.id; entry.refs.set(attachment, id); }
+						attachmentIds.push(id);
+					}
+					const saved = await this.bridge.saveInputDraft({ ...scope, text: next.text, attachmentIds, expectedVersion: entry.version }); entry.version = saved.version;
 				}
-				const saved = await this.bridge.saveInputDraft({ ...scope, text: next.text, attachmentIds, expectedVersion: entry.version }); entry.version = saved.version;
+			} finally {
+				// Release ownership in the same continuation as the empty-queue check.
+				// An external finally leaves a microtask gap that can strand a newer edit.
+				entry.saving = undefined;
 			}
-		})().finally(() => { entry.saving = undefined; });
+		});
 	}
 }

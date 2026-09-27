@@ -2,8 +2,9 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { Agent, ProxyAgent, fetch as networkFetch, type Dispatcher, type RequestInit as NetworkRequestInit } from 'undici';
 import { readProviderDocument } from './customProviders.ts';
+import { normalizeResponsesReasoningStream } from './providerResponseStream.ts';
 
-type NetworkScope = { useSystemProxy: boolean } | { provider: string; modelsPath: string; policy?: Promise<boolean | undefined> };
+type NetworkScope = { useSystemProxy: boolean } | { provider: string; api: string; modelsPath: string; policy?: Promise<boolean | undefined> };
 type SystemProxyResolver = (url: string) => Promise<string>;
 const scopes = new AsyncLocalStorage<NetworkScope>();
 const boundRuntimes = new WeakSet<ModelRuntime>();
@@ -69,8 +70,10 @@ function installFetchRouter(): void {
   const routedFetch: typeof globalThis.fetch = async (input, init) => {
     const scope = scopes.getStore();
     if (!scope) return inheritedFetch(input, init);
+    const normalize = (response: Response): Response => 'provider' in scope && scope.api === 'openai-responses'
+      ? normalizeResponsesReasoningStream(response) : response;
     const useSystemProxy = await policy(scope);
-    if (useSystemProxy === undefined) return inheritedFetch(input, init);
+    if (useSystemProxy === undefined) return normalize(await inheritedFetch(input, init));
     // Normalize through the active web API, then pass URL + options to npm
     // Undici, whose Request brand may differ from the host runtime's Request.
     const request = new Request(input, init);
@@ -98,7 +101,7 @@ function installFetchRouter(): void {
       duplex: 'half',
       dispatcher,
     };
-    return await networkFetch(request.url, options) as unknown as Response;
+    return normalize(await networkFetch(request.url, options) as unknown as Response);
   };
   installedFetch = routedFetch;
   globalThis.fetch = routedFetch;
@@ -121,13 +124,13 @@ export function bindProviderNetwork(runtime: ModelRuntime, modelsPath: string): 
   installFetchRouter();
   if (boundRuntimes.has(runtime)) return;
   boundRuntimes.add(runtime);
-  const run = <T>(provider: string, work: () => T): T => scopes.run({ provider, modelsPath }, work);
+  const run = <T>(provider: string, api: string, work: () => T): T => scopes.run({ provider, api, modelsPath }, work);
   const stream = runtime.stream.bind(runtime);
-  runtime.stream = (model, context, options) => run(model.provider, () => stream(model, context, options));
+  runtime.stream = (model, context, options) => run(model.provider, model.api, () => stream(model, context, options));
   const streamSimple = runtime.streamSimple.bind(runtime);
-  runtime.streamSimple = (model, context, options) => run(model.provider, () => streamSimple(model, context, options));
+  runtime.streamSimple = (model, context, options) => run(model.provider, model.api, () => streamSimple(model, context, options));
   const streamDeferred = runtime.streamDeferred.bind(runtime);
-  runtime.streamDeferred = (model, handle, options) => run(model.provider, () => streamDeferred(model, handle, options));
+  runtime.streamDeferred = (model, handle, options) => run(model.provider, model.api, () => streamDeferred(model, handle, options));
   const cancelDeferred = runtime.cancelDeferred.bind(runtime);
-  runtime.cancelDeferred = (model, handle, options) => run(model.provider, () => cancelDeferred(model, handle, options));
+  runtime.cancelDeferred = (model, handle, options) => run(model.provider, model.api, () => cancelDeferred(model, handle, options));
 }

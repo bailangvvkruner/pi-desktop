@@ -97,6 +97,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const [revealMessage, setRevealMessage] = useState<{ id: string; request: number; scope: string } | null>(null);
 	const bodyRef = useRef<HTMLDivElement>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const getScrollElement = useCallback(() => scrollRef.current, []);
 	const messageListRef = useRef<HTMLDivElement>(null);
 	const followsBottomRef = useRef(true);
 	const scrollAnimationRef = useRef<number | null>(null);
@@ -107,6 +108,14 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const [locationTarget, setLocationTarget] = useState<{ id: string; snippet?: string } | null>(null);
 	const locationRequest = useRef<AbortController | null>(null);
 	const restoring = useRef(false);
+	const pendingJumpRef = useRef<{ frame: number; restoresReading: boolean } | null>(null);
+	const cancelPendingJump = useCallback(() => {
+		const pending = pendingJumpRef.current;
+		if (!pending) return;
+		cancelAnimationFrame(pending.frame);
+		pendingJumpRef.current = null;
+		if (pending.restoresReading) restoring.current = false;
+	}, []);
 	const readingAnchor = useRef<ReadingPosition | null>(null);
 	const memoryKey = readingKey(cwd, sessionPath, messages.at(-1)?.id ?? 'empty');
 	const memoryKeyRef = useRef(memoryKey);
@@ -175,7 +184,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const estimateSize = useCallback((index: number) => (timeline[index]?.kind === 'turn' ? 180 : 100), [timeline]);
 	const virtualizer = useVirtualizer({
 		count: timeline.length,
-		getScrollElement: () => scrollRef.current,
+		getScrollElement,
 		useAnimationFrameWithResizeObserver: true,
 		estimateSize,
 		overscan: 8,
@@ -195,22 +204,33 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		return true;
 	}, []);
 
-	const jumpToMessage = useCallback((id: string) => {
+	const jumpToMessage = useCallback((id: string, restoreReading?: () => void) => {
+		cancelPendingJump();
 		const transcript = scrollRef.current;
 		if (!transcript) return;
 		cancelScrollAnimation();
 		followsBottomRef.current = false;
 		readingAnchor.current = null;
+		if (restoreReading) restoring.current = true;
 		setRevealMessage(previous => ({ id, request: (previous?.request ?? 0) + 1, scope: disclosureScope }));
-		if (!virtualize) {
-			window.requestAnimationFrame(() => window.requestAnimationFrame(() => scrollToRow(id)));
-			return;
+		if (virtualize) {
+			const index = timelineRef.current?.entries.findIndex((entry) => entryContainsMessage(entry, id)) ?? -1;
+			if (index >= 0) virtualizer.scrollToIndex(index, { align: 'center' });
 		}
-		const index = timelineRef.current?.entries.findIndex((entry) => entryContainsMessage(entry, id)) ?? -1;
-		if (index >= 0) virtualizer.scrollToIndex(index, { align: 'center' });
-		// The row mounts after the virtual window moves; settle it precisely on the next frames.
-		window.requestAnimationFrame(() => window.requestAnimationFrame(() => scrollToRow(id)));
-	}, [virtualize, virtualizer, scrollToRow, disclosureScope]);
+		// Wait for disclosure/virtual rows to mount, keeping only the latest target.
+		const pending = { frame: 0, restoresReading: Boolean(restoreReading) };
+		pendingJumpRef.current = pending;
+		pending.frame = requestAnimationFrame(() => {
+			if (pendingJumpRef.current !== pending) return;
+			pending.frame = requestAnimationFrame(() => {
+				if (pendingJumpRef.current !== pending) return;
+				pendingJumpRef.current = null;
+				scrollToRow(id);
+				restoreReading?.();
+			});
+		});
+	}, [cancelPendingJump, virtualize, virtualizer, scrollToRow, disclosureScope]);
+	useLayoutEffect(() => cancelPendingJump, [cancelPendingJump, cwd, sessionId, sessionPath, historyGeneration, sessionLoading]);
 
 	useEffect(() => {
 		if (activeFindId) jumpToMessage(activeFindId);
@@ -277,13 +297,12 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		})().then((id) => {
 			if (controller.signal.aborted) return;
 			if (!id) { restoring.current = false; followsBottomRef.current = true; if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; return; }
-			jumpToMessage(id);
-			requestAnimationFrame(() => requestAnimationFrame(() => {
+			jumpToMessage(id, () => {
 				if (controller.signal.aborted) return;
 				const node = scrollRef.current; const row = node?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
 				if (node && row) node.scrollTop += row.getBoundingClientRect().top - node.getBoundingClientRect().top - saved.offset;
 				readingAnchor.current = saved; restoring.current = false;
-			}));
+			});
 		});
 		return () => { controller.abort(); restoring.current = false; };
 	}, [cwd, sessionId, sessionPath, historyGeneration, sessionLoading]);
@@ -345,6 +364,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	}
 
 	function scrollToBottom() {
+		cancelPendingJump();
 		const node = scrollRef.current;
 		if (!node) return;
 		cancelScrollAnimation();
@@ -456,8 +476,8 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 					<button type="button" className={`pd-back-to-bottom${showBackToBottom ? ' is-visible' : ''}`} aria-label={t('chat.backToBottom')} aria-hidden={!showBackToBottom} tabIndex={showBackToBottom ? 0 : -1} onClick={showBackToBottom ? scrollToBottom : undefined}>
 						{agentStatus === 'busy' ? <span className="pd-back-to-bottom-dots" aria-hidden="true"><span /><span /><span /></span> : <Icon name="arrowDown" width="20" height="20" />}
 					</button>
-					{!isEmpty && !sessionLoading && <ConversationRail messages={messages} getScrollElement={() => scrollRef.current} markedIds={railMarkedIds ?? undefined} onJumpToMessage={jumpToMessage} />}
 				</div>
+				{!isEmpty && !sessionLoading && <ConversationRail messages={messages} getScrollElement={getScrollElement} markedIds={railMarkedIds ?? undefined} onJumpToMessage={jumpToMessage} />}
 				<Composer header={isEmpty ? <ComposerContextBar /> : undefined} onOpenModelManagement={onOpenModelManagement} changesSlotRef={setChangesDock} />
 			</div>
 			{commitOpen && <ChatCommitDialog onClose={() => setCommitOpen(false)} />}

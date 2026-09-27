@@ -87,6 +87,23 @@ test('concurrent group updates and reads cannot overwrite one another, and failu
   assert.equal((await create().list()).length, 13);
 });
 
+test('stale group reorders cannot remove newly created groups or their membership', async (t) => {
+  const { service, create, path, first } = await fixture(t);
+  const [one] = await service.update({ type: 'create', name: 'One' });
+  const [two] = await service.update({ type: 'create', name: 'Two' });
+  const [three] = await service.update({ type: 'create', name: 'Created by another window' });
+  await service.update({ type: 'move-session', sessionPath: first, groupId: three.id });
+  const before = await readFile(path, 'utf8');
+  for (const ids of [[one.id, two.id], [one.id, two.id, two.id], [one.id, two.id, 'unknown']]) {
+    await assert.rejects(service.update({ type: 'reorder-groups', ids }), /分组顺序无效/);
+    assert.equal(await readFile(path, 'utf8'), before);
+  }
+  await service.update({ type: 'reorder-groups', ids: [one.id, three.id, two.id] });
+  const saved = await create().list();
+  assert.deepEqual(saved.map(group => group.id), [one.id, three.id, two.id]);
+  assert.deepEqual(saved[1].sessionPaths, [first]);
+});
+
 test('invalid requests and unknown sessions cannot change persisted groups', async (t) => {
   const { service, root, path, first, validated } = await fixture(t);
   const [one] = await service.update({ type: 'create', name: 'Group' });

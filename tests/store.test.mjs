@@ -885,6 +885,64 @@ test('the new slash command supersedes older navigation and clears its own pendi
   assert.equal(useChatStore.getState().error, 'new session failed');
 });
 
+test('ordinary input and stop stay blocked until session navigation completes', async () => {
+  const host = createBridge();
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+  const switching = deferred(), calls = [];
+  host.bridge.switchSession = () => switching.promise;
+  host.bridge.submitInput = async request => { calls.push(['submit', request]); return { state: 'accepted', id: request.id }; };
+  host.bridge.executeSlashCommand = async request => { calls.push(['slash', request]); };
+  host.bridge.abort = async () => { calls.push(['abort']); };
+  const navigating = useChatStore.getState().switchSession('other-session');
+  await assert.rejects(useChatStore.getState().send('original draft'));
+  await assert.rejects(useChatStore.getState().send('original draft', undefined, undefined, 'input-1'));
+  await assert.rejects(useChatStore.getState().send('/compact'));
+  await useChatStore.getState().abort();
+  assert.deepEqual(host.prompts, []);
+  assert.deepEqual(calls, [], 'neither old nor newly selected conversation receives a draft/stop while navigation is unresolved');
+  switching.resolve(); await navigating;
+  await useChatStore.getState().send('original draft', undefined, undefined, 'input-1');
+  assert.equal(calls[0][0], 'submit', 'the retained draft can be sent after navigation');
+});
+
+test('workspace navigation also blocks sending before the host announces its reset', async () => {
+  const host = createBridge();
+  useChatStore.getState().setBridge(host.bridge);
+  await settle();
+  const switching = deferred();
+  host.bridge.switchWorkspace = () => switching.promise;
+  const navigating = useChatStore.getState().switchWorkspace('D:\\another-project');
+  assert.equal(useChatStore.getState().status, 'idle');
+  await assert.rejects(useChatStore.getState().send('belongs to the original workspace'));
+  assert.deepEqual(host.prompts, []);
+  switching.resolve(); await navigating;
+});
+
+test('session loading indicators from a replaced bridge never leak into the replacement bridge', async () => {
+  const original = createBridge();
+  useChatStore.getState().setBridge(original.bridge);
+  await settle();
+  const obsolete = deferred();
+  original.bridge.switchSession = () => obsolete.promise;
+  const oldSelection = useChatStore.getState().switchSession('old-bridge-session');
+  const replacement = createBridge();
+  useChatStore.getState().setBridge(replacement.bridge);
+  await settle();
+  const current = deferred();
+  replacement.bridge.switchSession = () => current.promise;
+  const newSelection = useChatStore.getState().switchSession('new-bridge-session');
+  current.resolve(); await newSelection;
+  assert.equal(useChatStore.getState().sessionLoading, false, 'an unfinished request owned by the old bridge cannot keep the new chat hidden');
+  const later = deferred();
+  replacement.bridge.switchSession = () => later.promise;
+  const laterSelection = useChatStore.getState().switchSession('later-session');
+  obsolete.resolve(); await oldSelection;
+  assert.equal(useChatStore.getState().sessionLoading, true, 'settling an obsolete request cannot dismiss a current loading indicator');
+  later.resolve(); await laterSelection;
+  assert.equal(useChatStore.getState().sessionLoading, false);
+});
+
 test('late workspace list and session refresh failures do not leak into a newer navigation', async () => {
   const host = createBridge();
   useChatStore.getState().setBridge(host.bridge);
@@ -991,6 +1049,9 @@ test('an abort failure cannot overwrite a newer session while current abort fail
   host.bridge.abort = async () => { throw new Error('current abort failure'); };
   await useChatStore.getState().abort();
   assert.equal(useChatStore.getState().error, 'current abort failure');
+  host.bridge.abort = async () => {};
+  await useChatStore.getState().abort();
+  assert.equal(useChatStore.getState().error, null, 'retrying a successful stop clears the previous failure');
 });
 
 test('out-of-order workspace refreshes retain the latest list and ignore obsolete failures', async () => {

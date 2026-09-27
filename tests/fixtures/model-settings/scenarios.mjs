@@ -6,6 +6,9 @@ export default async function runScenarios(review) {
   const modelRow = '[data-model-id="review-reasoner"]';
   const customModels = 'document.querySelectorAll("[data-model-id]").length';
   const saveCalls = 'window.__modelReview.calls.filter(call => call.name === "saveCustomProvider")';
+  const templatesDialog = 'dialog[open][data-model-dialog="templates"]';
+  const credentialsDialog = 'dialog[open][data-model-dialog="credentials"]';
+  const waitForTemplates = () => review.waitFor(`Boolean(document.querySelector(${JSON.stringify(templatesDialog)}))`);
   const selectGateway = async () => {
     await review.click(gateway);
     await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(connection)}))`);
@@ -21,9 +24,9 @@ export default async function runScenarios(review) {
   await review.waitFor('window.__modelReview?.ready === true');
   await review.click('.pd-settings-entry');
   await review.clickText('.pd-settings-nav button', '模型管理');
-  await review.waitFor('document.querySelectorAll("[data-provider]").length === 3');
+  await review.waitFor('document.querySelectorAll("[data-provider]").length === 2');
   await review.assert('document.querySelector("[data-provider-group=configured] [data-provider=openai]") !== null', 'Configured providers are grouped');
-  await review.assert('document.querySelector("[data-provider-group=unconfigured] [data-provider=anthropic]") !== null', 'Unconfigured providers are grouped');
+  await review.assert('document.querySelector("[data-provider=anthropic], [data-provider-group=unconfigured], [data-add-provider=anthropic]") === null', 'Unconfigured providers are absent until opening Add provider');
   await selectGateway();
   if (process.argv.includes('--trace-inputs')) await review.evaluate('window.__modelReview.traceInputs()');
   const oneConnection = (stage) => review.assert(`document.querySelectorAll(${JSON.stringify(connection)}).length === 1 && document.querySelector(${JSON.stringify(connection)}).isConnected`, `Exactly one connected provider form: ${stage}`);
@@ -40,13 +43,22 @@ export default async function runScenarios(review) {
       await review.assert('document.documentElement.scrollWidth <= innerWidth', `No page horizontal overflow: ${theme} ${width}`);
       await review.record(`layout-${theme}-${width}`, `(() => { const selectors = ['.pd-settings-dialog','.pd-model-provider-sidebar','.pd-model-provider-detail']; return Object.fromEntries(selectors.map(selector => {const element = document.querySelector(selector); const box = element.getBoundingClientRect(); return [selector, {x:box.x,y:box.y,width:box.width,height:box.height,scrollWidth:element.scrollWidth,clientWidth:element.clientWidth}]})); })()`);
       await review.screenshot(`01-${theme}-${width}-custom-provider`);
+      await review.click('[data-action="add-provider"]');
+      await waitForTemplates();
+      await review.assert(`(() => {const dialog=document.querySelector(${JSON.stringify(templatesDialog)}); const custom=dialog.querySelector('[data-template=custom]'); const grid=dialog.querySelector('.pd-model-template-grid'); const cards=[...grid.querySelectorAll('button')]; const box=custom.getBoundingClientRect(); return !grid.contains(custom) && cards.length>0 && cards.every(card=>{const other=card.getBoundingClientRect(); return other.top>=box.bottom && box.width>other.width && box.height>other.height;});})()`, `Custom provider stands alone above larger than the other cards: ${theme} ${width}`);
+      await review.assert('document.documentElement.scrollWidth <= innerWidth', `Add provider has no page horizontal overflow: ${theme} ${width}`);
+      await review.screenshot(`01-${theme}-${width}-add-provider`);
+      await review.click(`${templatesDialog} .pd-model-dialog-header button`);
+      await noOpenModelDialog();
     }
   }
   await review.viewport(1440, 1000);
+  }
 
   // Template-to-create changes the native dialog content and focuses its first input.
   await review.click('[data-action="add-provider"]');
-  await review.waitFor('Boolean(document.querySelector("dialog[open][data-model-dialog=templates]"))');
+  await waitForTemplates();
+  await review.assert(`document.querySelector(${JSON.stringify(`${templatesDialog} [data-add-provider="anthropic"]`)}) !== null && document.querySelector('[data-provider=anthropic]') === null`, 'Unconfigured Anthropic appears only in the Add provider dialog');
   await review.click('dialog[open] [data-template="custom"]');
   await review.waitFor('Boolean(document.querySelector("dialog[open][data-model-dialog=create]"))');
   await dialogCentered('create');
@@ -54,7 +66,44 @@ export default async function runScenarios(review) {
   await review.screenshot('02-create-provider-focus');
   await review.click('dialog[open][data-model-dialog="create"] .pd-model-dialog-header button');
   await noOpenModelDialog();
-  }
+
+  // Returning to the provider picker protects a credential draft without writing it.
+  await review.click('[data-action="add-provider"]');
+  await waitForTemplates();
+  await review.click(`${templatesDialog} [data-add-provider="anthropic"]`);
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(credentialsDialog)}))`);
+  await dialogCentered('credentials');
+  const anthropicKey = `${credentialsDialog} input#pd-api-key-anthropic`;
+  const beforeBackCredentialSaves = await review.evaluate('window.__modelReview.calls.filter(call=>call.name==="setProviderApiKey").length');
+  await review.fill(anthropicKey, 'fixture-anthropic-draft');
+  await review.click(`${credentialsDialog} [data-action="back-to-providers"]`);
+  await waitForGuard();
+  await keepEditing();
+  await review.assert(`document.querySelector(${JSON.stringify(anthropicKey)}).value === 'fixture-anthropic-draft'`, 'Keeping a credential draft stays in its configuration dialog');
+  await review.click(`${credentialsDialog} [data-action="back-to-providers"]`);
+  await waitForGuard();
+  await discard();
+  await waitForTemplates();
+  await review.assert(`window.__modelReview.calls.filter(call=>call.name==="setProviderApiKey").length === ${beforeBackCredentialSaves}`, 'Discarding a credential draft to return to Add provider makes no write');
+  await review.click(`${templatesDialog} [data-add-provider="anthropic"]`);
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(anthropicKey)}))`);
+  await review.assert(`document.querySelector(${JSON.stringify(anthropicKey)}).value === ''`, 'Reopening provider configuration does not resurrect the discarded credential');
+  await review.fill(anthropicKey, 'fixture-anthropic-configured-key');
+  await review.click(`${credentialsDialog} button[type="submit"]`);
+  await noOpenModelDialog();
+  await review.waitFor('Boolean(document.querySelector("[data-provider=anthropic]"))');
+  await review.assert('document.querySelectorAll("[data-provider]").length === 3 && window.__modelReview.providers.find(provider=>provider.provider==="anthropic").configured', 'Saving a credential closes configuration and adds the provider to the main list');
+  await review.click('[data-provider="anthropic"]');
+  await review.waitFor('Boolean(document.querySelector(".pd-model-settings-credentials input#pd-api-key-anthropic"))');
+  await review.click('.pd-model-settings-credentials .pd-settings-remove');
+  await review.waitFor('document.querySelector("[data-provider=anthropic]") === null');
+  await review.assert('document.querySelectorAll("[data-provider]").length === 2', 'Removing the stored credential removes the unconfigured provider from the main list');
+  await review.click('[data-action="add-provider"]');
+  await waitForTemplates();
+  await review.assert(`Boolean(document.querySelector(${JSON.stringify(`${templatesDialog} [data-add-provider="anthropic"]`)}))`, 'The provider returns to Add provider after its credential is removed');
+  await review.click(`${templatesDialog} .pd-model-dialog-header button`);
+  await noOpenModelDialog();
+  await selectGateway();
 
   // Failure keeps the model draft; cancellation does not call the bridge again.
   await review.click(`${modelRow} [data-action="edit-model"]`);
@@ -180,16 +229,116 @@ export default async function runScenarios(review) {
   await selectGateway();
   await review.assert(`document.querySelector(${JSON.stringify(credentialInput)}).value === ''`, 'Reopening does not resurrect discarded secret');
 
-  // Running agent gates writes; the active model cannot be disabled even idle.
+  // Running agent still permits new providers while protecting session settings.
   await review.click('[data-provider="openai"]');
   await review.assert('document.querySelector("[data-model-id=gpt-review] [data-action=toggle-model]").disabled === true', 'The current model cannot be disabled');
   await selectGateway();
   await review.evaluate('window.__modelReview.snapshot.status = "busy"; window.__modelReview.emitAgent({type:"status",status:"busy"})');
   await review.settle();
   await review.assert(`document.querySelector(${JSON.stringify('[data-field="provider.baseUrl"]')}).disabled === true`, 'Busy state disables connection mutation');
-  await review.assert('[...document.querySelectorAll("[data-action=add-model],[data-action=edit-model],[data-action=toggle-model],[data-action=discover-models],[data-action=add-provider]")].every(element=>element.disabled)', 'Busy state disables model and provider mutations');
+  await review.assert('[...document.querySelectorAll("[data-action=add-model],[data-action=edit-model],[data-action=toggle-model],[data-action=discover-models],[data-action=use-model],[data-action=remove-provider]")].every(element=>element.disabled)', 'Busy state protects existing models, connections, and provider removal');
+  await review.assert('document.querySelector("[data-action=add-provider]").disabled === false', 'Busy state permits adding a new provider');
   await review.screenshot('05-busy-gated-controls');
+  await review.click('[data-action="add-provider"]');
+  await review.click('dialog[open] [data-template="custom"]');
+  const createDialog = 'dialog[open][data-model-dialog="create"]';
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(createDialog)}))`);
+  await review.fill(`${createDialog} [data-field="provider.id"]`, 'created-during-chat');
+  await review.fill(`${createDialog} [data-field="provider.name"]`, '聊天期间新增供应商');
+  await review.fill(`${createDialog} [data-field="provider.baseUrl"]`, 'https://during-chat.example.invalid/v1');
+  await review.fill(`${createDialog} [data-field="provider.apiKey"]`, 'fixture-running-provider-key');
+  await review.evaluate('window.__modelReview.discovery = {models:[{id:"busy-import",name:"运行中导入模型",contextWindow:128000,maxTokens:8192,input:["text"],reasoning:false}],warnings:[]}');
+  await review.click(`${createDialog} [data-action="fetch-models"]`);
+  await review.waitFor('Boolean(document.querySelector("dialog[open] [data-import-model=busy-import]"))');
+  await review.screenshot('06-create-provider-during-chat');
+  await review.click(`${createDialog} [data-action="save-provider"]`);
+  await noOpenModelDialog();
+  await review.waitFor('Boolean(document.querySelector("[data-provider=created-during-chat]"))');
+  await review.assert('window.__modelReview.providers.find(provider=>provider.provider==="created-during-chat")?.configured === true', 'A provider and its credential can be saved while the conversation is busy');
+  await review.assert('window.__modelReview.providers.find(provider=>provider.provider==="created-during-chat")?.models[0].id === "busy-import"', 'Discovery in a new provider form remains available during a conversation');
+  await review.assert('window.__modelReview.snapshot.status === "busy" && window.__modelReview.snapshot.modelProvider === "openai" && window.__modelReview.snapshot.model === "gpt-review" && window.__modelReview.snapshot.thinkingLevel === "medium"', 'Adding a provider does not interrupt the task or switch its model or thinking level');
+  await review.assert('document.querySelector("[data-action=use-model]").disabled === true && document.querySelector("[data-action=remove-provider]").disabled === true', 'Newly created providers cannot switch the running model or bypass removal protection');
+  await review.screenshot('07-created-provider-chat-running');
+  await review.click('[data-action="add-provider"]');
+  await review.click('dialog[open] [data-template="custom"]');
+  await review.fill(`${createDialog} [data-field="provider.id"]`, 'saved-draft-during-chat');
+  await review.fill(`${createDialog} [data-field="provider.baseUrl"]`, 'https://draft-during-chat.example.invalid/v1');
+  await review.click(`${createDialog} [data-action="fetch-models"]`);
+  await review.waitFor('Boolean(document.querySelector("dialog[open] [data-import-model=busy-import]"))');
+  await review.click(`${createDialog} .pd-model-dialog-header button`);
+  await waitForGuard();
+  await review.assert('document.querySelector("[data-action=save-model-draft-and-leave]").disabled === false', 'A new provider draft can be saved when leaving its editor during a task');
+  await review.click('[data-action="save-model-draft-and-leave"]');
+  await noOpenModelDialog();
+  await review.waitFor('window.__modelReview.providers.some(provider=>provider.provider==="saved-draft-during-chat")');
+  await review.assert('document.querySelector("[data-provider=saved-draft-during-chat]") === null', 'A new provider without credentials stays out of the configured list');
+  await review.assert('window.__modelReview.snapshot.status === "busy"', 'Saving a provider draft while leaving its editor keeps the task running');
+  await review.click('[data-action="add-provider"]');
+  await waitForTemplates();
+  await review.assert(`Boolean(document.querySelector(${JSON.stringify(`${templatesDialog} [data-add-provider="saved-draft-during-chat"]`)}))`, 'A saved provider without credentials remains available through Add provider');
+  await review.click(`${templatesDialog} .pd-model-dialog-header button`);
+  await noOpenModelDialog();
+  await review.click('[data-provider="created-during-chat"]');
   await review.evaluate('window.__modelReview.snapshot.status = "idle"; window.__modelReview.emitAgent({type:"status",status:"idle"})');
   await review.settle();
   await review.assert('document.querySelector("[data-action=add-model]").disabled === false', 'Controls recover after agent becomes idle');
+
+  // Unconfigured custom providers retain connection maintenance and removal in Add provider.
+  const setupConnection = `${credentialsDialog} [data-provider-editor="edit"]`;
+  const setupUrl = `${setupConnection} [data-field="provider.baseUrl"]`;
+  await review.click('[data-action="add-provider"]');
+  await waitForTemplates();
+  await review.click(`${templatesDialog} [data-add-provider="saved-draft-during-chat"]`);
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(setupConnection)}))`);
+  await review.fill(setupUrl, 'https://maintained-draft.example.invalid/v1');
+  await review.click(`${setupConnection} [data-action="save-connection"]`);
+  await review.waitFor('window.__modelReview.providers.find(provider=>provider.provider==="saved-draft-during-chat")?.baseUrl === "https://maintained-draft.example.invalid/v1"');
+  await review.assert(`Boolean(document.querySelector(${JSON.stringify(setupConnection)})) && document.querySelector('[data-provider=saved-draft-during-chat]') === null`, 'Saving an unconfigured custom connection keeps its Add provider editor open and its main-list entry hidden');
+  const beforeSetupDiscard = await review.evaluate(`${saveCalls}.length`);
+  await review.fill(setupUrl, 'https://discarded-setup.example.invalid/v1');
+  await review.click(`${credentialsDialog} [data-action="back-to-providers"]`);
+  await waitForGuard();
+  await discard();
+  await waitForTemplates();
+  await review.assert(`${saveCalls}.length === ${beforeSetupDiscard}`, 'Discarding an unconfigured custom connection on return makes no write');
+  await review.click(`${templatesDialog} [data-add-provider="saved-draft-during-chat"]`);
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(setupConnection)}))`);
+  await review.assert(`document.querySelector(${JSON.stringify(setupUrl)}).value === 'https://maintained-draft.example.invalid/v1'`, 'Reopening an unconfigured custom provider restores its saved connection');
+  await review.click(`${credentialsDialog} [data-action="remove-provider"]`);
+  await review.waitFor('Boolean(document.querySelector("dialog[open] [data-action=confirm-remove]"))');
+  await review.click('dialog[open] [data-action="confirm-remove"]');
+  await review.waitFor('!window.__modelReview.providers.some(provider=>provider.provider==="saved-draft-during-chat")');
+  await noOpenModelDialog();
+  await selectGateway();
+
+  // Removing credentials can hide the selected provider, so it must protect connection drafts.
+  const beforeGuardedRemoval = await review.evaluate('window.__modelReview.calls.filter(call=>call.name==="removeProviderCredential").length');
+  await review.fill(connectionUrl, 'https://credential-removal-draft.example.invalid/v1');
+  await review.click('.pd-model-provider-detail .pd-settings-remove');
+  await waitForGuard();
+  await review.assert(`window.__modelReview.calls.filter(call=>call.name==="removeProviderCredential").length === ${beforeGuardedRemoval}`, 'Credential removal waits for the connection draft guard');
+  await keepEditing();
+  await review.assert(`document.querySelector(${JSON.stringify(connectionUrl)}).value === 'https://credential-removal-draft.example.invalid/v1'`, 'Keeping the connection draft after credential removal preserves its URL');
+  await review.assert(`window.__modelReview.calls.filter(call=>call.name==="removeProviderCredential").length === ${beforeGuardedRemoval}`, 'Keeping the connection draft cancels credential removal');
+  await review.click('[data-action="cancel-connection"]');
+  await review.assert(`document.querySelector(${JSON.stringify(connectionUrl)}).value === 'https://models.example.invalid/v1' && window.__modelReview.providers.find(provider=>provider.provider==='review-gateway').configured`, 'Cancelling the connection draft retains the original connection and credential');
+
+  // An entirely unconfigured catalog still exposes every provider through Add provider.
+  const configuredProviderIds = await review.evaluate('window.__modelReview.providers.filter(provider=>provider.configured).map(provider=>provider.provider)');
+  for (const provider of configuredProviderIds || []) {
+    await review.click(`[data-provider="${provider}"]`);
+    await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(`.pd-model-provider-detail input#pd-api-key-${provider}`)}))`);
+    await review.click('.pd-model-provider-detail .pd-settings-remove');
+    await review.waitFor(`document.querySelector(${JSON.stringify(`[data-provider="${provider}"]`)}) === null`);
+  }
+  await review.assert('document.querySelectorAll("[data-provider]").length === 0 && window.__modelReview.providers.every(provider=>!provider.configured)', 'Removing all credentials leaves an empty configured provider list');
+  await review.assert('document.querySelector("[data-action=add-provider]").disabled === false', 'Add provider remains enabled with no configured providers');
+  await review.screenshot('08-empty-configured-providers');
+  await review.click('[data-action="add-provider"]');
+  await waitForTemplates();
+  await review.assert(`Boolean(document.querySelector(${JSON.stringify(`${templatesDialog} [data-template="custom"]`)})) && Boolean(document.querySelector(${JSON.stringify(`${templatesDialog} .pd-model-template-grid [data-template]`)}))`, 'The empty configured list still offers custom creation and provider templates');
+  await review.assert(`(() => {const listed=new Set([...document.querySelectorAll(${JSON.stringify(`${templatesDialog} [data-add-provider]`)})].map(element=>element.dataset.addProvider)); return listed.size===window.__modelReview.providers.length && window.__modelReview.providers.every(provider=>listed.has(provider.provider));})()`, 'Add provider exposes all unconfigured built-in and custom providers');
+  await review.screenshot('09-all-unconfigured-providers');
+  await review.click(`${templatesDialog} .pd-model-dialog-header button`);
+  await noOpenModelDialog();
 }

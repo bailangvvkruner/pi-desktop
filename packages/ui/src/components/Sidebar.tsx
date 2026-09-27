@@ -13,6 +13,7 @@ import { operationFeedback, runWithFeedback } from '../operationFeedback';
 
 interface SidebarProps {
 	open: boolean;
+	projectRevealRequest?: number;
 	narrow: boolean;
 	onToggle(): void;
 	onNavigate(): void;
@@ -26,7 +27,7 @@ interface SidebarProps {
 	history: HistoryNavigationProps;
 }
 
-export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings, onOpenSearch, searchOpen, automationsOpen, onOpenAutomations, pluginsOpen, onOpenPlugins, history }: SidebarProps) {
+export function Sidebar({ open, projectRevealRequest = 0, narrow, onToggle, onNavigate, onOpenSettings, onOpenSearch, searchOpen, automationsOpen, onOpenAutomations, pluginsOpen, onOpenPlugins, history }: SidebarProps) {
 	const { t, locale } = useT();
 	const bridge = useChatStore((s) => s.bridge);
 	const platform = useChatStore((s) => s.appInfo?.platform);
@@ -122,7 +123,7 @@ export function Sidebar({ open, narrow, onToggle, onNavigate, onOpenSettings, on
 			<button type="button" className={`pd-sidebar-plugins pd-nav-row${pluginsOpen ? ' is-active' : ''}`} aria-label={t('sidebar.plugins')} aria-current={pluginsOpen ? 'page' : undefined} onClick={onOpenPlugins}><Icon name="plugins" /><span className="pd-sidebar-detail">{t('sidebar.plugins')}</span></button>
 		</div>
 		<div className="pd-sidebar-session-content" aria-hidden={!open} inert={!open}>
-			<SidebarSessionPanel visible={open} onNavigate={onNavigate} onError={reportActionError} />
+			<SidebarSessionPanel visible={open} projectRevealRequest={projectRevealRequest} onNavigate={onNavigate} onError={reportActionError} />
 		</div>
 		<div className="pd-sidebar-footer">
 			{actionError && <div className="pd-sidebar-error pd-sidebar-detail" role="alert">{actionError}</div>}

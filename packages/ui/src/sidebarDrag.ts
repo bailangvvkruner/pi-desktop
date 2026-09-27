@@ -1,5 +1,14 @@
 type SidebarOrders = ReadonlyMap<string, readonly string[]>;
 
+/** Project positions are independent of pin membership; crossing sections is not a pin action. */
+export function moveSidebarProject(order: readonly string[], path: string, target: string, edge: 'before' | 'after', pinned: ReadonlySet<string>): string[] {
+  if (path === target || !order.includes(path) || !order.includes(target) || pinned.has(path) !== pinned.has(target)) return [...order];
+  const next = order.filter(item => item !== path);
+  const index = next.indexOf(target) + Number(edge === 'after');
+  next.splice(index, 0, path);
+  return next;
+}
+
 /** The insertion index is relative to the target after the dragged path is removed. */
 export function moveSidebarSession(orders: SidebarOrders, path: string, target: string, index: number): Map<string, string[]> {
   const next = new Map([...orders].map(([key, paths]) => [key, [...paths]]));

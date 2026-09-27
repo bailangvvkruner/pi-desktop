@@ -161,3 +161,17 @@ test('cancelling an authentication preflight prevents later dispatch and preserv
   await f.service.dispose(); f.service = new f.AgentService(); await f.service.init({ cwd: f.cwd, sessionPath: path });
   assert.deepEqual(f.service.getSnapshot().runs, snapshot.runs);
 });
+
+test('disposing a runtime during authentication prevents its pending prompt from starting after shutdown', async t => {
+  const f = await fixture(t), entered = deferred(), release = deferred(); let calls = 0;
+  f.session.modelRuntime.hasConfiguredAuth = () => false;
+  f.session.modelRuntime.checkAuth = async () => { entered.resolve(); await release.promise; return 'local-fixture'; };
+  f.session.agent.streamFunction = () => { calls++; throw new Error('A disposed runtime must not reach a provider'); };
+  const pending = f.service.prompt('Pending when the application shuts down').catch(error => error);
+  await entered.promise;
+  await f.service.dispose(); release.resolve();
+  const result = await pending;
+  await f.session.waitForIdle(); await tick();
+  assert.equal(calls, 0, 'late authentication cannot create an agent loop after the runtime has been disposed');
+  assert.ok(result instanceof Error, 'the pending acceptance must reject instead of reporting a successful send');
+});

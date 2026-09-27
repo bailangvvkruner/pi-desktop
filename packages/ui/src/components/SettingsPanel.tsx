@@ -15,6 +15,7 @@ import type { ThemeColorPreferences } from '../themeColors';
 import type { ModelManagementTarget } from '../modelManagement';
 import { DEFAULT_UI_FONT_SIZE, UI_FONT_SIZE_MAX, UI_FONT_SIZE_MIN, applyUiFontSize, readUiFontSize, saveUiFontSize } from '../uiFontSize';
 import { createSettingsLeaveGuard, type SettingsDraftState as DraftState, type SettingsLeaveRequest } from '../settingsLeaveGuard';
+import { useBusyInputBehavior } from '../busyInputBehavior';
 
 export type ThemePreference = 'system' | 'dark' | 'light';
 type SettingsPage = 'general' | 'appearance' | 'personalization' | 'model' | 'shortcuts' | 'updates' | 'data' | 'mcp';
@@ -45,7 +46,7 @@ function authSourceLabel({ configured, source }: UiProviderAuthStatus, t: Transl
 	}
 }
 
-function ProviderCredentialRow({ provider, configured, source, supportsApiKey, onDraftStateChange }: UiProviderAuthStatus & { onDraftStateChange?(state: DraftState): void }) {
+function ProviderCredentialRow({ provider, configured, source, supportsApiKey, onDraftStateChange, onRemoveRequest }: UiProviderAuthStatus & { onDraftStateChange?(state: DraftState): void; onRemoveRequest?(remove: () => void): void }) {
 	const { t } = useT();
 	const [secret, setSecret] = useState('');
 	const [pending, setPending] = useState(false);
@@ -59,6 +60,7 @@ function ProviderCredentialRow({ provider, configured, source, supportsApiKey, o
 	const saveRef = useRef<() => Promise<boolean>>(async () => false);
 	const saveDraft = useCallback(() => saveRef.current(), []);
 	useEffect(() => { onDraftStateChange?.({ dirty: Boolean(secret), saving: pending, save: secret ? saveDraft : undefined }); }, [secret, pending, saveDraft, onDraftStateChange]);
+	useEffect(() => () => onDraftStateChange?.({ dirty: false, saving: false }), [onDraftStateChange]);
 
 	async function save(event?: FormEvent<HTMLFormElement>): Promise<boolean> {
 		event?.preventDefault();
@@ -107,7 +109,7 @@ function ProviderCredentialRow({ provider, configured, source, supportsApiKey, o
 					<button type="submit" className="pd-settings-primary" disabled={!secret.trim() || !canChange}>{t(pending ? 'settings.processing' : 'settings.save')}</button>
 				</div>
 			</form> : <p className="pd-provider-method-note">{t('settings.unsupportedKey')}</p>}
-			{source === 'stored' && <button type="button" className="pd-settings-remove" onClick={() => void remove()} disabled={!canChange}>{t('settings.removeKey')}</button>}
+			{source === 'stored' && <button type="button" className="pd-settings-remove" onClick={() => onRemoveRequest ? onRemoveRequest(() => { void remove(); }) : void remove()} disabled={!canChange}>{t('settings.removeKey')}</button>}
 			{feedback && <p className="pd-settings-feedback" role="status">{feedback}</p>}
 		</div>
 	);
@@ -124,6 +126,8 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 		setDraftState((previous) => previous.dirty === next.dirty && previous.saving === next.saving && Boolean(previous.save) === Boolean(next.save) ? previous : next);
 	}, [leaveGuard]);
 	const [uiFontSize, setUiFontSize] = useState(readUiFontSize);
+	const [busyInputBehavior, setBusyInputBehavior] = useBusyInputBehavior();
+	const [busyInputSaveFailed, setBusyInputSaveFailed] = useState(false);
 	const [contentFonts, setContentFonts] = useState(() => ({ code: readContentFontSize('code'), command: readContentFontSize('command') }));
 	const [savingLeave, setSavingLeave] = useState(false);
 	const [leaveError, setLeaveError] = useState(false);
@@ -331,6 +335,12 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 								<button type="button" className={locale === 'zh-CN' ? 'is-selected' : ''} aria-pressed={locale === 'zh-CN'} onClick={() => setLocale('zh-CN')}>{t('settings.languageZh')}</button>
 								<button type="button" className={locale === 'en-US' ? 'is-selected' : ''} aria-pressed={locale === 'en-US'} onClick={() => setLocale('en-US')}>{t('settings.languageEn')}</button>
 						</div>
+						<div className="pd-settings-section-head"><h3>{t('settings.busyInputBehavior')}</h3><p>{t('settings.busyInputBehaviorDescription', { modifier: appInfo?.platform === 'darwin' ? 'Cmd' : 'Ctrl' })}</p></div>
+						<div className="pd-language-options" data-setting="busy-input-behavior" role="group" aria-label={t('settings.busyInputBehavior')}>
+							<button type="button" className={busyInputBehavior === 'followUp' ? 'is-selected' : ''} aria-pressed={busyInputBehavior === 'followUp'} onClick={() => setBusyInputSaveFailed(!setBusyInputBehavior('followUp'))}>{t('settings.busyInputQueue')}</button>
+							<button type="button" className={busyInputBehavior === 'steer' ? 'is-selected' : ''} aria-pressed={busyInputBehavior === 'steer'} onClick={() => setBusyInputSaveFailed(!setBusyInputBehavior('steer'))}>{t('settings.busyInputSteer')}</button>
+						</div>
+						{busyInputSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.busyInputSaveFailed')}</p>}
 						<div className="pd-settings-section-head"><h3>{t('settings.notifications')}</h3><p>{t('settings.notificationsDescription')}</p></div>
 						{desktopSettingsError && <p role="alert">{desktopSettingsError}</p>}
 						{desktopSettings && (
@@ -374,7 +384,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 							<div className="pd-settings-divider" />
 							<ColorThemeSettings themePreference={themePreference} preferences={colorPreferences} onChange={onColorPreferencesChange} saveFailed={colorSaveFailed} />
 						</>}
-						{page === 'model' && <><ModelSettingsPanel key={cwd} initialTarget={modelTarget} onDraftStateChange={reportDraftState} renderCredential={(provider: UiProviderAuthStatus, onDraftStateChange?: (state: DraftState) => void) => <ProviderCredentialRow key={provider.provider} {...provider} onDraftStateChange={onDraftStateChange} />} /><ModelTestPanel /></>}
+						{page === 'model' && <><ModelSettingsPanel key={cwd} initialTarget={modelTarget} onDraftStateChange={reportDraftState} renderCredential={(provider: UiProviderAuthStatus, onDraftStateChange?: (state: DraftState) => void, onRemoveRequest?: (remove: () => void) => void) => <ProviderCredentialRow key={provider.provider} {...provider} onDraftStateChange={onDraftStateChange} onRemoveRequest={onRemoveRequest} />} /><ModelTestPanel /></>}
 						{page === 'shortcuts' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.shortcuts')}</h2><p>{t('settings.shortcutsDescription')}</p></div>
 						<ShortcutSettings isMac={appInfo?.platform === 'darwin'} />

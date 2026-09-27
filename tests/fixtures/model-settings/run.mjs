@@ -169,6 +169,14 @@ try {
   const mouse = { x: 0, y: 0, down: false };
   const review = {
     evaluate, waitFor, settle,
+    rightClick: async (x, y) => {
+      assert(Number.isFinite(x) && Number.isFinite(y) && !mouse.down, 'Invalid context-menu click');
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 });
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'right', buttons: 2, clickCount: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'right', buttons: 0, clickCount: 1 });
+      Object.assign(mouse, { x, y }); logs.steps.push({ rightClick: { x, y } });
+      await settle();
+    },
     mouseDown: async (x, y) => {
       assert(Number.isFinite(x) && Number.isFinite(y) && !mouse.down, 'Invalid mouse press');
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 });

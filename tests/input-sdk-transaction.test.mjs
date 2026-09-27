@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -82,6 +82,42 @@ test('queue scopes reject stale reads and writes after navigation and preserve h
     await service?.dispose();
     if (saved.dir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = saved.dir;
     if (saved.offline === undefined) delete process.env.PI_OFFLINE; else process.env.PI_OFFLINE = saved.offline;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('completed extension commands and handled inputs never become recoverable queued prompts after restart', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-sdk-handled-input-')), cwd = join(root, 'workspace');
+  const extensions = join(cwd, '.pi', 'extensions'); mkdirSync(extensions, { recursive: true });
+  writeFileSync(join(extensions, 'handled-input.ts'), `export default pi => {
+    pi.registerCommand('handled-input', { handler: async () => { globalThis.__handledInputCalls++; } });
+    pi.on('input', async event => {
+      if (event.text === 'handled by input hook') { globalThis.__handledInputCalls++; return { action: 'handled' }; }
+    });
+  }`);
+  const saved = { dir: process.env.PI_CODING_AGENT_DIR, offline: process.env.PI_OFFLINE, calls: globalThis.__handledInputCalls };
+  process.env.PI_CODING_AGENT_DIR = join(root, 'agent'); process.env.PI_OFFLINE = '1'; globalThis.__handledInputCalls = 0;
+  let service;
+  try {
+    const { AgentService } = await import('../packages/agent/src/index.ts');
+    const createService = () => new AgentService(async () => ({ trusted: true, remember: false }));
+    service = createService(); await service.init({ cwd });
+    service.active.runtime.session.agent.streamFunction = () => { throw new Error('Handled input verification must never call a provider'); };
+    const { sessionId, sessionPath } = service.getSnapshot();
+    const requests = ['/handled-input', 'handled by input hook'].map(text => ({ id: randomUUID(), sessionId, text }));
+    for (const request of requests) { await service.submitInput(request); await new Promise(resolve => setImmediate(resolve)); }
+    assert.equal(globalThis.__handledInputCalls, 2);
+    assert.deepEqual(service.getSnapshot().messages, [], 'handled inputs have no user transcript row');
+    assert.deepEqual(service.getInputQueue().items, []);
+    await service.dispose(); service = createService(); await service.init({ cwd, sessionPath });
+    assert.deepEqual(service.getInputQueue().items, [], 'completed actions must not be offered for replay as recovered input');
+    for (const request of requests) assert.equal((await service.submitInput(request)).state, 'consumed', 'a lost-reply retry returns its terminal receipt');
+    assert.equal(globalThis.__handledInputCalls, 2);
+  } finally {
+    await service?.dispose();
+    if (saved.dir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = saved.dir;
+    if (saved.offline === undefined) delete process.env.PI_OFFLINE; else process.env.PI_OFFLINE = saved.offline;
+    if (saved.calls === undefined) delete globalThis.__handledInputCalls; else globalThis.__handledInputCalls = saved.calls;
     rmSync(root, { recursive: true, force: true });
   }
 });

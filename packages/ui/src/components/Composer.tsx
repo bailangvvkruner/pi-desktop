@@ -6,6 +6,7 @@ import { useT, type Translate } from '../i18n';
 import { useChatStore } from '../store';
 import { Icon } from './Icons';
 import { ComposerControls } from './ComposerControls';
+import { ExtensionDialogSlot } from './ExtensionDialogHost';
 import type { ModelManagementTarget } from '../modelManagement';
 import { HoverTooltip } from './HoverTooltip';
 import { ComposerContextPicker, type ComposerContextPickerHandle } from './ComposerContextPicker';
@@ -19,8 +20,7 @@ import { useConversationCopy } from '../conversationCopy';
 import { ImagePreviewDialog } from './ImagePreviewDialog';
 import type { InputFeatureBridge, UiStoredAttachment } from '../../../shared/src/inputFeatures';
 import { PersistedComposerDrafts } from '../persistedDrafts';
-
-type BusyBehavior = 'steer' | 'followUp';
+import { useBusyInputBehavior, type BusyInputBehavior as BusyBehavior } from '../busyInputBehavior';
 
 function draftStorageKey(cwd: string, sessionPath: string | null): string {
 	return `pi-desktop:draft:${encodeURIComponent(cwd)}:${encodeURIComponent(sessionPath ?? 'new')}`;
@@ -69,6 +69,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const [quotes, setQuotes] = useState<{ key: string; block: string; source: string }[]>([]);
 	const bridge = useChatStore((s) => s.bridge);
 	const status = useChatStore((s) => s.status);
+	const navigating = useChatStore((s) => s.navigationPending || s.sessionLoading);
 	const queuedMessages = useChatStore((s) => s.queuedMessages);
 	const platform = useChatStore((s) => s.appInfo?.platform);
 	const cwd = useChatStore((s) => s.cwd);
@@ -78,9 +79,12 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const abort = useChatStore((s) => s.abort);
 	const retryAgent = useChatStore((s) => s.retryAgent);
 	const draftKey = draftStorageKey(cwd, sessionPath);
+	const stopScopeKey = JSON.stringify([cwd, sessionPath, sessionId]);
 	const [text, setText] = useState(() => readDraft(draftKey));
 	const [attachments, setAttachments] = useState<UiAttachment[]>([]);
 	const [sending, setSending] = useState(false);
+	const stopRequestsRef = useRef(new Map<string, { bridge: typeof bridge }>());
+	const [stopRequests, setStopRequests] = useState(() => new Map(stopRequestsRef.current));
 	const [retrying, setRetrying] = useState(false);
 	const [attaching, setAttaching] = useState(false);
 	const [submissionError, setSubmissionError] = useState<string | null>(null);
@@ -88,7 +92,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const [missingAttachments, setMissingAttachments] = useState<UiStoredAttachment[]>([]);
 	const [queueEditorTarget, setQueueEditorTarget] = useState<HTMLDivElement | null>(null);
 	const [queueEditing, setQueueEditing] = useState(false);
-	const [defaultBusyBehavior, setDefaultBusyBehavior] = useState<BusyBehavior>(() => { try { return localStorage.getItem('pi-desktop:busy-input-behavior') === 'steer' ? 'steer' : 'followUp'; } catch { return 'followUp'; } });
+	const [defaultBusyBehavior, setDefaultBusyBehavior] = useBusyInputBehavior();
 	const [draftRestoreError, setDraftRestoreError] = useState(false);
 	const [restoreRetry, setRestoreRetry] = useState(0);
 	const [pdfCount, setPdfCount] = useState(0);
@@ -118,9 +122,11 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const dismissedMention = useRef<{ start: number; prefix: string } | null>(null);
 	const composingRef = useRef(false);
 	const busy = status === 'busy';
-	const steerShortcut = platform === 'darwin' ? '⌘Enter' : 'Ctrl+Enter';
-	const unavailable = status === 'starting' || status === 'uninitialized' || status === 'error';
-	const placeholder = busy && defaultBusyBehavior === 'steer' ? (zh ? '继续输入，补充引导当前任务…' : 'Add instructions to steer the current task…') : t(status === 'error' ? 'composer.connectionErrorPlaceholder' : unavailable ? 'composer.connecting' : busy ? 'composer.busyPlaceholder' : 'composer.placeholder');
+	const alternateShortcut = platform === 'darwin' ? '⌘Enter' : 'Ctrl+Enter';
+	const stopping = bridge !== null && stopRequests.get(stopScopeKey)?.bridge === bridge;
+	const unavailable = navigating || status === 'starting' || status === 'uninitialized' || status === 'error';
+	const busyHint = t('composer.busyHint', { action: t(defaultBusyBehavior === 'followUp' ? 'composer.queueSend' : 'composer.steer'), alternate: t(defaultBusyBehavior === 'followUp' ? 'composer.steer' : 'composer.queueSend'), shortcut: alternateShortcut });
+	const placeholder = status === 'error' ? t('composer.connectionErrorPlaceholder') : unavailable ? t('composer.connecting') : busy ? busyHint : t('composer.placeholder');
 	const canSubmit = Boolean(text.trim() || attachments.length) && !sending && !attaching && !unavailable && !missingAttachments.length && !draftRestoreError;
 	const slashCatalogKey = JSON.stringify([cwd, sessionId]);
 	const slashOpen = slashTrigger !== null;
@@ -403,9 +409,26 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 		if (composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
 		if (slashTrigger && slashPickerRef.current?.handleKeyDown(event)) return;
 		if (contextPicker && pickerRef.current?.handleKeyDown(event)) return;
-		if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+		if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.nativeEvent.isComposing) return;
 		event.preventDefault();
 		void submit(busy && (event.ctrlKey || event.metaKey) ? defaultBusyBehavior === 'followUp' ? 'steer' : 'followUp' : undefined);
+	}
+
+	async function stopCurrentTask() {
+		const current = useChatStore.getState();
+		if (!bridge || current.status !== 'busy' || current.navigationPending || current.sessionLoading || stopRequestsRef.current.get(stopScopeKey)?.bridge === bridge) return;
+		const request = { bridge };
+		stopRequestsRef.current.set(stopScopeKey, request);
+		setStopRequests(new Map(stopRequestsRef.current));
+		setSubmissionError(null);
+		try { await abort(); }
+		catch (error) { if (useChatStore.getState().bridge === bridge && currentKeyRef.current === draftKey) setSubmissionError(error instanceof Error ? error.message : String(error)); }
+		finally {
+			if (stopRequestsRef.current.get(stopScopeKey) === request) {
+				stopRequestsRef.current.delete(stopScopeKey);
+				setStopRequests(new Map(stopRequestsRef.current));
+			}
+		}
 	}
 
 	async function retryConnection() {
@@ -426,12 +449,13 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	return (
 		<div className="pd-composer-dock">
 			<div className="pd-composer-wrap">
+				<ExtensionDialogSlot />
 				{submissionError && <div className="pd-composer-error" role="alert">{submissionError}</div>}
 				{draftWarning && <div className="pd-composer-error" role="status">{t('composer.draftWarning')}</div>}
 				{draftRestoreError && <button type="button" onClick={() => setRestoreRetry((value) => value + 1)}>{zh ? '重试恢复草稿' : 'Retry draft recovery'}</button>}
 				{missingAttachments.map((attachment) => <div className="pd-composer-error" role="alert" key={attachment.id}>{zh ? '草稿附件缺失，请重新添加或移除：' : 'Draft attachment missing. Add it again or remove it: '}{attachment.name}<button type="button" onClick={() => { const next = missingAttachments.filter((item) => item.id !== attachment.id); missingByKey.current.set(draftKey, next); setMissingAttachments(next); }}>{zh ? '移除' : 'Remove'}</button></div>)}
 				<div ref={changesSlotRef} className="pd-composer-changes-slot" />
-				<ComposerQueue key={`queue:${cwd}\0${sessionPath}\0${sessionId}`} scopeKey={`${cwd}\0${sessionPath}\0${sessionId}`} items={queuedMessages} editorTarget={queueEditorTarget} onEditingChange={onQueueEditingChange} defaultBehavior={defaultBusyBehavior} onToggleDefault={() => { const next = defaultBusyBehavior === 'followUp' ? 'steer' : 'followUp'; setDefaultBusyBehavior(next); try { localStorage.setItem('pi-desktop:busy-input-behavior', next); } catch { setSubmissionError(zh ? '发送偏好未能保存，下次启动将使用默认设置。' : 'Could not save the send preference for the next launch.'); } }} />
+				<ComposerQueue key={`queue:${cwd}\0${sessionPath}\0${sessionId}`} scopeKey={`${cwd}\0${sessionPath}\0${sessionId}`} items={queuedMessages} editorTarget={queueEditorTarget} onEditingChange={onQueueEditingChange} defaultBehavior={defaultBusyBehavior} onToggleDefault={() => { const next = defaultBusyBehavior === 'followUp' ? 'steer' : 'followUp'; if (!setDefaultBusyBehavior(next)) setSubmissionError(zh ? '发送偏好未能保存，下次启动将使用默认设置。' : 'Could not save the send preference for the next launch.'); }} />
 				<div ref={shellRef} className={`pd-composer-shell${queuedMessages.length ? ' has-queue' : ''}`} data-composer-layout="multiline" onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={onDrop}>
 					<div ref={setQueueEditorTarget} className="pd-queue-editor-slot" />
 					{header ? <div className="pd-composer-header">{header}</div> : null}
@@ -449,10 +473,9 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 						</div>
 						<div className="pd-composer-actions">
 							<ComposerControls onOpenModelManagement={onOpenModelManagement} hasImages={attachments.some((item) => item.kind === 'image')} />
-							{busy && <><HoverTooltip title={t('composer.stopTitle')}><button type="button" className="pd-composer-action" onClick={() => void abort().catch((error: unknown) => setSubmissionError(error instanceof Error ? error.message : String(error)))} aria-label={t('composer.stopTitle')}><Icon name="square" width="16" height="16" /><span>{t('composer.stop')}</span></button></HoverTooltip><HoverTooltip title={t(defaultBusyBehavior === 'followUp' ? 'composer.steer' : 'composer.queueSend')} description={t(defaultBusyBehavior === 'followUp' ? 'composer.queuedSteerDescription' : 'composer.queuedFollowUpDescription')} shortcut={steerShortcut}><button type="button" className="pd-composer-action pd-steer-action" onClick={() => void submit(defaultBusyBehavior === 'followUp' ? 'steer' : 'followUp')} disabled={!canSubmit} aria-label={t(defaultBusyBehavior === 'followUp' ? 'composer.steer' : 'composer.queueSend')}><Icon name={defaultBusyBehavior === 'followUp' ? 'steer' : 'queue'} width="15" height="15" /><span>{t(defaultBusyBehavior === 'followUp' ? 'composer.steer' : 'composer.queuedFollowUp')}</span></button></HoverTooltip></>}
 							{status === 'error' || retrying
 								? <button type="button" className="pd-send-button pd-composer-retry" onClick={() => void retryConnection()} disabled={retrying}><Icon name="refresh" width="15" height="15" /><span>{t(retrying ? 'composer.retryingConnection' : 'composer.retryConnection')}</span></button>
-								: <button type="button" className="pd-send-button" onClick={() => void submit()} disabled={!canSubmit} aria-label={t(busy ? defaultBusyBehavior === 'followUp' ? 'composer.queueSend' : 'composer.steer' : 'composer.send')} title={busy ? `${t(defaultBusyBehavior === 'followUp' ? 'composer.queueSend' : 'composer.steer')} (Enter)` : undefined}><Icon name={busy ? defaultBusyBehavior === 'followUp' ? 'queue' : 'steer' : 'arrowUp'} width="16" height="16" /></button>}
+								: <HoverTooltip title={t(busy ? stopping ? 'composer.stopping' : 'composer.stopTitle' : 'composer.send')} description={busy ? busyHint : undefined} shortcut={busy ? undefined : 'Enter'}><button type="button" className="pd-send-button" data-action={busy ? 'stop' : 'send'} onClick={() => void (busy ? stopCurrentTask() : submit())} disabled={busy ? stopping || navigating : !canSubmit} aria-label={t(busy ? stopping ? 'composer.stopping' : 'composer.stopTitle' : 'composer.send')} aria-busy={busy ? stopping : sending}><Icon name={busy ? 'square' : 'arrowUp'} width="16" height="16" /></button></HoverTooltip>}
 						</div>
 					</div>
 				</div>

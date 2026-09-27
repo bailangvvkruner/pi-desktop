@@ -4,7 +4,7 @@ import { MANAGEMENT_FEATURE_CHANNELS } from '@pidesktop/shared/managementFeature
 import { WORKBENCH_FEATURE_CHANNELS } from '@pidesktop/shared/workbenchFeatures';
 import { DATA_FEATURE_CHANNELS } from '@pidesktop/shared/dataFeatures';
 import { INPUT_FEATURE_CHANNELS } from '@pidesktop/shared/inputFeatures';
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiAppCommand, type UiAutomationSnapshot, type UiExtensionDialogRequest, type UiUpdateState, type WindowChromeState, type WorkspaceCommandEvent } from '@pidesktop/shared';
 import { unwrapIpcError } from './ipcErrors';
 
@@ -159,6 +159,11 @@ const bridge: AgentBridge = {
 	toggleMaximizeWindow: () => invoke(IPC_CHANNELS.windowToggleMaximize),
 	closeWindow: () => invoke(IPC_CHANNELS.windowClose),
 	pickWorkspace: () => invoke(IPC_CHANNELS.workspacePick),
+	addDroppedWorkspaces: async (files) => {
+		if (!Array.isArray(files) || files.length > 256) throw new Error('拖入的项目数量无效');
+		const paths = files.map((file) => webUtils.getPathForFile(file as Parameters<typeof webUtils.getPathForFile>[0])).filter(Boolean);
+		return invoke(IPC_CHANNELS.workspaceAddDropped, paths);
+	},
 	openWorkspaceFolder: (cwd) => invoke(IPC_CHANNELS.workspaceOpenFolder, cwd),
 	listWorkspaceEntries: (relativePath) => invoke(IPC_CHANNELS.workspaceListEntries, relativePath),
 	searchWorkspaceFiles: (query, options) => invoke(IPC_CHANNELS.workspaceSearchFiles, query, options),
@@ -183,7 +188,7 @@ const bridge: AgentBridge = {
 	onWorkspaceCommandEvent,
 	initAgent: (cwd) => invoke(IPC_CHANNELS.agentInit, cwd),
 	listWorkspaces: () => invoke(IPC_CHANNELS.agentListWorkspaces),
-	switchWorkspace: (cwd) => invoke(IPC_CHANNELS.workspaceSwitch, cwd),
+	switchWorkspace: (cwd, options) => invoke(IPC_CHANNELS.workspaceSwitch, cwd, options),
 		getDefaultWorkspace: () => invoke(IPC_CHANNELS.workspaceDefault),
 		removeWorkspace: (cwd) => invoke(IPC_CHANNELS.workspaceRemove, cwd),
 		listPinnedWorkspaces: () => invoke(IPC_CHANNELS.workspaceListPinned),

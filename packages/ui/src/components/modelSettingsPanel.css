@@ -193,7 +193,7 @@
 .pd-model-key-reveal:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* zcode-style provider template picker */
-.pd-model-template-picker { min-width: 0; }
+.pd-model-template-picker { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
 .pd-model-template-picker .pd-model-settings-subhead { margin-bottom: 8px; }
 .pd-model-template-picker .pd-model-settings-subhead h3 { margin: 0; color: var(--pd-text); font-size: var(--pd-font-caption); font-weight: 600; }
 .pd-model-template-picker > .pd-model-settings-notice { margin: 0 0 10px; }
@@ -204,5 +204,14 @@
 .pd-model-template-card > strong { overflow: hidden; font-size: var(--pd-font-caption); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .pd-model-template-card > code { overflow: hidden; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); text-overflow: ellipsis; white-space: nowrap; }
 .pd-model-template-card > span { color: var(--pd-text-subtle); font-size: var(--pd-font-xs); }
+.pd-model-template-card.is-custom { flex-direction: row; align-items: center; gap: 16px; width: 100%; min-height: 110px; padding: 22px; border-color: var(--pd-brand); background: var(--pd-selected); }
+.pd-model-template-custom-icon { display: grid; flex: 0 0 48px; width: 48px; height: 48px; place-items: center; border: 1px solid var(--pd-border); border-radius: 12px; background: var(--pd-surface); }
+.pd-model-template-card > .pd-model-template-custom-icon { color: var(--pd-brand); }
+.pd-model-template-custom-copy { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.pd-model-template-custom-copy > strong { color: var(--pd-text); font-size: var(--pd-font-lg); font-weight: 600; }
+.pd-model-template-custom-copy > span { font-size: var(--pd-font-sm); line-height: 1.5; overflow-wrap: anywhere; }
+.pd-model-template-options > h4, .pd-model-provider-setup > h4 { margin: 0 0 8px; color: var(--pd-text); font-size: var(--pd-font-caption); font-weight: 600; }
+.pd-model-template-options > .pd-model-settings-notice { margin-bottom: 12px; }
+.pd-model-provider-setup { display: flex; flex-direction: column; gap: 14px; }
 @media (max-width: 640px) { .pd-model-template-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (prefers-reduced-motion: reduce) { .pd-model-switch-track, .pd-model-switch-thumb { transition: none; } }

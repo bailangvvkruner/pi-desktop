@@ -12,6 +12,7 @@ import { WindowControls } from './WindowControls';
 import { ExtensionDialogHost } from './ExtensionDialogHost';
 import { UpdateNotice } from './UpdateNotice';
 import { OperationFeedback } from './OperationFeedback';
+import { FolderProjectDropZone } from './FolderProjectDropZone';
 import { clampWorkbenchWidth } from '../workbenchReading';
 import { WorkbenchSidePane, type WorkbenchOpenRequest } from './WorkbenchSidePane';
 import { useChatStore } from '../store';
@@ -56,6 +57,8 @@ export function AppShell() {
 	const { t } = useT();
 	const navigation = useSessionNavigation();
 	const [sidebarOpen, setSidebarOpen] = useState(() => !window.matchMedia(NARROW_WINDOW_QUERY).matches);
+	const [projectRevealRequest, setProjectRevealRequest] = useState(0);
+	const revealAddedProjects = () => { setSidebarOpen(true); setProjectRevealRequest(value => value + 1); };
 	const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW_WINDOW_QUERY).matches);
 	const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
 	const [sidebarResizing, setSidebarResizing] = useState(false);
@@ -253,9 +256,11 @@ export function AppShell() {
 	const headerControls = !sidebarOpen && !narrow ? <div className="pd-header-navigation"><HistoryNavigation {...history} /><SearchButton open={searchOpen} onClick={() => setSearchOpen(true)} /></div> : undefined;
 
 	return (
+		<ExtensionDialogHost chatVisible={mainView === 'chat'}>
 		<div className={`pd-app-shell flex${isWindows ? ' is-frameless' : ''}${settingsOpen || searchOpen ? ' is-settings-open' : ''}${sidebarResizing ? ' is-sidebar-resizing' : ''}${workbenchResizing ? ' is-workbench-resizing' : ''}`} style={{ '--pd-sidebar-width': `${sidebarWidth}px`, '--pd-workbench-width': `${clampWorkbenchWidth(workbenchWidth, viewportWidth)}px` } as CSSProperties}>
 			<button type="button" className={`pd-sidebar-scrim${narrow && sidebarOpen ? ' is-open' : ''}`} aria-label={t('app.closeSidebar')} aria-hidden={!narrow || !sidebarOpen} inert={!narrow || !sidebarOpen} tabIndex={-1} onClick={() => setSidebarOpen(false)} />
 			<Sidebar
+				projectRevealRequest={projectRevealRequest}
 				open={sidebarOpen}
 				narrow={narrow}
 				onToggle={() => setSidebarOpen((open) => !open)}
@@ -283,9 +288,10 @@ export function AppShell() {
 			{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}
 			{searchOpen && <SearchDialog commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} />}
 			{isWindows && <WindowControls />}
-			<ExtensionDialogHost />
 			<UpdateNotice />
 			<OperationFeedback />
+			<FolderProjectDropZone onAdded={revealAddedProjects} />
 		</div>
+		</ExtensionDialogHost>
 	);
 }

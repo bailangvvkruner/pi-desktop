@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -224,6 +224,122 @@ test('switching workspaces waits for in-flight crash recovery and keeps the chos
   await ipc.disposeServices();
 });
 
+test('composer workspace selection creates a fresh session, including the first detach to home, while normal selection restores history', async (t) => {
+  const temp = await realpath(tmpdir());
+  const root = await mkdtemp(join(temp, 'pi-desktop-fresh-workspace-'));
+  const project = join(root, 'project');
+  const unknown = join(root, 'unknown');
+  await Promise.all([mkdir(project), mkdir(unknown)]);
+  await writeFile(join(root, 'workspace.json'), JSON.stringify({ cwd: project, workspaces: [project] }));
+  const main = createIpcWindow();
+  globalThis.__ipcUserData = root;
+  globalThis.__ipcWindows = [main];
+  globalThis.__ipcHandlers = new Map();
+  const calls = [];
+  let snapshot = { cwd: project, sessionPath: 'project-old', messages: ['old project conversation'] };
+  globalThis.__ipcAgent = {
+    onEvent() {}, onBackgroundActivity() {}, async dispose() {},
+    async init(options) {
+      calls.push(['init', options]);
+      assert.equal(options.fresh, true);
+      snapshot = { cwd: options.cwd, sessionPath: `fresh-${calls.length}`, messages: [] };
+    },
+    async switchWorkspace(cwd) {
+      calls.push(['restore', cwd]);
+      snapshot = { cwd, sessionPath: `${cwd}-old`, messages: ['remembered conversation'] };
+    },
+    getSnapshot: async () => snapshot,
+  };
+  const ipc = await import('../packages/desktop/src/main/ipc.ts?fresh-workspace');
+  const { IPC_CHANNELS } = await import('../packages/shared/src/index.ts');
+  t.after(async () => {
+    await ipc.disposeServices();
+    assert.equal(dirname(root), temp);
+    await rm(root, { recursive: true, force: true });
+  });
+  ipc.registerIpc();
+  assert.equal(ipc.defaultWorkspace(), project);
+  const valid = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
+  const switchWorkspace = globalThis.__ipcHandlers.get(IPC_CHANNELS.workspaceSwitch);
+  const home = globalThis.__ipcHandlers.get(IPC_CHANNELS.workspaceDefault)(valid);
+  assert.equal(home, join(root, 'PiDesktopWorkspace'));
+  assert.deepEqual(await globalThis.__ipcHandlers.get(IPC_CHANNELS.agentListWorkspaces)(valid), [project, home]);
+
+  for (const options of [null, true, [], { fresh: 'true' }]) {
+    assert.throws(() => switchWorkspace(valid, home, options), /切换选项无效/);
+  }
+  await assert.rejects(switchWorkspace(valid, unknown, { fresh: true }), /未知工作区/);
+  assert.deepEqual(calls, [], 'invalid targets and options never activate a session');
+
+  await switchWorkspace(valid, home, { fresh: true });
+  assert.deepEqual(calls, [['init', { cwd: home, fresh: true }]]);
+  assert.deepEqual(snapshot.messages, []);
+  assert.equal(ipc.defaultWorkspace(), home);
+  await switchWorkspace(valid, project);
+  assert.deepEqual(calls.at(-1), ['restore', project]);
+  assert.deepEqual(snapshot.messages, ['remembered conversation']);
+  await switchWorkspace(valid, home, { fresh: false });
+  assert.deepEqual(calls.at(-1), ['restore', home]);
+  await switchWorkspace(valid, home, { fresh: true });
+  assert.deepEqual(calls.at(-1), ['init', { cwd: home, fresh: true }]);
+  assert.deepEqual(snapshot.messages, [], 'fresh selection also works in the currently active workspace');
+});
+
+test('fresh workspace initialization stays in the activation queue and a failure preserves the previous workspace', async (t) => {
+  const temp = await realpath(tmpdir());
+  const root = await mkdtemp(join(temp, 'pi-desktop-fresh-queue-'));
+  const first = join(root, 'first');
+  const second = join(root, 'second');
+  await Promise.all([mkdir(first), mkdir(second)]);
+  await writeFile(join(root, 'workspace.json'), JSON.stringify({ cwd: first, workspaces: [first, second] }));
+  const main = createIpcWindow();
+  globalThis.__ipcUserData = root;
+  globalThis.__ipcWindows = [main];
+  globalThis.__ipcHandlers = new Map();
+  const calls = [];
+  let active = first;
+  let release;
+  let entered;
+  const started = new Promise((resolve) => { entered = resolve; });
+  const gate = new Promise((resolve) => { release = resolve; });
+  globalThis.__ipcAgent = {
+    onEvent() {}, onBackgroundActivity() {}, async dispose() {},
+    async init(options) {
+      calls.push(['init', options]);
+      entered();
+      await gate;
+      throw new Error('fresh initialization failed');
+    },
+    async switchWorkspace(cwd) { calls.push(['restore', cwd]); active = cwd; },
+    getSnapshot: async () => ({ cwd: active, sessionPath: null }),
+  };
+  const ipc = await import('../packages/desktop/src/main/ipc.ts?fresh-workspace-queue');
+  const { IPC_CHANNELS } = await import('../packages/shared/src/index.ts');
+  t.after(async () => {
+    release();
+    await ipc.disposeServices();
+    assert.equal(dirname(root), temp);
+    await rm(root, { recursive: true, force: true });
+  });
+  ipc.registerIpc();
+  assert.equal(ipc.defaultWorkspace(), first);
+  const valid = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
+  const switchWorkspace = globalThis.__ipcHandlers.get(IPC_CHANNELS.workspaceSwitch);
+  const fresh = switchWorkspace(valid, second, { fresh: true });
+  const failure = assert.rejects(fresh, /fresh initialization failed/);
+  await started;
+  const restoring = switchWorkspace(valid, first);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, [['init', { cwd: second, fresh: true }]], 'the next navigation waits for fresh initialization');
+  release();
+  await Promise.all([failure, restoring]);
+  assert.equal(active, first);
+  assert.equal(ipc.defaultWorkspace(), first);
+  assert.deepEqual(calls.at(-1), ['restore', first]);
+  await assert.rejects(switchWorkspace(valid, second, { fresh: true }), /fresh initialization failed/);
+  assert.equal(ipc.defaultWorkspace(), first, 'a failed fresh session cannot persist the target as the current workspace');
+});
+
 test('shutdown cancels extension dialogs, waits for every service, and is idempotent after failure', async (t) => {
   const main = createIpcWindow();
   globalThis.__ipcWindows = [main];
@@ -372,4 +488,86 @@ test('session switches and shutdown wait for an accepted asynchronous trash move
   release();
   await Promise.all([secondDelete, shutdown]);
   assert.equal(disposed, true);
+});
+
+test('folder-drop IPC registers projects atomically without activating or trusting them', async (t) => {
+  const temp = await realpath(tmpdir());
+  const root = await mkdtemp(join(temp, 'pi-ipc-workspace-drop-'));
+  const active = join(root, 'active');
+  const first = join(root, 'first');
+  const second = join(root, 'second');
+  const third = join(root, 'third');
+  const file = join(root, 'readme.md');
+  await Promise.all([mkdir(active), mkdir(first), mkdir(second), mkdir(third), writeFile(file, '# text')]);
+  const settings = { cwd: active, workspaces: [active], pinnedWorkspaces: [active] };
+  const settingsPath = join(root, 'workspace.json');
+  await writeFile(settingsPath, JSON.stringify(settings));
+  const main = createIpcWindow();
+  globalThis.__ipcUserData = root;
+  globalThis.__ipcWindows = [main];
+  globalThis.__ipcHandlers = new Map();
+  let switched = null;
+  globalThis.__ipcAgent = {
+    onEvent() {}, onBackgroundActivity() {}, async dispose() {},
+    init: async () => assert.fail('adding folders cannot initialize an SDK session'),
+    switchWorkspace: async (cwd) => { switched = cwd; },
+    getSnapshot: async () => ({ cwd: switched ?? active, sessionPath: null }),
+  };
+  const ipc = await import('../packages/desktop/src/main/ipc.ts?folder-drop');
+  const { IPC_CHANNELS } = await import('../packages/shared/src/index.ts');
+  t.after(async () => {
+    await ipc.disposeServices();
+    assert.equal(dirname(root), temp);
+    await rm(root, { recursive: true, force: true });
+  });
+  ipc.registerIpc();
+  assert.equal(ipc.defaultWorkspace(), active);
+  const valid = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
+  const add = globalThis.__ipcHandlers.get(IPC_CHANNELS.workspaceAddDropped);
+  assert.throws(() => add({ sender: main.webContents, senderFrame: {} }, [first]), /Invalid renderer sender/);
+  assert.throws(() => add({ sender: {}, senderFrame: {} }, [first]), /no longer available/);
+  await assert.rejects(add(valid, [first, join(root, 'missing')]), /无法读取拖入的文件夹/);
+  assert.deepEqual(JSON.parse(await readFile(settingsPath, 'utf8')), settings, 'a failed batch cannot persist an earlier valid directory');
+  assert.deepEqual(await add(valid, [file]), []);
+  assert.deepEqual(await Promise.all([add(valid, [first, active, first]), add(valid, [second])]), [[first, active], [second]]);
+  assert.deepEqual(JSON.parse(await readFile(settingsPath, 'utf8')), { ...settings, workspaces: [active, first, second] });
+  assert.equal(switched, null);
+  assert.equal(ipc.defaultWorkspace(), active);
+  assert.deepEqual(await add(valid, [first]), [first], 'existing projects retain their registered identity');
+  await assert.rejects(globalThis.__ipcHandlers.get(IPC_CHANNELS.workspaceSwitch)(valid, third), /未知工作区/);
+  await globalThis.__ipcHandlers.get(IPC_CHANNELS.workspaceSwitch)(valid, first);
+  assert.equal(switched, first, 'activation still uses the ordinary workspace transition');
+});
+
+test('the built-in workspace exposes unassigned conversations even when absent from saved projects', async (t) => {
+  const temp = await realpath(tmpdir());
+  const root = await mkdtemp(join(temp, 'pi-ipc-unassigned-'));
+  const project = join(root, 'project');
+  const home = join(root, 'PiDesktopWorkspace');
+  const sessionPath = join(root, 'home-session.jsonl');
+  await Promise.all([mkdir(project), mkdir(home), writeFile(sessionPath, '{}\n')]);
+  await writeFile(join(root, 'workspace.json'), JSON.stringify({ cwd: project, workspaces: [project] }));
+  const main = createIpcWindow();
+  globalThis.__ipcUserData = root;
+  globalThis.__ipcWindows = [main];
+  globalThis.__ipcHandlers = new Map();
+  globalThis.__ipcAgent = {
+    onEvent() {}, onBackgroundActivity() {}, async dispose() {},
+    listSessions: async (cwd) => cwd === home ? [{ id: 'home-session', path: sessionPath }] : [],
+  };
+  const ipc = await import('../packages/desktop/src/main/ipc.ts?unassigned');
+  const { IPC_CHANNELS } = await import('../packages/shared/src/index.ts');
+  t.after(async () => {
+    await ipc.disposeServices();
+    assert.equal(dirname(root), temp);
+    await rm(root, { recursive: true, force: true });
+  });
+  ipc.registerIpc();
+  assert.equal(ipc.defaultWorkspace(), project);
+  const valid = { sender: main.webContents, senderFrame: main.webContents.mainFrame };
+  assert.deepEqual(await globalThis.__ipcHandlers.get(IPC_CHANNELS.agentListWorkspaces)(valid), [project, home]);
+  const list = globalThis.__ipcHandlers.get(IPC_CHANNELS.agentListSessions);
+  assert.deepEqual(await list(valid, home), [{ id: 'home-session', path: sessionPath }]);
+  await globalThis.__ipcHandlers.get(IPC_CHANNELS.agentUpdateSessionMeta)(valid, sessionPath, { pinned: true });
+  assert.deepEqual(await list(valid, home), [{ id: 'home-session', path: sessionPath, pinned: true }], 'unassigned sessions retain authenticated metadata actions');
 });

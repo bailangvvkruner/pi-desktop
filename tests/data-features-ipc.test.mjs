@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { test } from 'node:test';
 
 registerHooks({ resolve(specifier, context, next) {
@@ -69,4 +69,50 @@ test('import IPC rejects a target workspace removed while the picker was open', 
   registerDataFeaturesIpc(f.context);
   await assert.rejects(f.invoke(channels.importSessions, 'native', f.cwd), /目标工作区/);
   await assert.rejects(readFile(join(f.root, 'session-import-journal')), { code: 'ENOENT' });
+});
+
+test('backup IPC cannot overwrite a source through directory aliases or Windows path casing', async t => {
+  const f = await fixture(t), original = await readFile(f.source, 'utf8');
+  const alias = join(f.root, 'session-alias');
+  await symlink(dirname(f.source), alias, process.platform === 'win32' ? 'junction' : 'dir');
+  registerDataFeaturesIpc(f.context);
+  const targets = [join(alias, basename(f.source))];
+  if (process.platform === 'win32') targets.push(f.source.toUpperCase());
+  for (const filePath of targets) {
+    globalThis.__dataSaveDialog = async () => ({ canceled: false, filePath });
+    await assert.rejects(f.invoke(channels.exportSessionsBackup), /备份目标不能覆盖原会话/);
+    assert.equal(await readFile(f.source, 'utf8'), original, 'the original transcript remains intact');
+  }
+  const output = join(f.root, 'complete.pibackup');
+  globalThis.__dataSaveDialog = async () => ({ canceled: false, filePath: output });
+  assert.equal(await f.invoke(channels.exportSessionsBackup), output);
+  assert.equal(JSON.parse(await readFile(output, 'utf8')).sessions[0].jsonl, original);
+});
+
+test('queued search rule updates remain attached to the workspace that submitted them', async t => {
+  const f = await fixture(t), second = join(f.root, 'second'); await mkdir(second);
+  let active = f.cwd, releaseFirst, firstStarted;
+  const started = new Promise(resolve => { firstStarted = resolve; });
+  const gate = new Promise(resolve => { releaseFirst = resolve; });
+  t.after(() => releaseFirst());
+  const values = new Map(), updates = [];
+  f.context.getWorkspace = () => active;
+  f.context.getWorkspaces = async () => [f.cwd, second];
+  f.context.setSearchRules = async (cwd, rules) => {
+    updates.push({ cwd, rules });
+    if (updates.length === 1) { firstStarted(); await gate; }
+    values.set(cwd, rules);
+  };
+  f.context.getSearchRules = async cwd => values.get(cwd);
+  registerDataFeaturesIpc(f.context);
+  const firstRules = { ignoredDirectories: ['cache'], include: [], exclude: [], maxFileBytes: 1024 };
+  const secondRules = { ...firstRules, ignoredDirectories: ['cache', 'generated'] };
+  const first = f.invoke(channels.setProjectSearchRules, firstRules);
+  await started;
+  const queued = f.invoke(channels.setProjectSearchRules, secondRules);
+  active = second;
+  releaseFirst();
+  await Promise.all([first, queued]);
+  assert.deepEqual(updates.map(item => item.cwd), [f.cwd, f.cwd]);
+  assert.deepEqual(JSON.parse(await readFile(join(f.root, 'project-search-rules.json'), 'utf8')), { [f.cwd]: secondRules });
 });

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { changedSidebarOrders, moveSidebarSession } from '../packages/ui/src/sidebarDrag.ts';
+import { changedSidebarOrders, moveSidebarProject, moveSidebarSession } from '../packages/ui/src/sidebarDrag.ts';
 
 const orders = () => new Map([
   ['ungrouped', ['a', 'dragged', 'b']],
@@ -9,6 +9,23 @@ const orders = () => new Map([
   ['empty', []],
 ]);
 const frozenOrders = () => new Map([...orders()].map(([key, paths]) => [key, Object.freeze(paths)]));
+
+test('project insertion works in both directions without changing pin membership', () => {
+  const initial = Object.freeze(['pin-a', 'pin-b', 'a', 'b', 'c']);
+  const pinned = new Set(['pin-a', 'pin-b']);
+  assert.deepEqual(moveSidebarProject(initial, 'a', 'c', 'after', pinned), ['pin-a', 'pin-b', 'b', 'c', 'a']);
+  assert.deepEqual(moveSidebarProject(initial, 'c', 'a', 'before', pinned), ['pin-a', 'pin-b', 'c', 'a', 'b']);
+  assert.deepEqual(moveSidebarProject(initial, 'pin-b', 'pin-a', 'before', pinned), ['pin-b', 'pin-a', 'a', 'b', 'c']);
+  for (const edge of ['before', 'after']) {
+    assert.deepEqual(moveSidebarProject(initial, 'a', 'pin-a', edge, pinned), initial);
+    assert.deepEqual(moveSidebarProject(initial, 'pin-a', 'a', edge, pinned), initial);
+    assert.deepEqual(moveSidebarProject(initial, 'a', 'a', edge, pinned), initial);
+    assert.deepEqual(moveSidebarProject(initial, 'missing', 'a', edge, pinned), initial);
+    assert.deepEqual(moveSidebarProject(initial, 'a', 'missing', edge, pinned), initial);
+  }
+  assert.deepEqual([...pinned], ['pin-a', 'pin-b']);
+  assert.deepEqual(initial, ['pin-a', 'pin-b', 'a', 'b', 'c']);
+});
 
 test('continuous moves use the complete current snapshot and returning to the original position needs no writes', () => {
   const initial = frozenOrders();
