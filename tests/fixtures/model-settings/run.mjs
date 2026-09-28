@@ -213,6 +213,15 @@ try {
       mouse.down = false; logs.steps.push({ mouseUp: { x: mouse.x, y: mouse.y } });
       await settle();
     },
+    wheel: async (x, y, deltaY, count = 1) => {
+      assert(Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(deltaY) && deltaY !== 0 && Number.isInteger(count) && count >= 1 && count <= 60 && !mouse.down, 'Invalid wheel input');
+      for (let index = 0; index < count; index += 1) {
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY });
+        await settle();
+      }
+      Object.assign(mouse, { x, y }); logs.steps.push({ wheel: { x, y, deltaY, count } });
+    },
     key: async (key, options = {}) => {
       const codes = { Tab: ['Tab', 9], Enter: ['Enter', 13], Escape: ['Escape', 27], ArrowLeft: ['ArrowLeft', 37], ArrowUp: ['ArrowUp', 38], ArrowRight: ['ArrowRight', 39], ArrowDown: ['ArrowDown', 40], Home: ['Home', 36], End: ['End', 35], Backspace: ['Backspace', 8], F10: ['F10', 121], ' ': ['Space', 32] };
       const [code, windowsVirtualKeyCode] = codes[key] ?? [`Key${key.toUpperCase()}`, key.toUpperCase().charCodeAt(0)];

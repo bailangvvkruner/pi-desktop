@@ -31,7 +31,7 @@
 .pd-activity-output-actions button, .pd-activity-show-all { padding: 3px 6px; border: 0; border-radius: 5px; background: transparent; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); }
 .pd-activity-output-actions button:hover, .pd-activity-show-all:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-activity-output {
-  width: 100%; max-height: 320px; margin: 0; overflow: auto; overscroll-behavior: contain;
+  width: 100%; max-height: 320px; margin: 0; overflow: auto; overscroll-behavior: auto;
   padding: 10px 12px; border: 1px solid var(--pd-border-soft); border-radius: 8px;
   background: var(--pd-surface-muted, var(--pd-surface)); color: var(--pd-text-subtle);
   font: 11px/1.65 ui-monospace, Consolas, monospace; white-space: pre; tab-size: 2;
@@ -51,7 +51,7 @@
 .pd-activity-file:hover { border-color: var(--pd-border); color: var(--pd-text); }
 .pd-activity-file > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-activity-file-copied { flex: 0 0 auto; color: var(--pd-success); }
-.pd-activity-diff { max-height: 320px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--pd-border-soft); border-radius: 8px; background: var(--pd-surface-muted, var(--pd-surface)); scrollbar-width: thin; user-select: text; }
+.pd-activity-diff { max-height: 320px; overflow: auto; overscroll-behavior: auto; border: 1px solid var(--pd-border-soft); border-radius: 8px; background: var(--pd-surface-muted, var(--pd-surface)); scrollbar-width: thin; user-select: text; }
 .pd-activity-diff:focus-visible { outline: 2px solid var(--pd-brand); outline-offset: -2px; }
 .pd-activity-diff pre { min-width: 100%; width: max-content; margin: 0; padding: 8px 0 16px; font: 12px/21px ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace; tab-size: 4; }
 .pd-diff-line.is-elision { color: var(--pd-text-weak); }
@@ -127,7 +127,7 @@
 .pd-activity-disclosure-inner { min-width: 0; min-height: 0; overflow: hidden; }
 .pd-thinking-activity { min-width: 0; margin-bottom: 4px; }
 .pd-thinking-content { margin: 3px 0 8px 23px; padding: 1px 0; }
-.pd-thinking-content .pd-thinking-markdown { max-height: 260px; overflow: auto; overscroll-behavior: contain; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); line-height: 1.8; }
+.pd-thinking-content .pd-thinking-markdown { max-height: 260px; overflow: auto; overscroll-behavior: auto; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); line-height: 1.8; }
 .pd-thinking-content .pd-thinking-markdown > :first-child { margin-top: 0; }
 .pd-thinking-content .pd-thinking-markdown > :last-child { margin-bottom: 0; }
 .pd-thinking-activity.is-error .pd-thinking-summary { color: var(--pd-danger); }

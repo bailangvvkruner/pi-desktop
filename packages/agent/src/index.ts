@@ -14,9 +14,11 @@
 
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { existsSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, writeFileSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, extname, join, relative, resolve } from 'node:path';
+import { createInterface } from 'node:readline';
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 
 import {
@@ -133,6 +135,55 @@ async function listWorkspaceSessions(cwd: string) {
 	const sessions = await SessionManager.list(cwd);
 	return sessions.filter((session) => typeof session.cwd === 'string' && session.cwd.length > 0
 		&& relative(resolve(session.cwd), resolve(cwd)) === '');
+}
+
+/** Each refresh must observe writes made since an earlier, still-running scan. */
+async function workspaceSessions(cwd: string): Promise<UiSessionSummary[]> {
+	return (await listWorkspaceSessions(cwd)).map((session) => ({
+		path: session.path, id: session.id, name: session.name,
+		firstMessage: session.firstMessage, modified: session.modified.toISOString(),
+		messageCount: session.messageCount,
+	}));
+}
+
+/** Read only the session header line instead of parsing every conversation. */
+async function readSessionHeaderOwner(path: string): Promise<string | null> {
+	const stream = createReadStream(path, { encoding: 'utf8' });
+	const lines = createInterface({ input: stream, crlfDelay: Infinity });
+	try {
+		for await (const line of lines) {
+			if (!line.trim()) continue;
+			const entry = JSON.parse(line) as { type?: unknown; cwd?: unknown };
+			return entry?.type === 'session' && typeof entry.cwd === 'string' && entry.cwd ? entry.cwd : null;
+		}
+		return null;
+	} catch {
+		return null;
+	} finally {
+		lines.close();
+		stream.destroy();
+	}
+}
+
+/** Same workspace test Pi's own listing applies, kept in one place. */
+function sameWorkspace(owner: string, cwd: string): boolean {
+	return relative(resolve(owner), resolve(cwd)) === '';
+}
+
+/**
+ * Ownership check for opening a session. A missing or unreadable header falls
+ * back to the authoritative listing rather than rejecting a valid session.
+ */
+async function sessionBelongsToWorkspace(path: string, cwd: string): Promise<boolean> {
+	// Preserve Pi listing's path boundary, including filename casing on Windows.
+	// Accepting aliases could bypass the exact-path runtime/reservation lookups.
+	const directory = SessionManager.create(cwd).getSessionDir();
+	if (path !== join(directory, basename(path)) || !path.endsWith('.jsonl')) return false;
+	try { if (!(await readdir(directory)).includes(basename(path))) return false; }
+	catch { return false; }
+	const owner = await readSessionHeaderOwner(path);
+	if (owner !== null) return sameWorkspace(owner, cwd);
+	return (await workspaceSessions(cwd)).some((session) => session.path === path);
 }
 
 /** Recreate cwd-bound services using pi's project-resource trust gate. */
@@ -436,15 +487,7 @@ class SingleAgentService {
 
 	async listSessions(cwd = this.cwd): Promise<UiSessionSummary[]> {
 		if (!cwd) return [];
-		const sessions = await listWorkspaceSessions(cwd);
-		return sessions.map((session) => ({
-			path: session.path,
-			id: session.id,
-			name: session.name,
-			firstMessage: session.firstMessage,
-			modified: session.modified.toISOString(),
-			messageCount: session.messageCount,
-		}));
+		return workspaceSessions(cwd);
 	}
 
 	renameSession(path: string, name: string): void {
@@ -851,7 +894,7 @@ class SingleAgentService {
 
 		try {
 			await this.teardown();
-			const restorePath = sessionPath ?? (fresh ? undefined : (await listWorkspaceSessions(cwd))[0]?.path);
+			const restorePath = sessionPath ?? (fresh ? undefined : (await workspaceSessions(cwd))[0]?.path);
 			const sessionManager = restorePath
 				? SessionManager.open(restorePath, undefined, cwd)
 				: SessionManager.create(cwd);
@@ -1092,8 +1135,7 @@ class SingleAgentService {
 		if (!runtime) throw new Error('Agent is not initialized');
 		if (this.activePromptCalls > 0 || this.activeConfigurationCalls > 0 || !runtime.session.isIdle) throw new Error('当前会话仍在运行，请先停止后再切换会话');
 		if (runtime.session.sessionFile === path) return;
-		const sessions = await this.listSessions();
-		if (!sessions.some((session) => session.path === path)) {
+		if (!(await sessionBelongsToWorkspace(path, this.cwd))) {
 			throw new Error('会话不属于当前工作区');
 		}
 		this.fire({ type: 'status', status: 'starting' });
@@ -1920,15 +1962,13 @@ export class AgentService {
 
 	async listSessions(cwd = this.cwd): Promise<UiSessionSummary[]> {
 		if (!cwd) return [];
-		const sessions = await listWorkspaceSessions(cwd);
+		const sessions = await workspaceSessions(cwd);
 		const runtimes = new Map([...this.contexts.values()].flatMap((service) => {
 			const summary = this.runtimeSummary(service);
 			return summary && summary.cwd === cwd ? [[summary.path, summary.runtime] as const] : [];
 		}));
 		const result: UiSessionSummary[] = sessions.map((session) => ({
-			path: session.path, id: session.id, name: session.name,
-			firstMessage: session.firstMessage, modified: session.modified.toISOString(),
-			messageCount: session.messageCount,
+			...session,
 			...(runtimes.has(session.path) ? { runtime: runtimes.get(session.path)! } : {}),
 		}));
 		// A runtime can run an extension command before Pi persists its first message.
@@ -1958,8 +1998,7 @@ export class AgentService {
 		await this.runTransition(async () => {
 			if (sessionPath) {
 				if (this.isSessionReserved(sessionPath)) throw new Error(this.reservedSessionPaths.has(sessionPath) ? '扩展正在切换此会话，请稍后重试' : '会话正在删除，请稍后重试');
-				const sessions = await this.listSessions(cwd);
-				if (!sessions.some((session) => session.path === sessionPath)) throw new Error('会话不属于指定工作区');
+				if (!(await sessionBelongsToWorkspace(sessionPath, cwd))) throw new Error('会话不属于指定工作区');
 				const existing = [...this.contexts.entries()].find(([, service]) =>
 					service.cwd === cwd && service.getSnapshot().sessionPath === sessionPath);
 				if (existing) {
@@ -2051,8 +2090,7 @@ export class AgentService {
 				this.activate(existing[0], existing[1]);
 				return;
 			}
-			const sessions = await this.listSessions(cwd);
-			if (!sessions.some((session) => session.path === path)) throw new Error('会话不属于当前工作区');
+			if (!(await sessionBelongsToWorkspace(path, cwd))) throw new Error('会话不属于当前工作区');
 			await this.openContext({ cwd, sessionPath: path });
 			this.fire({ type: 'sessions-changed', cwd });
 		});
@@ -2074,8 +2112,7 @@ export class AgentService {
 		assertAvailable();
 		let loaded = findLoaded();
 		if (!loaded) {
-			const sessions = await this.listSessions(cwd);
-			if (!sessions.some((session) => session.path === path)) throw new Error('会话不属于当前工作区');
+			if (!(await sessionBelongsToWorkspace(path, cwd))) throw new Error('会话不属于当前工作区');
 			assertAvailable();
 			loaded = findLoaded();
 		}

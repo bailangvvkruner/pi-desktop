@@ -252,8 +252,13 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		}); });
 		return () => cancelAnimationFrame(frame);
 	}, [activeFind?.key, findQuery, findOpen]);
+	const findClearedRef = useRef(true);
 	useLayoutEffect(() => {
-		if (scrollRef.current) paintTranscriptMatches(scrollRef.current, findOpen ? findQuery : '', activeFindId, activeFind?.ordinal ?? 0);
+		const query = findOpen ? findQuery : '';
+		// An empty query only needs one clear pass; skip the rescan while find stays closed.
+		if (!query.trim() && findClearedRef.current) return;
+		findClearedRef.current = !query.trim();
+		if (scrollRef.current) paintTranscriptMatches(scrollRef.current, query, activeFindId, activeFind?.ordinal ?? 0);
 	});
 
 	useLayoutEffect(() => {
@@ -361,9 +366,18 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight <= BOTTOM_THRESHOLD;
 		if (scrollAnimationRef.current === null) followsBottomRef.current = nearBottom;
 		setShowBackToBottom(!nearBottom);
-		const row = Array.from(node.querySelectorAll<HTMLElement>('[data-message-id]')).find((item) => !item.closest('[inert],[hidden],[aria-hidden="true"]') && item.getBoundingClientRect().bottom > node.getBoundingClientRect().top);
-		readingAnchor.current = { messageId: row?.dataset.messageId ?? null, offset: row ? row.getBoundingClientRect().top - node.getBoundingClientRect().top : 0, followsBottom: nearBottom };
-		saveReading(memoryKeyRef.current, readingAnchor.current);
+		// Save before navigation or history loading can replace the visible rows.
+		const top = node.getBoundingClientRect().top;
+		let position: ReadingPosition = { messageId: null, offset: 0, followsBottom: nearBottom };
+		for (const row of node.querySelectorAll<HTMLElement>('[data-message-id]')) {
+			if (row.closest('[inert],[hidden],[aria-hidden="true"]')) continue;
+			const rect = row.getBoundingClientRect();
+			if (rect.bottom <= top) continue;
+			position = { messageId: row.dataset.messageId ?? null, offset: rect.top - top, followsBottom: nearBottom };
+			break;
+		}
+		readingAnchor.current = position;
+		saveReading(memoryKeyRef.current, position);
 		// Long sessions fetch the next older slice as the reader approaches the top.
 		if (hasOlderHistory && !loadingOlder && node.scrollTop < LOAD_OLDER_TRIGGER_PX) void loadOlderMessages();
 	}
