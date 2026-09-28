@@ -31,7 +31,6 @@ export function Sidebar({ open, projectRevealRequest = 0, narrow, onToggle, onNa
 	const { t, locale } = useT();
 	const bridge = useChatStore((s) => s.bridge);
 	const platform = useChatStore((s) => s.appInfo?.platform);
-	const cwd = useChatStore((s) => s.cwd);
 	const status = useChatStore((s) => s.status);
 	const newSession = useChatStore((s) => s.newSession);
 	const [actionError, setActionError] = useState<string | null>(null);
@@ -89,11 +88,10 @@ export function Sidebar({ open, projectRevealRequest = 0, narrow, onToggle, onNa
 
 	async function startSession() {
 		setActionError(null);
-		const origin = cwd;
-		await runWithFeedback({ id: `new-session:${origin}`, title: t('sidebar.newSessionFailed'), showPending: false, run: async () => {
-			if (useChatStore.getState().cwd !== origin) throw new Error(locale === 'zh-CN' ? '请返回原工作区后重试。' : 'Return to the original workspace before retrying.');
-			await newSession(); onNavigate();
-		} });
+		const preparation = newSession();
+		onNavigate();
+		// The draft owns its error and retry, so retry keeps the same input scope.
+		await preparation.catch(() => {});
 	}
 
 	async function updateNow() {

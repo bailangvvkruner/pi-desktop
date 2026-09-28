@@ -87,6 +87,8 @@ interface ChatState {
 	/** A new standalone conversation is prepared without blocking its local draft. */
 	sessionPreparation: { requestId: number; draftScope: UiInputScope } | null;
 	draftTransfer: { requestId: number; from: UiInputScope; to: UiInputScope } | null;
+	/** Completed creations whose local draft was left before the backend receipt arrived. */
+	backgroundDraftTransfers: Array<{ requestId: number; from: UiInputScope; to: UiInputScope }>;
 
 	setBridge(bridge: AgentBridge): void;
 	retryAgent(): Promise<void>;
@@ -149,6 +151,10 @@ type ReadyEvent = Extract<AgentUiEvent, { type: 'ready' }>;
 interface SessionPreparation {
 	bridge: AgentBridge;
 	requestId: number;
+	kind: 'new' | 'detach';
+	options?: { cwd?: string };
+	draftScope: UiInputScope;
+	failed: boolean;
 	ready: ReadyEvent | null;
 	reset: boolean;
 	promise: Promise<void>;
@@ -166,6 +172,7 @@ interface PreparedInput {
 }
 let sessionPreparation: SessionPreparation | null = null;
 let preparedInput: PreparedInput | null = null;
+const recoverableNewDrafts: Array<{ bridge: AgentBridge; cwd?: string; scope: UiInputScope }> = [];
 
 async function snapshotWithTimeout(bridge: AgentBridge): Promise<AgentSnapshot> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -257,12 +264,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	navigationPending: false,
 	sessionPreparation: null,
 	draftTransfer: null,
+	backgroundDraftTransfers: [],
 
 	setBridge(bridge) {
 		if (get().bridge === bridge) return;
 		sessionOpenMetrics.cancel();
 		cancelPreparedInput();
 		sessionPreparation = null;
+		recoverableNewDrafts.length = 0;
 		unsubscribeAgentEvent?.();
 		unsubscribeAgentEvent = null;
 		bridgeGeneration += 1;
@@ -370,6 +379,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	async retryAgent() {
 		const { bridge, status, cwd, workspaces } = get();
 		if (!bridge || status !== 'error') return;
+		const preparing = sessionPreparation;
+		if (preparing?.failed && get().sessionPreparation?.requestId === preparing.requestId && currentSessionNavigation(bridge, preparing.requestId)) {
+			return prepareConversation('new', preparing.options, preparing.draftScope);
+		}
 		const request = beginSessionNavigation();
 		set({ status: 'starting', error: null, statusMessage: undefined, retryAttempt: undefined, retryMaxAttempts: undefined });
 		try {
@@ -953,6 +966,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	async send(text, behavior, attachments, inputId) {
 		const preparing = sessionPreparation;
 		if (preparing && get().sessionPreparation?.requestId === preparing.requestId && currentSessionNavigation(preparing.bridge, preparing.requestId)) {
+			if (preparing.failed) throw new Error(get().error ?? translate('store.agentNotReady'));
 			return sendAfterPreparation(preparing, text, behavior, attachments, inputId);
 		}
 		const { bridge, status, cwd, sessionId, navigationPending, sessionLoading } = get();
@@ -1073,69 +1087,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	},
 
 	async newSession(options) {
-		const bridge = get().bridge;
-		if (!bridge) return;
-		const request = beginSessionNavigation();
-		try {
-			await bridge.newSession(options);
-			sessionOpenMetrics.rpc(request);
-			if (!currentSessionNavigation(bridge, request)) return;
-			await Promise.all([get().refreshWorkspaces(), get().refreshSessions()]);
-		} catch (error) {
-			if (currentSessionNavigation(bridge, request)) set({ error: errorMessage(error) });
-			throw error;
-		} finally { finishSessionNavigation(bridge, request); }
+		const preparing = sessionPreparation;
+		if (preparing?.kind === 'new' && preparing.options?.cwd === options?.cwd
+			&& get().sessionPreparation?.requestId === preparing.requestId && currentSessionNavigation(preparing.bridge, preparing.requestId)) {
+			return preparing.failed ? prepareConversation('new', options, preparing.draftScope) : preparing.promise;
+		}
+		const saved = recoverableNewDrafts.findIndex(draft => draft.bridge === get().bridge && draft.cwd === options?.cwd);
+		const scope = saved < 0 ? undefined : recoverableNewDrafts.splice(saved, 1)[0]!.scope;
+		return prepareConversation('new', options, scope);
 	},
 
 	async detachProject() {
-		const previous = get();
-		const { bridge } = previous;
-		if (!bridge || previous.navigationPending) return;
-		const request = beginSessionNavigation();
-		const draftScope = { cwd: previous.cwd, sessionPath: previous.sessionPath };
-		const preparing: SessionPreparation = { bridge, requestId: request, ready: null, reset: false, promise: Promise.resolve() };
-		sessionPreparation = preparing;
-		set({ sessionPreparation: { requestId: request, draftScope }, cwd: '', sessionId: null, sessionPath: null,
-			status: 'idle', statusMessage: undefined, retryAttempt: undefined, retryMaxAttempts: undefined,
-			messages: [], activities: [], runs: [], fileChanges: [], contextUsage: null,
-			queuedMessages: [], queuedCount: 0, historyTotal: 0, loadingOlder: false, sessionLoading: false,
-			timelineRevision: get().timelineRevision + 1, historyGeneration: get().historyGeneration + 1 });
-		preparing.promise = (async () => {
-			try {
-				await bridge.newSession();
-				sessionOpenMetrics.rpc(request);
-				if (!currentSessionNavigation(bridge, request)) return;
-				if (!preparing.ready) {
-					const snapshot = await snapshotWithTimeout(bridge);
-					if (!snapshot.sessionId || snapshot.status === 'error') throw new Error(snapshot.error ?? translate('store.agentNotReady'));
-					preparing.ready = { ...snapshot, type: 'ready', sessionId: snapshot.sessionId };
-				}
-				if (!currentSessionNavigation(bridge, request)) return;
-				const ready = preparing.ready;
-				sessionPreparation = null;
-				// Publish the actual scope and draft handoff together, after the main
-				// process has finished activating it. No intermediate draft IPC occurs.
-				get().handleEvent(ready);
-				// Sidebar refreshes do not hold up typing or the waiting submission.
-				void Promise.all([get().refreshWorkspaces(), get().refreshSessions()]);
-			} catch (error) {
-				if (!currentSessionNavigation(bridge, request)) throw error;
-				sessionPreparation = null;
-				if (preparing.ready) {
-					get().handleEvent(preparing.ready);
-					set({ status: 'idle', error: errorMessage(error) });
-				} else {
-					set({ ...conversationView(previous), sessionPreparation: null, navigationPending: false,
-						...(preparing.reset ? { status: 'error' as const } : {}), error: errorMessage(error),
-						timelineRevision: get().timelineRevision + 1, historyGeneration: get().historyGeneration + 1 });
-				}
-				throw error;
-			} finally {
-				if (sessionPreparation === preparing) sessionPreparation = null;
-				finishSessionNavigation(bridge, request);
-			}
-		})();
-		await preparing.promise;
+		if (get().navigationPending) return;
+		return prepareConversation('detach');
 	},
 
 	async pickWorkspace(options) {
@@ -1161,6 +1125,78 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function prepareConversation(kind: SessionPreparation['kind'], options?: { cwd?: string }, retainedScope?: UiInputScope): Promise<void> {
+	const previous = useChatStore.getState(), bridge = previous.bridge;
+	if (!bridge) return Promise.resolve();
+	const generation = bridgeGeneration;
+	const request = beginSessionNavigation({ cwd: options?.cwd }, retainedScope);
+	// A local draft must never hydrate the previous conversation's input, even
+	// when creating another conversation inside the same project.
+	const draftScope = retainedScope ?? (kind === 'detach' ? { cwd: previous.cwd, sessionPath: previous.sessionPath }
+		: { cwd: options?.cwd ?? '', sessionPath: `draft:${crypto.randomUUID()}` });
+	const preparing: SessionPreparation = { bridge, requestId: request, kind, options, draftScope, failed: false,
+		ready: null, reset: false, promise: Promise.resolve() };
+	const preserveBackgroundDraft = (receipt: UiInputScope | void): void => {
+		if (kind !== 'new' || !receipt || generation !== bridgeGeneration || useChatStore.getState().bridge !== bridge) return;
+		useChatStore.setState(state => ({ backgroundDraftTransfers: [...state.backgroundDraftTransfers,
+			{ requestId: request, from: draftScope, to: { cwd: receipt.cwd, sessionPath: receipt.sessionPath } }] }));
+	};
+	// Assign the waiting promise before publishing the draft. The microtask also
+	// keeps synchronous bridge callbacks behind the complete local state change.
+	preparing.promise = Promise.resolve().then(async () => {
+		try {
+			if (!currentSessionNavigation(bridge, request)) return;
+			const receipt = await bridge.newSession(options);
+			sessionOpenMetrics.rpc(request);
+			if (!currentSessionNavigation(bridge, request)) { preserveBackgroundDraft(receipt); return; }
+			if (!preparing.ready) {
+				const snapshot = await snapshotWithTimeout(bridge);
+				if (!snapshot.sessionId || snapshot.status === 'error') throw new Error(snapshot.error ?? translate('store.agentNotReady'));
+				preparing.ready = { ...snapshot, type: 'ready', sessionId: snapshot.sessionId };
+			}
+			if (!currentSessionNavigation(bridge, request)) { preserveBackgroundDraft(receipt); return; }
+			sessionPreparation = null;
+			// Transfer input only after the backend has activated its real scope.
+			useChatStore.getState().handleEvent(preparing.ready);
+			void Promise.all([useChatStore.getState().refreshWorkspaces(), useChatStore.getState().refreshSessions()]);
+		} catch (error) {
+			if (!currentSessionNavigation(bridge, request)) {
+				// 已切走且初始化失败的草稿，下次对相同目标点“新建”时继续恢复；绝不自动发送。
+				// Recover an abandoned failed draft on the next New action for this target.
+				if (kind === 'new' && generation === bridgeGeneration && useChatStore.getState().bridge === bridge) {
+					rememberRecoverableNewDraft(preparing);
+				}
+				throw error;
+			}
+			if (kind === 'detach' && preparing.ready) {
+				sessionPreparation = null;
+				useChatStore.getState().handleEvent(preparing.ready);
+				useChatStore.setState({ status: 'idle', error: errorMessage(error) });
+			} else if (kind === 'new') {
+				// Keep the new input editable; Retry reuses this exact draft and target.
+				preparing.failed = true;
+				useChatStore.setState({ status: 'error', error: errorMessage(error), navigationPending: false });
+			} else {
+				sessionPreparation = null;
+				useChatStore.setState(state => ({ ...conversationView(previous), sessionPreparation: null, navigationPending: false,
+					...(preparing.reset ? { status: 'error' as const } : {}), error: errorMessage(error),
+					timelineRevision: state.timelineRevision + 1, historyGeneration: state.historyGeneration + 1 }));
+			}
+			throw error;
+		} finally {
+			if (sessionPreparation === preparing && !preparing.failed) sessionPreparation = null;
+			finishSessionNavigation(bridge, request);
+		}
+	});
+	sessionPreparation = preparing;
+	useChatStore.setState(state => ({ sessionPreparation: { requestId: request, draftScope }, cwd: options?.cwd ?? '', sessionId: null, sessionPath: null,
+		status: 'idle', statusMessage: undefined, retryAttempt: undefined, retryMaxAttempts: undefined,
+		messages: [], activities: [], runs: [], fileChanges: [], contextUsage: null,
+		queuedMessages: [], queuedCount: 0, historyTotal: 0, loadingOlder: false, sessionLoading: false,
+		timelineRevision: state.timelineRevision + 1, historyGeneration: state.historyGeneration + 1 }));
+	return preparing.promise;
 }
 
 function conversationView(state: ChatState): Partial<ChatState> {
@@ -1297,7 +1333,22 @@ async function refreshSessionCache(cwd: string, reportError = true): Promise<voi
 	}
 }
 
-function beginSessionNavigation(target: { cwd?: string; path?: string | null; sessionId?: string } = {}): number {
+function sameInputScope(first: UiInputScope, second?: UiInputScope): boolean {
+	return first.cwd === second?.cwd && first.sessionPath === second?.sessionPath;
+}
+
+function rememberRecoverableNewDraft(preparing: SessionPreparation): void {
+	if (!recoverableNewDrafts.some(draft => draft.bridge === preparing.bridge && sameInputScope(draft.scope, preparing.draftScope))) {
+		recoverableNewDrafts.push({ bridge: preparing.bridge, cwd: preparing.options?.cwd, scope: preparing.draftScope });
+	}
+}
+
+function beginSessionNavigation(target: { cwd?: string; path?: string | null; sessionId?: string } = {}, retainedDraftScope?: UiInputScope): number {
+	const abandoned = sessionPreparation;
+	if (abandoned?.kind === 'new' && abandoned.failed && useChatStore.getState().sessionPreparation?.requestId === abandoned.requestId
+		&& currentSessionNavigation(abandoned.bridge, abandoned.requestId) && !sameInputScope(abandoned.draftScope, retainedDraftScope)) {
+		rememberRecoverableNewDraft(abandoned);
+	}
 	cancelPreparedInput();
 	const request = useChatStore.getState().navigationRequestId + 1;
 	const state = useChatStore.getState(), bridge = state.bridge;

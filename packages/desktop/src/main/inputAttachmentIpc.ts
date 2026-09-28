@@ -6,10 +6,13 @@ import { AttachmentStore } from '../../../agent/src/attachmentStore.ts';
 import { handleRendererInvoke } from './rendererIpc.ts';
 import { PdfInputProcessor } from './pdfInput.ts';
 
-export function registerInputAttachmentIpc(getScope: () => UiInputScope): { dispose(): void; storage: AttachmentStore } {
+export function registerInputAttachmentIpc(getScope: () => UiInputScope): { dispose(): void; storage: AttachmentStore; rememberScope(scope: UiInputScope): void } {
 	const storage = new AttachmentStore(join(getAgentDir(), 'desktop-inputs', 'attachments'));
 	const pdf = new PdfInputProcessor();
 	const knownScopes = new Set<string>();
+	// Main-process navigation can finish after the renderer has left its local
+	// draft. Authorize only that actual scope for the deferred draft handoff.
+	const rememberScope = (scope: UiInputScope) => { knownScopes.add(JSON.stringify([scope.cwd, scope.sessionPath])); };
 	const check = (scope: UiInputScope) => { const active = getScope(); const key = JSON.stringify([scope?.cwd, scope?.sessionPath]); if (scope?.cwd === active.cwd && scope.sessionPath === active.sessionPath) knownScopes.add(key); else if (!knownScopes.has(key)) throw new Error('草稿所属工作区或会话已变化'); };
 	handleRendererInvoke(INPUT_FEATURE_CHANNELS.putInputAttachment, (_event, scope: UiInputScope, attachment: UiAttachment) => { check(scope); return storage.put(scope, attachment); });
 	handleRendererInvoke(INPUT_FEATURE_CHANNELS.readInputAttachment, (_event, scope: UiInputScope, id: string) => { check(scope); return storage.read(scope, id); });
@@ -17,5 +20,5 @@ export function registerInputAttachmentIpc(getScope: () => UiInputScope): { disp
 	handleRendererInvoke(INPUT_FEATURE_CHANNELS.saveInputDraft, (_event, request: UiSaveInputDraft) => { check(request); return storage.saveDraft(request); });
 	handleRendererInvoke(INPUT_FEATURE_CHANNELS.processPdfInput, (_event, request: UiPdfInputRequest) => pdf.process(request));
 	handleRendererInvoke(INPUT_FEATURE_CHANNELS.cancelPdfInput, (_event, id: string) => { if (typeof id !== 'string') throw new Error('PDF请求ID无效'); pdf.cancel(id); });
-	return { storage, dispose: () => pdf.dispose() };
+	return { storage, rememberScope, dispose: () => pdf.dispose() };
 }

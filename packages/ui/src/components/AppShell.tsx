@@ -75,6 +75,7 @@ export function AppShell() {
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [searchOpen, setSearchOpen] = useState(false);
 	const [mainView, setMainView] = useState<'chat' | 'automations' | 'plugins'>('chat');
+	const preparationRequestId = useChatStore((state) => state.sessionPreparation?.requestId ?? state.draftTransfer?.requestId ?? null);
 	const [searchMessageTarget, setSearchMessageTarget] = useState<SearchMessageTarget | null>(null);
 	const [workbenchRequest, setWorkbenchRequest] = useState<WorkbenchOpenRequest | null>(null);
 	const [terminalRequest, setTerminalRequest] = useState(0);
@@ -105,6 +106,17 @@ export function AppShell() {
 		onGoBack: () => { setMainView('chat'); setSearchMessageTarget(null); void navigation.goBack(); },
 		onGoForward: () => { setMainView('chat'); setSearchMessageTarget(null); void navigation.goForward(); },
 	};
+
+	useEffect(() => {
+		if (preparationRequestId === null || mainView !== 'chat' || settingsOpen || searchOpen) return;
+		// New conversation owns the focus as soon as its local draft is visible;
+		// backend preparation and the previous menu's focus restoration finish later.
+		const frame = requestAnimationFrame(() => {
+			const input = document.querySelector<HTMLTextAreaElement>('.pd-chat-view-host:not([hidden]) .pd-composer-shell textarea');
+			if (input && !input.disabled) input.focus({ preventScroll: true });
+		});
+		return () => cancelAnimationFrame(frame);
+	}, [preparationRequestId, mainView, settingsOpen, searchOpen]);
 
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -253,7 +265,7 @@ export function AppShell() {
 	}
 
 	const searchCommands: SearchCommand[] = [
-		{ id: 'new-session', label: t('sidebar.newSession'), icon: 'plus', keywords: 'new chat session 新建对话', run: async () => { await useChatStore.getState().newSession(); setMainView('chat'); if (narrow) setSidebarOpen(false); } },
+		{ id: 'new-session', label: t('sidebar.newSession'), icon: 'plus', keywords: 'new chat session 新建对话', run: () => { void useChatStore.getState().newSession().catch(() => {}); setMainView('chat'); setSearchMessageTarget(null); if (narrow) setSidebarOpen(false); } },
 		{ id: 'open-project', label: t('sidebar.openProject'), icon: 'folder', keywords: 'open folder workspace 项目 文件夹 工作区', run: async () => { await useChatStore.getState().pickWorkspace(); setMainView('chat'); } },
 		{ id: 'automations', label: t('sidebar.automation'), icon: 'automation', keywords: 'automation schedule recurring 自动化 定时 计划', run: () => { setMainView('automations'); if (narrow) setSidebarOpen(false); } },
 		{ id: 'plugins', label: t('sidebar.plugins'), icon: 'plugins', keywords: 'plugins extensions skills prompts 插件 扩展 技能 提示词', run: () => { setMainView('plugins'); if (narrow) setSidebarOpen(false); } },

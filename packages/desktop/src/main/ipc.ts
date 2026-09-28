@@ -11,7 +11,7 @@ import { app, BrowserWindow, dialog, type IpcMainInvokeEvent } from 'electron';
 import { mkdirSync, statSync } from 'node:fs';
 import { lstat, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
-import { IPC_CHANNELS, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
+import { IPC_CHANNELS, type AgentEventEnvelope, type AppLocale, type UiAppCommand, type UiAttachment, type UiExtensionDialogRequest, type UiInputScope, type UiSessionMetaPatch, type UiSidebarGroupChange, type UiSlashCommandRequest, type UiThinkingLevel } from '@pidesktop/shared';
 import { createIsolatedAgentService } from './agentClient';
 import { getAppLocale, setAppLocale } from './appLocale';
 import { destroyAppTray, invalidateAppTrayData, updateAppTrayMenu } from './tray';
@@ -367,7 +367,7 @@ function registerConversationWorkspace(previous: WorkspaceSettings, cwd: string,
 	};
 }
 
-function newConversation(options?: unknown): Promise<void> {
+function newConversation(options?: unknown): Promise<UiInputScope> {
 	if (options !== undefined && (!isRecord(options) || (options.cwd !== undefined && typeof options.cwd !== 'string'))) {
 		throw new Error('新对话选项无效');
 	}
@@ -377,17 +377,23 @@ function newConversation(options?: unknown): Promise<void> {
 	return queueWorkspaceActivation(async () => {
 		if (isRecord(options) && typeof options.cwd === 'string') {
 			await performWorkspaceActivation(options.cwd, true, true);
-			return;
+		} else {
+			const root = readCurrentDesktopSettings().conversationStorageDirectory;
+			const cwd = await createConversationWorkspace(root);
+			// Keep the folder and its registry even if initialization fails: extensions
+			// can already have written files, and a retry must never delete that work.
+			await withWorkspaceSettings((previous) => writeStateFileAsync(workspaceSettingsPath(), {
+				...registerConversationWorkspace(previous, cwd, root), cwd: previous.cwd,
+			}));
+			await performWorkspaceActivation(cwd, true, true);
+			invalidateAppTrayData();
 		}
-		const root = readCurrentDesktopSettings().conversationStorageDirectory;
-		const cwd = await createConversationWorkspace(root);
-		// Keep the folder and its registry even if initialization fails: extensions
-		// can already have written files, and a retry must never delete that work.
-		await withWorkspaceSettings((previous) => writeStateFileAsync(workspaceSettingsPath(), {
-			...registerConversationWorkspace(previous, cwd, root), cwd: previous.cwd,
-		}));
-		await performWorkspaceActivation(cwd, true, true);
-		invalidateAppTrayData();
+		// Capture and authorize the created draft before the next queued navigation
+		// can activate another session. The renderer may already have moved away.
+		const snapshot = await agentService.getSnapshot();
+		const scope = { cwd: snapshot.cwd, sessionPath: snapshot.sessionPath };
+		inputFeatures?.rememberScope(scope);
+		return scope;
 	});
 }
 

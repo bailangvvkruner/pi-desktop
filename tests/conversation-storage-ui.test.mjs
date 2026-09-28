@@ -35,8 +35,10 @@ test('default new conversations refresh their independent directories and keep h
   const { state } = fixture();
   await useChatStore.getState().newSession();
   const first = useChatStore.getState().cwd;
+  await settle();
   await useChatStore.getState().newSession();
   const second = useChatStore.getState().cwd;
+  await settle();
   assert.notEqual(first, second);
   assert.deepEqual(state.calls, [undefined, undefined]);
   const current = useChatStore.getState();
@@ -52,10 +54,12 @@ test('changing the storage root keeps old automatic conversations hidden and pre
   const { state, bridge } = fixture();
   await useChatStore.getState().newSession();
   const old = useChatStore.getState().cwd;
+  await settle();
   state.root = 'D:/Saved conversations';
   const nestedProject = state.root + '/user-created-project';
   bridge.listWorkspaces = async () => [project, nestedProject, ...state.folders];
   await useChatStore.getState().newSession();
+  await settle();
   const current = useChatStore.getState();
   assert.ok(current.cwd.startsWith(state.root + '/'));
   assert.ok(current.conversationWorkspaces.includes(old));
@@ -68,6 +72,7 @@ test('an explicit project used as the storage root remains visible when backend 
   state.root = project;
   bridge.listConversationWorkspaces = async () => [originalRoot, ...state.folders];
   await useChatStore.getState().newSession();
+  await settle();
   const current = useChatStore.getState();
   assert.equal(current.defaultWorkspace, project);
   assert.deepEqual(sidebarProjectPaths(current.workspaces, null, current.conversationWorkspaces), [project]);
@@ -81,27 +86,32 @@ test('project-scoped new conversations forward the selected project instead of a
   assert.equal(useChatStore.getState().cwd, project);
 });
 
-test('folder creation errors preserve the active conversation and release navigation controls', async () => {
+test('folder creation errors keep the new draft editable and release navigation controls', async () => {
   const { state } = fixture();
   state.fail = true;
   await assert.rejects(useChatStore.getState().newSession(), /Cannot create conversation folder/);
   const current = useChatStore.getState();
-  assert.equal(current.cwd, project);
-  assert.equal(current.sessionId, 'old');
+  assert.equal(current.cwd, '');
+  assert.equal(current.sessionId, null);
+  assert.ok(current.sessionPreparation);
+  assert.equal(current.status, 'error');
   assert.equal(current.navigationPending, false);
   assert.equal(current.error, 'Cannot create conversation folder');
 });
 
-test('navigation remains pending until automatic-directory metadata arrives', async () => {
+test('navigation finishes before automatic-directory metadata arrives', async () => {
   const { bridge } = fixture();
   const original = bridge.listConversationWorkspaces;
   let release;
   bridge.listConversationWorkspaces = () => new Promise(resolve => { release = async () => resolve(await original()); });
   const operation = useChatStore.getState().newSession();
   await settle();
-  assert.equal(useChatStore.getState().navigationPending, true);
-  await release();
   await operation;
+  assert.equal(useChatStore.getState().navigationPending, false);
+  assert.equal(useChatStore.getState().sessionPreparation, null);
+  assert.equal(useChatStore.getState().status, 'idle');
+  await release();
+  await settle();
   const current = useChatStore.getState();
   assert.equal(current.navigationPending, false);
   assert.ok(current.conversationWorkspaces.includes(current.cwd));

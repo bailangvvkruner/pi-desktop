@@ -74,6 +74,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const navigating = useChatStore((s) => s.navigationPending || s.sessionLoading);
 	const sessionPreparation = useChatStore((s) => s.sessionPreparation);
 	const draftTransfer = useChatStore((s) => s.draftTransfer);
+	const backgroundDraftTransfers = useChatStore((s) => s.backgroundDraftTransfers);
 	const queuedMessages = useChatStore((s) => s.queuedMessages);
 	const platform = useChatStore((s) => s.appInfo?.platform);
 	const cwd = useChatStore((s) => s.cwd);
@@ -111,6 +112,8 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const pdfJobs = useRef(new Set<string>());
 	const sendRequest = useRef<{ key: string; scope: { cwd: string; sessionPath: string | null }; text: string; attachments: UiAttachment[]; id: string; behavior?: BusyBehavior; preparationRequestId?: number } | null>(null);
 	const handledDraftTransfers = useRef(new Set<number>());
+	const attachmentTargets = useRef(new Set<{ key: string }>());
+	const transferredScopes = useRef(new Map<string, UiInputScope>());
 	const submissionErrorsByKey = useRef(new Map<string, string>());
 	const textRef = useRef(text);
 	const attachmentsRef = useRef(attachments);
@@ -145,32 +148,54 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const hasContent = Boolean(text.trim() || attachments.length);
 	const showStop = busy && !hasContent;
 	const primaryActionLabel = t(showStop ? stopping ? 'composer.stopping' : 'composer.stopTitle' : 'composer.send');
-	const canSubmit = hasContent && !sending && !attaching && !restoringDraft && !unavailable && !missingAttachments.length;
+	const canSubmit = hasContent && !sending && !attaching && !restoringDraft && !unavailable && status !== 'error' && !missingAttachments.length;
 	const slashCatalogKey = JSON.stringify([cwd, sessionId]);
 	const slashOpen = slashTrigger !== null;
 	const inputBridge = bridge as Partial<InputFeatureBridge> | null;
-	if (inputBridge?.getInputDraft && durable.current?.bridge !== bridge) { durable.current = { bridge, drafts: new PersistedComposerDrafts(inputBridge as InputFeatureBridge) }; loadedDrafts.current.clear(); draftHydrations.current.clear(); hydrationScopes.current.clear(); handledDraftTransfers.current.clear(); }
-	function applyDraftTransfer(transfer: typeof draftTransfer) {
+	if (inputBridge?.getInputDraft && durable.current?.bridge !== bridge) { durable.current = { bridge, drafts: new PersistedComposerDrafts(inputBridge as InputFeatureBridge) }; loadedDrafts.current.clear(); draftHydrations.current.clear(); hydrationScopes.current.clear(); handledDraftTransfers.current.clear(); transferredScopes.current.clear(); }
+	function persistTransferredDraft(key: string) {
+		const scope = transferredScopes.current.get(key), draft = draftsRef.current.get(key);
+		if (scope && draft && useChatStore.getState().bridge === bridge) {
+			writeDraft(key, draft.text);
+			void durable.current?.drafts.save(scope, draft).catch(() => setDraftWarning(true));
+		}
+	}
+	function applyDraftTransfer(transfer: typeof draftTransfer, background = false) {
 		if (useChatStore.getState().bridge !== bridge) return;
 		if (!transfer || handledDraftTransfers.current.has(transfer.requestId)) return;
 		const from = draftStorageKey(transfer.from.cwd, transfer.from.sessionPath);
 		const to = draftStorageKey(transfer.to.cwd, transfer.to.sessionPath);
-		if (currentKeyRef.current !== from && draftKey !== to && sendRequest.current?.preparationRequestId !== transfer.requestId) return;
+		if (!background && currentKeyRef.current !== from && draftKey !== to && sendRequest.current?.preparationRequestId !== transfer.requestId) return;
 		if (currentKeyRef.current === from) draftsRef.current.set(from, { text: textRef.current, attachments: attachmentsRef.current });
-		const draft = draftsRef.current.get(from) ?? { text: readDraft(from), attachments: [] };
+		let draft = draftsRef.current.get(from) ?? { text: readDraft(from), attachments: [] };
+		if (background) draft = restoreSubmittedDraft(draftsRef.current, to, draft);
 		draftsRef.current.set(to, draft);
+		transferredScopes.current.set(to, transfer.to);
+		// In-flight file/context reads follow their draft through every handoff.
+		// Only those jobs move: reopening the source conversation keeps its identity.
+		for (const target of attachmentTargets.current) if (target.key === from) target.key = to;
 		const hydration = draftHydrations.current.get(from);
 		if (hydration && !loadedDrafts.current.has(from)) {
 			draftHydrations.current.set(to, hydration);
 			hydrationScopes.current.set(to, hydration.scope);
 		} else loadedDrafts.current.add(to);
 		missingByKey.current.set(to, missingByKey.current.get(from) ?? []);
-		textEdits.current.set(to, textEdits.current.get(from) ?? 0);
-		attachmentEdits.current.set(to, attachmentEdits.current.get(from) ?? 0);
+		textEdits.current.set(to, background ? Math.max(textEdits.current.get(to) ?? 0, textEdits.current.get(from) ?? 0) + 1 : textEdits.current.get(from) ?? 0);
+		attachmentEdits.current.set(to, background ? Math.max(attachmentEdits.current.get(to) ?? 0, attachmentEdits.current.get(from) ?? 0) + 1 : attachmentEdits.current.get(from) ?? 0);
 		if (sendRequest.current?.preparationRequestId === transfer.requestId) { sendRequest.current.key = to; sendRequest.current.scope = transfer.to; }
 		writeDraft(to, draft.text);
 		handledDraftTransfers.current.add(transfer.requestId);
+		if (background) {
+			if (currentKeyRef.current === to) { textRef.current = draft.text; attachmentsRef.current = draft.attachments; setText(draft.text); setAttachments(draft.attachments); }
+			persistTransferredDraft(to);
+		}
 	}
+	useLayoutEffect(() => {
+		if (!backgroundDraftTransfers.length) return;
+		for (const transfer of backgroundDraftTransfers) applyDraftTransfer(transfer, true);
+		const consumed = new Set(backgroundDraftTransfers.map(transfer => transfer.requestId));
+		useChatStore.setState(state => ({ backgroundDraftTransfers: state.backgroundDraftTransfers.filter(transfer => !consumed.has(transfer.requestId)) }));
+	}, [backgroundDraftTransfers]);
 	useEffect(() => {
 		const persistence = durable.current?.drafts;
 		// A read already started in the original session may finish during preparation.
@@ -313,6 +338,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 			attachmentsRef.current = next;
 			setAttachments(next);
 		}
+		else persistTransferredDraft(key);
 	}
 
 	function syncCompletions(value: string, start: number, end: number) {
@@ -373,7 +399,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 			requestAnimationFrame(() => {
 				if (key === currentKeyRef.current && document.activeElement === textareaRef.current) textareaRef.current?.setSelectionRange(adjust(start), adjust(end));
 			});
-		} else { draftsRef.current.set(key, { ...draft, text: consumed.text }); writeDraft(key, consumed.text); }
+		} else { draftsRef.current.set(key, { ...draft, text: consumed.text }); writeDraft(key, consumed.text); persistTransferredDraft(key); }
 	}
 
 	async function selectContext(request: UiContextRequest) {
@@ -388,21 +414,24 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 			textareaRef.current?.focus({ preventScroll: true });
 		});
 		if (hasContextSource(attachmentsRef.current, request)) { consumeDraftMention(key, original, mention); return; }
+		const target = { key };
+		attachmentTargets.current.add(target);
 		pendingAttachmentsRef.current += 1;
 		setAttaching(true);
 		setSubmissionError(null);
 		try {
 			if ((draftsRef.current.get(key)?.attachments.length ?? 0) >= MAX_ATTACHMENTS) throw new Error(t('composer.maxAttachments', { count: MAX_ATTACHMENTS }));
 			const attachment = await bridge.readContext(request);
-			const current = draftsRef.current.get(key)?.attachments ?? [];
+			const current = draftsRef.current.get(target.key)?.attachments ?? [];
 			if (!hasContextSource(current, request)) {
 				if (current.length >= MAX_ATTACHMENTS) throw new Error(t('composer.maxAttachments', { count: MAX_ATTACHMENTS }));
-				changeAttachments([...current, attachment], key);
+				changeAttachments([...current, attachment], target.key);
 			}
-			consumeDraftMention(key, original, mention);
+			consumeDraftMention(target.key, original, mention);
 		} catch (error) {
-			if (currentKeyRef.current === key) setSubmissionError(error instanceof Error ? error.message : String(error));
+			if (currentKeyRef.current === target.key) setSubmissionError(error instanceof Error ? error.message : String(error));
 		} finally {
+			attachmentTargets.current.delete(target);
 			pendingAttachmentsRef.current -= 1;
 			setAttaching(pendingAttachmentsRef.current > 0);
 		}
@@ -410,7 +439,8 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 
 	async function addFiles(files: File[]) {
 		if (!files.length) return;
-		const key = currentKeyRef.current;
+		const target = { key: currentKeyRef.current };
+		attachmentTargets.current.add(target);
 		pendingAttachmentsRef.current += 1;
 		setAttaching(true);
 		setSubmissionError(null);
@@ -423,12 +453,13 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 				try { const result = await inputBridge.processPdfInput({ requestId, name: pdf.name.toLowerCase().endsWith('.pdf') ? pdf.name.slice(-200) : `${pdf.name.slice(0, 196)}.pdf`, data }); return result.attachment; }
 				finally { pdfJobs.current.delete(requestId); setPdfCount(pdfJobs.current.size); }
 			}),
-				() => draftsRef.current.get(key)?.attachments ?? [],
-				(next) => changeAttachments(next, key),
+				() => draftsRef.current.get(target.key)?.attachments ?? [],
+				(next) => changeAttachments(next, target.key),
 				() => new Error(t('composer.maxAttachments', { count: MAX_ATTACHMENTS })));
 		} catch (error) {
-			if (currentKeyRef.current === key) setSubmissionError(error instanceof Error ? error.message : String(error));
+			if (currentKeyRef.current === target.key) setSubmissionError(error instanceof Error ? error.message : String(error));
 		} finally {
+			attachmentTargets.current.delete(target);
 			pendingAttachmentsRef.current -= 1;
 			setAttaching(pendingAttachmentsRef.current > 0);
 		}
@@ -456,7 +487,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	async function submit(behavior?: BusyBehavior): Promise<void> {
 		const value = textRef.current.trim();
 		const submittedAttachments = attachmentsRef.current;
-		if ((!value && !submittedAttachments.length) || sendingRef.current || pendingAttachmentsRef.current > 0 || (pendingDraftRestoresRef.current.get(currentKeyRef.current) ?? 0) > 0 || unavailable || missingAttachments.length) return;
+		if ((!value && !submittedAttachments.length) || sendingRef.current || pendingAttachmentsRef.current > 0 || (pendingDraftRestoresRef.current.get(currentKeyRef.current) ?? 0) > 0 || unavailable || status === 'error' || missingAttachments.length) return;
 		const submittedKey = currentKeyRef.current;
 		const submitted = { text: textRef.current, attachments: submittedAttachments };
 		// Sending commits the current draft choice even while background recovery
@@ -502,6 +533,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 					textRef.current = restored.text; attachmentsRef.current = restored.attachments;
 					setText(restored.text); setAttachments(restored.attachments);
 				}
+				else persistTransferredDraft(request.key);
 			}
 			if (!(error instanceof Error && error.name === 'AbortError')) {
 				const message = error instanceof Error ? error.message : String(error);

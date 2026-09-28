@@ -10,7 +10,7 @@ export * from './resultFiles.ts';
 export * from './pluginUpdates.ts';
 export * from './mcpFeatures.ts';
 export * from './managementFeatures.ts';
-import type { InputFeatureBridge } from './inputFeatures';
+import type { InputFeatureBridge, UiInputScope } from './inputFeatures';
 import type { DataFeaturesBridge } from './dataFeatures';
 import type { WorkbenchFeaturesBridge } from './workbenchFeatures';
 export * from './inputFeatures.ts';
@@ -944,8 +944,8 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   /** Edit, remove, or steer-early a queued instruction while the agent is busy (Codex-style queue management). */
   updateQueuedMessage(id: string, action: 'edit' | 'remove' | 'steer', text?: string): Promise<void>;
   abort(): Promise<void>;
-  /** Omitted cwd creates an independent folder under the configured storage directory. */
-  newSession(options?: { cwd?: string }): Promise<void>;
+  /** Omitted cwd creates an independent folder. The returned scope remains valid for draft persistence after navigation. */
+  newSession(options?: { cwd?: string }): Promise<UiInputScope | void>;
   onExtensionDialog(listener: (request: UiExtensionDialogRequest) => void): () => void;
   onExtensionDialogClosed(listener: (id: string) => void): () => void;
   getPendingExtensionDialogs(): Promise<UiExtensionDialogRequest[]>;

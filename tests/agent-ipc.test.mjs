@@ -665,6 +665,9 @@ test('the built-in workspace exposes unassigned conversations even when absent f
 test('standalone conversations get independent folders and retain discoverable history after storage changes', async (t) => {
   const temp = await realpath(tmpdir());
   const root = await mkdtemp(join(temp, 'pi-ipc-conversation-storage-'));
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = join(root, 'agent');
+  t.after(() => { if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousAgentDir; });
   const home = join(root, 'PiDesktopWorkspace');
   const project = join(home, 'my-project');
   const changedRoot = join(root, 'new-storage');
@@ -690,7 +693,7 @@ test('standalone conversations get independent folders and retain discoverable h
       assert.equal(options.fresh, true);
       assert.equal((await stat(options.cwd)).isDirectory(), true);
       initialized.push(options.cwd);
-      snapshot = { cwd: options.cwd, sessionPath: null };
+      snapshot = { cwd: options.cwd, sessionPath: join(options.cwd, `session-${initialized.length}.jsonl`) };
     },
     async switchWorkspace(cwd) { snapshot = { cwd, sessionPath: null }; },
     async forgetWorkspace() {},
@@ -698,7 +701,7 @@ test('standalone conversations get independent folders and retain discoverable h
     listSessions: async (cwd) => initialized.includes(cwd) ? [{ id: cwd, path: `${cwd}.jsonl` }] : [],
   };
   const ipc = await import('../packages/desktop/src/main/ipc.ts?conversation-storage');
-  const { IPC_CHANNELS } = await import('../packages/shared/src/index.ts');
+  const { IPC_CHANNELS, INPUT_FEATURE_CHANNELS } = await import('../packages/shared/src/index.ts');
   t.after(async () => {
     await ipc.disposeServices();
     delete globalThis.__ipcOpenDialog;
@@ -716,14 +719,22 @@ test('standalone conversations get independent folders and retain discoverable h
   for (const options of [null, true, [], { cwd: 1 }]) assert.throws(() => call(IPC_CHANNELS.agentNewSession, options), /新对话选项无效/);
   await assert.rejects(call(IPC_CHANNELS.agentNewSession, { cwd: pickedRoot }), /未知工作区/);
 
-  await call(IPC_CHANNELS.agentNewSession);
+  const firstScope = await call(IPC_CHANNELS.agentNewSession);
   const first = initialized[0];
   assert.equal(dirname(first), home);
+  assert.deepEqual(firstScope, { cwd: first, sessionPath: join(first, 'session-1.jsonl') });
   await writeFile(join(first, 'keep.txt'), 'user-created content');
-  await Promise.all([call(IPC_CHANNELS.agentNewSession), call(IPC_CHANNELS.agentNewSession)]);
+  const parallelScopes = await Promise.all([call(IPC_CHANNELS.agentNewSession), call(IPC_CHANNELS.agentNewSession)]);
   assert.equal(new Set(initialized).size, 3, 'parallel requests reserve different directories');
+  assert.deepEqual(parallelScopes, initialized.slice(1).map((cwd, index) => ({ cwd, sessionPath: join(cwd, `session-${index + 2}.jsonl`) })),
+    'each RPC captures its created scope before the next queued activation');
   assert.ok(initialized.every(cwd => dirname(cwd) === home));
   assert.equal(await readFile(join(first, 'keep.txt'), 'utf8'), 'user-created content');
+  const deferredDraft = call(INPUT_FEATURE_CHANNELS.saveInputDraft, { ...firstScope, text: 'Typed before navigating away', attachmentIds: [], expectedVersion: 0 });
+  assert.equal(deferredDraft.text, 'Typed before navigating away', 'created scopes allow deferred draft persistence after another conversation activates');
+  assert.equal(call(INPUT_FEATURE_CHANNELS.getInputDraft, firstScope).text, deferredDraft.text);
+  assert.throws(() => call(INPUT_FEATURE_CHANNELS.saveInputDraft, { ...firstScope, sessionPath: join(first, 'uncreated.jsonl'), text: 'wrong scope', attachmentIds: [], expectedVersion: 0 }), /会话已变化/,
+    'scope handoff does not authorize arbitrary session paths');
 
   for (const invalid of ['', 'relative-folder', 123, 'C:\0bad']) {
     await assert.rejects(call(IPC_CHANNELS.desktopSettingsSet, { conversationStorageDirectory: invalid }), /绝对文件夹路径/);
@@ -751,8 +762,9 @@ test('standalone conversations get independent folders and retain discoverable h
   await call(IPC_CHANNELS.workspaceSwitch, first);
   assert.equal(snapshot.cwd, first, 'old storage locations remain authorized after a setting change');
 
-  await call(IPC_CHANNELS.agentNewSession, { cwd: project });
+  const projectScope = await call(IPC_CHANNELS.agentNewSession, { cwd: project });
   assert.equal(initialized.at(-1), project);
+  assert.deepEqual(projectScope, { cwd: project, sessionPath: join(project, `session-${initialized.length}.jsonl`) });
   assert.deepEqual(JSON.parse(await readFile(settingsPath, 'utf8')).conversationWorkspaces, automatic);
   await call(IPC_CHANNELS.desktopSettingsSet, { conversationStorageDirectory: project });
   assert.equal((await call(IPC_CHANNELS.workspaceListConversations)).includes(project), false,
