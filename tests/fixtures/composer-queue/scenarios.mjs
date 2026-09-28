@@ -187,7 +187,7 @@ export default async function composerQueueScenarios(review) {
   await review.evaluate(`(${installQueueHarness.toString()})()`);
   await review.waitFor(`document.querySelectorAll('.pd-composer-queue-item').length === 6 && document.querySelector('.pd-composer-shell textarea')?.value === ${q}.originalDraft`);
   await review.evaluate(`${q}.mainTextarea=document.querySelector('.pd-composer-shell textarea'); ${q}.mainDraftBefore=JSON.stringify(${q}.drafts.get(${q}.draftKey(${q}.scopeA)));`);
-  await review.assert(`Math.abs(document.querySelector('.pd-conversation-panes').getBoundingClientRect().width - document.querySelector('.pd-chat-view-host').getBoundingClientRect().width) < 1`, 'The conversation pane container fills the available chat width');
+  await review.assert(`Math.abs(document.querySelector('.pd-main').getBoundingClientRect().width - document.querySelector('.pd-chat-view-host').getBoundingClientRect().width) < 1`, 'The conversation fills the available chat width');
   await review.assert(`![...document.querySelectorAll('.pd-composer-queue-item textarea, .pd-composer-queue-item details')].some(${q}.visible) && document.querySelectorAll('.pd-composer-queue-item').length === ${q}.initialItems.length`, 'All queue entries use compact rows without an inline editor or per-row disclosure');
   await review.assert(`${q}.calls.filter(call=>call.name==='get').every(call=>${q}.key(call.request)===${q}.key(${q}.scopeA))`, 'Initial queue reads include workspace, session path, and session ID');
   await review.screenshot('queue-dark-1440');
@@ -451,19 +451,16 @@ export default async function composerQueueScenarios(review) {
   await review.key('Escape');
   await review.assert(`document.querySelector('.pd-composer-shell > textarea').value === ''`, 'Escape exits history and returns to the original draft');
 
-  // Splitting the layout must preserve the existing composer and its outstanding send acknowledgement.
-  await review.evaluate(`${q}.allowSubmit=true; ${q}.deferNextSubmit=true; ${q}.composerBeforeSplit=document.querySelector('.pd-composer-shell > textarea'); void 0`);
-  await review.fill('.pd-composer-shell > textarea', '快捷键：分屏期间等待发送确认');
+  // An outstanding send acknowledgement keeps the existing composer and cannot be submitted twice.
+  await review.evaluate(`${q}.allowSubmit=true; ${q}.deferNextSubmit=true; ${q}.composerBeforeSubmit=document.querySelector('.pd-composer-shell > textarea'); void 0`);
+  await review.fill('.pd-composer-shell > textarea', '快捷键：等待发送确认');
   await review.key('Enter');
   await review.waitFor(`${q}.pendingSubmits.length === 1`);
-  await review.clickText('.pd-pane-toolbar button', '左右分屏');
-  await review.assert(`${q}.composerBeforeSplit === document.querySelector('.pd-composer-shell > textarea') && document.querySelector('.pd-send-button').getAttribute('aria-busy') === 'true' && document.querySelector('.pd-composer-shell > textarea').value === '快捷键：分屏期间等待发送确认'`, 'Splitting during an unacknowledged send keeps the same composer and request state');
-  await review.screenshot('input-pending-split');
-  await review.clickText('.pd-pane-toolbar button', '单窗格');
-  await review.assert(`${q}.composerBeforeSplit === document.querySelector('.pd-composer-shell > textarea')`, 'Collapsing the pane tree also retains the composer DOM');
+  await review.assert(`${q}.composerBeforeSubmit === document.querySelector('.pd-composer-shell > textarea') && document.querySelector('.pd-send-button').getAttribute('aria-busy') === 'true' && document.querySelector('.pd-send-button').disabled && document.querySelector('.pd-composer-shell > textarea').value === '快捷键：等待发送确认'`, 'An unacknowledged send retains the composer and disables repeated submission');
+  await review.screenshot('input-pending-acknowledgement');
   await review.evaluate(`(() => {const pending=${q}.pendingSubmits.shift();pending.resolve(pending.receipt);})()`);
   await review.waitFor(`document.querySelector('.pd-composer-shell > textarea').value === '' && document.querySelector('.pd-send-button').getAttribute('aria-busy') === 'false'`);
-  await review.assert(`${q}.calls.filter(call=>call.name==='submit' && call.request.text==='快捷键：分屏期间等待发送确认').length === 1`, 'A delayed acknowledgement clears the original submitted draft exactly once after layout changes');
+  await review.assert(`${q}.calls.filter(call=>call.name==='submit' && call.request.text==='快捷键：等待发送确认').length === 1`, 'A delayed acknowledgement clears the original submitted draft exactly once');
   await review.evaluate(`${q}.allowSubmit=false`);
 
   // Large queues stay compact and scroll inside the viewport in both themes.
