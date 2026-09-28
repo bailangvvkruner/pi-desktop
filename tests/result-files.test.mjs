@@ -109,6 +109,25 @@ test('preview reads are bounded and truncated text ends on a complete Unicode ch
   }
 });
 
+test('Office files use bounded binary previews only for DOCX and XLSX ZIP signatures', async t => {
+  const { cwd, service } = fixture(t);
+  const bytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4]);
+  for (const format of ['docx', 'xlsx']) {
+    writeFileSync(join(cwd, `document.${format}`), bytes);
+    const preview = await service.previewResultFile({ cwd, path: `document.${format}` });
+    assert.equal(preview.kind, 'office');
+    assert.equal(preview.officeFormat, format);
+    assert.equal(preview.bytesBase64, bytes.toString('base64'));
+    assert.equal(preview.dataUrl, undefined);
+    truncateSync(join(cwd, `document.${format}`), RESULT_FILE_LIMITS.office + 1);
+    const large = await service.previewResultFile({ cwd, path: `document.${format}` });
+    assert.equal(large.reason, 'too-large');
+    assert.equal(large.bytesBase64, undefined);
+  }
+  writeFileSync(join(cwd, 'legacy.doc'), bytes);
+  assert.equal((await service.previewResultFile({ cwd, path: 'legacy.doc' })).kind, 'unsupported');
+});
+
 test('stale conversations are rejected before reads and again after async path resolution', async t => {
   const { root, cwd, service, switchTo } = fixture(t);
   writeFileSync(join(cwd, 'file.txt'), 'hello');

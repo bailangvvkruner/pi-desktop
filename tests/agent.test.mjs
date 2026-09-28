@@ -34,9 +34,15 @@ test('Pi SDK runtime initializes, replaces a session, and publishes a current sn
     service = new AgentService();
     const events = [];
     service.onEvent((envelope) => events.push(envelope));
+    const assertReadyKind = (snapshot, kind) => {
+      const ready = events.findLast(({ event }) => event.type === 'ready')?.event;
+      assert.equal(ready?.sessionId, snapshot.sessionId, 'the ready event belongs to the newly selected session');
+      assert.equal(ready.resumeKind ?? 'cold', kind);
+    };
 
     await service.init({ cwd: workspace });
     const first = service.getSnapshot();
+    assertReadyKind(first, 'cold');
     assert.equal(first.status, 'idle');
     assert.equal(first.cwd, workspace);
     assert.ok(first.sessionId);
@@ -49,6 +55,7 @@ test('Pi SDK runtime initializes, replaces a session, and publishes a current sn
 
     await service.newSession();
     const second = service.getSnapshot();
+    assertReadyKind(second, 'cold');
     assert.equal(second.status, 'idle');
     assert.notEqual(second.sessionId, first.sessionId);
     assert.ok(second.sequence > first.sequence);
@@ -69,6 +76,7 @@ test('Pi SDK runtime initializes, replaces a session, and publishes a current sn
 
     await service.switchSession(persisted.getSessionFile());
     const restored = service.getSnapshot();
+    assertReadyKind(restored, 'cold');
     assert.equal(restored.sessionId, persisted.getSessionId());
     assert.deepEqual(restored.messages.map(({ text }) => text), ['Restore me', 'Restored reply']);
     assert.equal(restored.activities.find(({ id }) => id === 'interrupted-tool')?.status, 'interrupted',
@@ -88,13 +96,17 @@ test('Pi SDK runtime initializes, replaces a session, and publishes a current sn
     mkdirSync(otherWorkspace);
     await service.switchWorkspace(otherWorkspace);
     assert.equal(service.getSnapshot().cwd, otherWorkspace);
+    assertReadyKind(service.getSnapshot(), 'cold');
     await service.switchWorkspace(workspace);
     assert.equal(service.getSnapshot().sessionId, other.getSessionId(), 'switching projects resumes its live Pi runtime');
+    assertReadyKind(service.getSnapshot(), 'warm');
 
     await service.init({ cwd: workspace, sessionPath: persisted.getSessionFile() });
     assert.equal(service.getSnapshot().sessionId, persisted.getSessionId(), 'init opens the requested Pi session');
+    assertReadyKind(service.getSnapshot(), 'warm');
     await service.init({ cwd: workspace, fresh: true });
     assert.notEqual(service.getSnapshot().sessionId, persisted.getSessionId(), 'fresh init creates a new Pi session');
+    assertReadyKind(service.getSnapshot(), 'cold');
     await assert.rejects(service.init({ cwd: workspace, sessionPath: join(tempRoot, 'outside.jsonl') }), /不属于指定工作区/);
     await assert.rejects(service.init({ cwd: workspace, sessionPath: persisted.getSessionFile(), fresh: true }), /不能同时指定/);
   } finally {

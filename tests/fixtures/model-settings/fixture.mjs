@@ -83,6 +83,8 @@ export function installModelSettingsFixture(options = {}) {
     getInputDraft: () => ({ version: 0, text: '', attachments: [], missing: [] }),
     saveInputDraft: request => ({ version: request.expectedVersion + 1, text: request.text, attachments: [], missing: [] }),
     getInputQueue: () => ({ version: 0, paused: false, items: [] }),
+    recordUiDiagnostic: () => undefined,
+    exportDiagnostics: () => ({ path: '/fixture/diagnostics.zip', entries: 1, skipped: [] }),
   };
   const subscriptions = ['onAgentEvent', 'onUpdateStateChanged', 'onAppCommand', 'onWindowChromeStateChanged', 'onExtensionDialog', 'onExtensionDialogClosed', 'onWorkspaceCommandEvent', 'onAutomationChanged'];
   const bridge = {};

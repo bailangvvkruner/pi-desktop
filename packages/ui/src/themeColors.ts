@@ -12,7 +12,7 @@ type NamedPreset = Exclude<ColorPresetId, 'custom'>;
 const PRESETS: Record<NamedPreset, Record<ColorMode, ThemeColors>> = {
 	default: {
 		light: { accent: '#000000', surface: '#f8f8f8', ink: '#262626', contrast: 50 },
-		dark: { accent: '#ffffff', surface: '#161616', ink: '#d4d4d4', contrast: 50 },
+		dark: { accent: '#ffffff', surface: '#161616', ink: '#e5e5e5', contrast: 50 },
 	},
 	sky: {
 		light: { accent: '#38bdf8', surface: '#fafafa', ink: '#404040', contrast: 50 },
@@ -41,6 +41,10 @@ const PRESETS: Record<NamedPreset, Record<ColorMode, ThemeColors>> = {
 // stale "custom" choice (generation 1: original indigo; generation 2: zcode sky).
 const LEGACY_DEFAULT_GENERATIONS: Array<Record<ColorMode, ThemeColors>> = [
 	{
+		light: { accent: '#000000', surface: '#f8f8f8', ink: '#262626', contrast: 50 },
+		dark: { accent: '#ffffff', surface: '#161616', ink: '#d4d4d4', contrast: 50 },
+	},
+	{
 		light: { accent: '#445ca8', surface: '#ffffff', ink: '#20232b', contrast: 50 },
 		dark: { accent: '#aebaff', surface: '#111216', ink: '#ececef', contrast: 50 },
 	},
@@ -56,19 +60,19 @@ const DEFAULT_TOKENS: Record<ColorMode, Record<string, string>> = {
 	dark: {
 		'--pd-bg': '#161616', '--pd-sidebar': '#2b2b2b', '--pd-sidebar-hover': '#404040', '--pd-sidebar-selected': '#404040', '--pd-sidebar-surface': '#363636', '--pd-sidebar-tab': '#161616', '--pd-header': '#161616', '--pd-surface': '#222222',
 		'--pd-surface-hover': '#2d2d2d', '--pd-selected': '#2d2d2d', '--pd-border': '#2d2d2d', '--pd-border-soft': '#262626',
-		'--pd-text': '#d4d4d4', '--pd-text-subtle': '#888888', '--pd-text-weak': '#4f4f4f',
+		'--pd-text': '#e5e5e5', '--pd-text-subtle': '#b8b8b8', '--pd-text-weak': '#999999',
 		'--pd-brand': '#ffffff', '--pd-brand-hover': '#d4d4d4', '--pd-brand-ink': '#000000',
 		'--pd-danger': '#f87171', '--pd-warning': '#fbbf24', '--pd-success': '#4ade80',
 		'--pd-chrome-border': '#2b2b2b', '--pd-surface-raised': '#2b2b2b', '--pd-surface-muted': '#0e0e0e',
 		'--pd-border-strong': '#404040', '--pd-user-surface': '#222222', '--pd-code-surface': '#0e0e0e',
-		'--pd-code-text': '#d4d4d4', '--pd-overlay': '#00000080',
+		'--pd-code-text': '#e5e5e5', '--pd-overlay': '#00000080',
 		'--pd-selection-bg': '#ffffff2e', '--pd-selection-ink': '#ffffff', '--pd-mark-border': '#ffffff40',
 		'--pd-assistant-mark-bg': '#ffffff14', '--pd-brand-mark-bg': '#ffffff12',
 	},
 	light: {
 		'--pd-bg': '#f8f8f8', '--pd-sidebar': '#ececee', '--pd-sidebar-hover': '#e1e1e3', '--pd-sidebar-selected': '#e1e1e3', '--pd-sidebar-surface': '#e5e5e7', '--pd-sidebar-tab': '#f8f8f8', '--pd-header': '#f8f8f8', '--pd-surface': '#f1f1f1',
 		'--pd-surface-hover': '#ececec', '--pd-selected': '#e5e5e5', '--pd-border': '#e0e0e0', '--pd-border-soft': '#e9e9e9',
-		'--pd-text': '#262626', '--pd-text-subtle': '#7a7a7a', '--pd-text-weak': '#a4a4a4',
+		'--pd-text': '#262626', '--pd-text-subtle': '#666666', '--pd-text-weak': '#767676',
 		'--pd-brand': '#000000', '--pd-brand-hover': '#262626', '--pd-brand-ink': '#ffffff',
 		'--pd-danger': '#ef4444', '--pd-warning': '#d97706', '--pd-success': '#16a34a',
 		'--pd-chrome-border': '#e0e0e0', '--pd-surface-raised': '#ffffff', '--pd-surface-muted': '#ececee',
@@ -120,7 +124,7 @@ function normalizeChoice(input: unknown, mode: ColorMode): ThemeColorChoice {
 	};
 	// Only stale "default"-labeled choices migrate. An explicitly picked preset
 	// (e.g. 'sky', which reuses a former default palette) must survive untouched.
-	if (known === 'default') {
+	if (known === 'default' && value.preset !== 'custom') {
 		for (const generation of LEGACY_DEFAULT_GENERATIONS) {
 			const legacy = generation[mode];
 			if ((['accent', 'surface', 'ink'] as const).every((key) => choice[key] === legacy[key]) && choice.contrast === legacy.contrast) return getPresetColors('default', mode);

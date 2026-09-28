@@ -74,6 +74,26 @@ export default async function extensionRequestsScenarios(review) {
   await dismissed();
   await review.assert(response('queued-confirm', true), 'Confirm sends a boolean response');
 
+  const approval = { source: 'Workspace review extension', command: 'git diff -- src/demo.ts', cwd: '/demo', files: [{ path: 'src/demo.ts', diff: '--- a/src/demo.ts\n+++ b/src/demo.ts\n@@ -1 +1 @@\n-const value = 1;\n+const value = 2;' }], scopes: ['once', 'session'] };
+  await emit({ id: 'structured-decline', kind: 'confirm', title: '检查命令与文件变更', message: '请确认以下操作', approval });
+  await visible('检查命令与文件变更');
+  await review.assert(`${text('.pd-approval-card')}?.includes('git diff -- src/demo.ts') && ${text('.pd-approval-diff')}?.includes('+const value = 2;')`, 'Structured approval displays the actual command and file diff');
+  await review.fill('.pd-approval-feedback textarea', '先检查，不修改文件');
+  await review.evaluate(`${state}.failNext = true`);
+  await review.clickText(actions + ' button', '拒绝');
+  await review.waitFor(`${text(card + ' [role="alert"]')}?.includes('模拟发送失败')`);
+  await review.assert(`document.querySelector('.pd-approval-feedback textarea').value === '先检查，不修改文件'`, 'A failed approval response preserves rejection feedback');
+  await review.screenshot('structured-approval-feedback');
+  await review.clickText(actions + ' button', '拒绝');
+  await dismissed();
+  await review.assert(`${state}.responses.some(entry => entry.id === 'structured-decline' && !entry.value.approved && entry.value.feedback === '先检查，不修改文件')`, 'Rejection returns feedback to the requesting extension');
+  await emit({ id: 'structured-allow', kind: 'confirm', title: '允许只读检查', approval });
+  await visible('允许只读检查');
+  await review.fill('.pd-approval-scope select', 'session');
+  await review.clickText(actions + ' button', '允许');
+  await dismissed();
+  await review.assert(`${state}.responses.some(entry => entry.id === 'structured-allow' && entry.value.approved && entry.value.scope === 'session')`, 'Approval returns the explicitly selected authorization scope');
+
   await emit({ id: 'input', kind: 'input', title: '输入分支名', defaultValue: 'review/default', placeholder: '分支名称' });
   await visible('输入分支名');
   await review.assert(`document.querySelector(${q(card + ' input')}).value === 'review/default'`, 'A text question displays its default value');

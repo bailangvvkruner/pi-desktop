@@ -13,8 +13,9 @@ export default async function workbenchScenario(review) {
     mock('getWorkspaceGitDiff',(path,source)=>{state.diffs.push({path,source});return (source==='staged'?'已暂存 / Staged':'未暂存 / Unstaged')+'\\n--- a/'+path+'\\n+++ b/'+path+'\\n@@ -1,2 +1,2 @@\\n const first = 1;\\n-old needle\\n+new needle '+source+'\\n';});
     mock('startWorkspaceCommand',()=> 'workbench-review-command');
     mock('stopWorkspaceCommand',id=>{state.stops.push(id);fixture.emit('onWorkspaceCommandEvent',{id,type:'exit',code:0});});
-    mock('searchSessions',query=>{if(query){state.sessionSearches++;if(state.sessionSearches===1)throw new Error('Review session search failed');}return {sessions:[],truncated:false};});
-    mock('searchWorkspaceFiles',()=>{state.fileSearches++;return {files:[{path:'needle.ts',name:'needle.ts',kind:'file'}],truncated:false};});
+    mock('cancelDataSearch',()=>undefined);
+    mock('searchSessionsPage',({query})=>{if(query){state.sessionSearches++;if(state.sessionSearches===1)throw new Error('Review session search failed');}return {sessions:[],truncated:false};});
+    mock('searchProjectFiles',()=>{state.fileSearches++;return {files:[{path:'needle.ts',name:'needle.ts',kind:'file'}],truncated:false};});
     state.emit=data=>fixture.emit('onWorkspaceCommandEvent',{id:'workbench-review-command',type:'stdout',data});
     window.__workbenchReview=state;
   })()`);

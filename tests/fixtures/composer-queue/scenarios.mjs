@@ -5,7 +5,7 @@
 function installQueueHarness() {
   const fixture = window.__modelReview, bridge = window.piDesktop, clone = value => structuredClone(value);
   const state = window.__queueReview = {
-    calls: [], queues: new Map(), drafts: new Map(), payloads: new Map(), pendingGets: [], pendingMutations: [],
+    calls: [], queues: new Map(), drafts: new Map(), payloads: new Map(), pendingGets: [], pendingMutations: [], pendingSubmits: [],
     failNext: {}, rejectAfterApply: {}, deferNextGet: false, deferNextMutation: null, staleScopeCalls: [],
     originalDraft: '保留主输入框草稿：先检查登录流程。\n不要把它替换成排队指令。',
     editedText: '修改后的排队指令：补充登录失败测试，并保留原附件。',
@@ -148,7 +148,9 @@ function installQueueHarness() {
       queue.items.push(state.item(request.id, request.text, { behavior: request.behavior ?? 'followUp', attachments: request.attachments?.map(state.metadata) ?? [] }));
       queue.items.sort((a, b) => a.behavior === b.behavior ? 0 : a.behavior === 'steer' ? -1 : 1); queue.version++; state.publish();
     }
-    return { id: request.id, state: 'accepted' };
+    const receipt = { id: request.id, state: 'accepted' };
+    if (state.deferNextSubmit) { state.deferNextSubmit = false; return new Promise(resolve => state.pendingSubmits.push({ receipt, resolve })); }
+    return receipt;
   };
   bridge.prompt = async (...args) => { state.log('prompt', args); throw new Error('Unexpected regular prompt in queue review'); };
   bridge.abort = async () => { state.log('abort', {}); state.setStatus('idle'); };
@@ -185,6 +187,7 @@ export default async function composerQueueScenarios(review) {
   await review.evaluate(`(${installQueueHarness.toString()})()`);
   await review.waitFor(`document.querySelectorAll('.pd-composer-queue-item').length === 6 && document.querySelector('.pd-composer-shell textarea')?.value === ${q}.originalDraft`);
   await review.evaluate(`${q}.mainTextarea=document.querySelector('.pd-composer-shell textarea'); ${q}.mainDraftBefore=JSON.stringify(${q}.drafts.get(${q}.draftKey(${q}.scopeA)));`);
+  await review.assert(`Math.abs(document.querySelector('.pd-conversation-panes').getBoundingClientRect().width - document.querySelector('.pd-chat-view-host').getBoundingClientRect().width) < 1`, 'The conversation pane container fills the available chat width');
   await review.assert(`![...document.querySelectorAll('.pd-composer-queue-item textarea, .pd-composer-queue-item details')].some(${q}.visible) && document.querySelectorAll('.pd-composer-queue-item').length === ${q}.initialItems.length`, 'All queue entries use compact rows without an inline editor or per-row disclosure');
   await review.assert(`${q}.calls.filter(call=>call.name==='get').every(call=>${q}.key(call.request)===${q}.key(${q}.scopeA))`, 'Initial queue reads include workspace, session path, and session ID');
   await review.screenshot('queue-dark-1440');
@@ -300,6 +303,18 @@ export default async function composerQueueScenarios(review) {
   await clickVisibleButton(review, '恢复后续|恢复队列|继续队列|继续发送|^继续(?: |$)', '.pd-composer-queue');
   await review.waitFor(`${q}.currentQueue().paused === false`);
 
+  // A slow row must not lock the whole queue; subsequent rows reserve a position in the serial writer.
+  await review.evaluate(`${q}.deferNextMutation='steer'; ${q}.serialStart=${q}.calls.filter(call=>call.name==='mutate').length`);
+  await review.click(`${row('queue-first-001')} .pd-composer-queue-action.is-steer`);
+  await review.waitFor(`${q}.pendingMutations.length === 1`);
+  await review.assert(`document.querySelector('${row('queue-first-001')}').getAttribute('aria-busy') === 'true' && !document.querySelector('${row('queue-edit-002')} [aria-label="删除排队消息"]').disabled`, 'Only the active row is pending while other rows remain available');
+  await review.click(`${row('queue-edit-002')} .pd-composer-queue-action.is-steer`);
+  await review.assert(`document.querySelector('${row('queue-edit-002')}').getAttribute('aria-busy') === 'true' && document.querySelector('${row('queue-edit-002')} .pd-queue-pending').textContent.includes('等待') && ${q}.calls.filter(call=>call.name==='mutate').length === ${q}.serialStart + 1`, 'An independent row shows waiting feedback without sending an overlapping mutation');
+  await review.screenshot('queue-independent-pending');
+  await review.evaluate(`${q}.releaseMutation()`);
+  await review.waitFor(`!document.querySelector('.pd-composer-queue-item[aria-busy="true"]') && ${q}.currentQueue().items.find(item=>item.id==='queue-edit-002').behavior === 'steer'`);
+  await review.assert(`${q}.calls.filter(call=>call.name==='mutate').at(-1).request.expectedVersion === ${q}.calls.filter(call=>call.name==='mutate').at(-2).request.expectedVersion + 1`, 'The waiting row uses the acknowledged version of the previous operation');
+
   // A stale read must not resurrect a row after a newer successful mutation.
   await review.evaluate(`${q}.deferNextGet=true; ${q}.publish();`);
   await review.waitFor(`${q}.pendingGets.length === 1`);
@@ -409,13 +424,46 @@ export default async function composerQueueScenarios(review) {
   }
   await review.fill('.pd-composer-shell > textarea', '快捷键：停止任务后仍应保留的草稿');
   await review.evaluate(`${q}.submitsBeforeStop=${q}.calls.filter(call=>call.name==='submit').length`);
-  await review.click('.pd-send-button[data-action="stop"]');
+  await review.evaluate(`document.querySelector('.pd-composer-queue-text').focus()`);
+  await review.key('Escape');
   await review.waitFor(`${q}.calls.some(call=>call.name==='abort') && document.querySelector('.pd-send-button[data-action="send"]') !== null`);
-  await review.assert(`${q}.calls.filter(call=>call.name==='submit').length === ${q}.submitsBeforeStop && document.querySelector('.pd-composer-shell > textarea').value === '快捷键：停止任务后仍应保留的草稿'`, 'The busy primary button stops the task without submitting or clearing the draft');
+  await review.assert(`${q}.calls.filter(call=>call.name==='submit').length === ${q}.submitsBeforeStop && document.querySelector('.pd-composer-shell > textarea').value === '快捷键：停止任务后仍应保留的草稿'`, 'Escape outside the composer stops the task without submitting or clearing the draft');
   await review.fill('.pd-composer-shell > textarea', '快捷键：空闲时直接发送');
   await review.key('Enter');
   await review.waitFor(`${q}.calls.some(call=>call.name==='submit' && call.request.text==='快捷键：空闲时直接发送')`);
   await review.assert(`${q}.calls.filter(call=>call.name==='submit').at(-1).request.behavior == null`, 'Idle submit starts a normal request without a stale busy-queue override');
+  await review.evaluate(`${q}.allowSubmit=false`);
+
+  // History is populated by successful sends, preserves drafts and attachments, and never opens slash suggestions.
+  await review.waitFor(`document.querySelector('.pd-composer-shell > textarea').value === ''`);
+  await review.key('ArrowUp');
+  await review.assert(`document.querySelector('.pd-composer-shell > textarea').value === '快捷键：空闲时直接发送'`, 'Empty-input Up recalls the latest successfully submitted prompt');
+  await review.key('ArrowUp');
+  await review.assert(`document.querySelector('.pd-composer-shell > textarea').value === '快捷键：Ctrl+Enter 反向引导'`, 'Up moves to the previous prompt without changing the queue');
+  await review.key('ArrowDown');
+  await review.key('ArrowDown');
+  await review.assert(`document.querySelector('.pd-composer-shell > textarea').value === ''`, 'Down past the newest prompt restores the unsent draft');
+  await review.fill('.pd-composer-shell > textarea', '仍未发送的多行草稿\n请保留');
+  await review.key('ArrowUp');
+  await review.assert(`document.querySelector('.pd-composer-shell > textarea').value === ${JSON.stringify('仍未发送的多行草稿\n请保留')}`, 'History never replaces a nonempty unsent draft');
+  await review.fill('.pd-composer-shell > textarea', '');
+  await review.key('ArrowUp');
+  await review.key('Escape');
+  await review.assert(`document.querySelector('.pd-composer-shell > textarea').value === ''`, 'Escape exits history and returns to the original draft');
+
+  // Splitting the layout must preserve the existing composer and its outstanding send acknowledgement.
+  await review.evaluate(`${q}.allowSubmit=true; ${q}.deferNextSubmit=true; ${q}.composerBeforeSplit=document.querySelector('.pd-composer-shell > textarea'); void 0`);
+  await review.fill('.pd-composer-shell > textarea', '快捷键：分屏期间等待发送确认');
+  await review.key('Enter');
+  await review.waitFor(`${q}.pendingSubmits.length === 1`);
+  await review.clickText('.pd-pane-toolbar button', '左右分屏');
+  await review.assert(`${q}.composerBeforeSplit === document.querySelector('.pd-composer-shell > textarea') && document.querySelector('.pd-send-button').getAttribute('aria-busy') === 'true' && document.querySelector('.pd-composer-shell > textarea').value === '快捷键：分屏期间等待发送确认'`, 'Splitting during an unacknowledged send keeps the same composer and request state');
+  await review.screenshot('input-pending-split');
+  await review.clickText('.pd-pane-toolbar button', '单窗格');
+  await review.assert(`${q}.composerBeforeSplit === document.querySelector('.pd-composer-shell > textarea')`, 'Collapsing the pane tree also retains the composer DOM');
+  await review.evaluate(`(() => {const pending=${q}.pendingSubmits.shift();pending.resolve(pending.receipt);})()`);
+  await review.waitFor(`document.querySelector('.pd-composer-shell > textarea').value === '' && document.querySelector('.pd-send-button').getAttribute('aria-busy') === 'false'`);
+  await review.assert(`${q}.calls.filter(call=>call.name==='submit' && call.request.text==='快捷键：分屏期间等待发送确认').length === 1`, 'A delayed acknowledgement clears the original submitted draft exactly once after layout changes');
   await review.evaluate(`${q}.allowSubmit=false`);
 
   // Large queues stay compact and scroll inside the viewport in both themes.

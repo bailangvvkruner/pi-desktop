@@ -1,4 +1,8 @@
 import type { ManagementFeaturesBridge } from './managementFeatures';
+import type { UiDiagnosticEvent } from './uiDiagnostics';
+export * from './uiDiagnostics.ts';
+import type { UiApprovalDetails, UiExtensionDialogResponse } from './approval';
+export * from './approval.ts';
 import type { PluginUpdatesBridge } from './pluginUpdates';
 import type { McpFeaturesBridge } from './mcpFeatures';
 import type { ResultFilesBridge } from './resultFiles';
@@ -55,6 +59,9 @@ export const IPC_CHANNELS = {
   agentAbort: 'agent:abort',
   agentNewSession: 'agent:new-session',
   agentSnapshot: 'agent:snapshot',
+  agentResidentSnapshot: 'agent:resident-snapshot',
+  agentActivateResident: 'agent:activate-resident',
+  uiDiagnostic: 'app:ui-diagnostic',
   agentHistoryPage: 'agent:history-page',
   agentMessageAttachment: 'agent:message-attachment',
   agentSessionStats: 'agent:session-stats',
@@ -477,6 +484,7 @@ export interface UiExtensionDialogRequest {
   defaultValue?: string;
   timeout?: number;
   notificationType?: 'info' | 'warning' | 'error';
+  approval?: UiApprovalDetails;
 }
 
 export interface UiToolActivity {
@@ -513,7 +521,7 @@ export interface UiToolActivity {
 export type AgentUiEvent =
   | { type: 'reset'; cwd: string }
   | { type: 'status'; status: AgentStatus; message?: string; attempt?: number; maxAttempts?: number }
-  | { type: 'ready'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[]; fileChanges: UiFileChange[]; historyTotal?: number; runs?: UiConversationRun[] }
+  | { type: 'ready'; resumeKind?: 'cold' | 'warm'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null; cwd: string; sessionId: string; sessionPath: string | null; messages: UiMessage[]; activities: UiToolActivity[]; fileChanges: UiFileChange[]; historyTotal?: number; runs?: UiConversationRun[] }
   | { type: 'model'; model: string; modelName?: string | null; modelProvider: string; thinkingLevel: UiThinkingLevel; availableThinkingLevels: UiThinkingLevel[]; contextUsage: UiContextUsage | null }
   | { type: 'context-usage'; contextUsage: UiContextUsage | null }
   | { type: 'thinking-level'; level: UiThinkingLevel }
@@ -887,6 +895,10 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   listPinnedWorkspaces(): Promise<string[]>;
   setPinnedWorkspaces(cwds: string[]): Promise<string[]>;
   getAgentSnapshot(): Promise<AgentSnapshot>;
+  /** Reads a loaded background conversation without changing input ownership. */
+  getResidentSessionSnapshot(scope: { cwd: string; sessionId: string; sessionPath: string | null }): Promise<AgentSnapshot | null>;
+  activateResidentSession(scope: { cwd: string; sessionId: string; sessionPath: string | null }): Promise<boolean>;
+  recordUiDiagnostic(event: UiDiagnosticEvent): Promise<void>;
   /** Loads an older slice of the active session's timeline for long conversations. */
   getHistoryPage(offset: number, limit: number): Promise<UiHistoryPage>;
   /** Reads one attachment on the active branch; capped at 20 MiB encoded payload. */
@@ -937,7 +949,7 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   onExtensionDialog(listener: (request: UiExtensionDialogRequest) => void): () => void;
   onExtensionDialogClosed(listener: (id: string) => void): () => void;
   getPendingExtensionDialogs(): Promise<UiExtensionDialogRequest[]>;
-  respondExtensionDialog(id: string, value: string | boolean | null): Promise<void>;
+  respondExtensionDialog(id: string, value: UiExtensionDialogResponse): Promise<void>;
   /** Subscribe to the agent event stream. Returns an unsubscribe function. */
   onAgentEvent(listener: (envelope: AgentEventEnvelope) => void): () => void;
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
+import { sessionOpenMetrics } from '../sessionOpenMetrics';
 import { bindingKeysFor, matchesShortcut } from '../shortcuts/bindings';
 import type { ModelManagementTarget } from '../modelManagement';
 import { buildConversationTimeline, entryContainsMessage, type ConversationTimelineEntry } from '../conversationTimeline';
@@ -95,6 +96,14 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const hasOlderHistory = historyTotal > messages.length + activities.length;
 	const emptyTimeline = timeline.length === 0 && fileChanges.length === 0;
 	const layoutPending = !sessionPreparation && (sessionLoading || navigationPending || agentStatus === 'starting' || agentStatus === 'uninitialized' || !sessionId && agentStatus !== 'error');
+	useLayoutEffect(() => {
+		if (layoutPending || !sessionId) return;
+		const request = sessionOpenMetrics.rendered(cwd, sessionPath, sessionId);
+		if (request === null) return;
+		let second = 0;
+		const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => sessionOpenMetrics.painted(request)); });
+		return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
+	}, [layoutPending, cwd, sessionPath, sessionId]);
 	const settledEmptyLayout = useRef(false);
 	// A reset temporarily has no messages. Preserve the previous layout until
 	// the destination is ready, so an existing chat never becomes a blank draft.

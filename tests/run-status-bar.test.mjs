@@ -21,13 +21,14 @@ test('operation errors never offer an agent retry while the agent is healthy', a
       Object.assign(initial, { status: 'idle', error: 'Network failure listing sessions', bridge: {} });
       const healthy = renderToStaticMarkup(createElement(RunStatusBar));
       assert.match(healthy, /Network failure listing sessions/);
-      assert.doesNotMatch(healthy, /<button/);
+      assert.doesNotMatch(healthy, /class="pd-run-status-action"/);
+      assert.match(healthy, /复制完整错误/);
       Object.assign(initial, { status: 'error', error: 'Network unavailable' });
       const failed = renderToStaticMarkup(createElement(RunStatusBar));
       assert.match(failed, /pd-run-status-action/);
       Object.assign(initial, { status: 'error', error: '401 Unauthorized' });
-      assert.doesNotMatch(renderToStaticMarkup(createElement(RunStatusBar)), /<button/);
-      assert.match(renderToStaticMarkup(createElement(RunStatusBar, { onOpenModelManagement() {} })), /<button/);
+      assert.doesNotMatch(renderToStaticMarkup(createElement(RunStatusBar)), /class="pd-run-status-action"/);
+      assert.match(renderToStaticMarkup(createElement(RunStatusBar, { onOpenModelManagement() {} })), /class="pd-run-status-action"/);
     } finally { Object.assign(initial, original); }
   } finally { await server.close(); }
 });

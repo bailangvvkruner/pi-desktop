@@ -22,6 +22,7 @@ import type { InputFeatureBridge, UiInputScope, UiStoredAttachment } from '../..
 import { PersistedComposerDrafts } from '../persistedDrafts';
 import { useBusyInputBehavior, type BusyInputBehavior as BusyBehavior } from '../busyInputBehavior';
 import { ConversationMetrics } from './ConversationMetrics';
+import { PromptHistoryCursor, promptHistoryDirection, readPromptHistory, savePromptHistory } from '../promptHistory';
 
 function draftStorageKey(cwd: string, sessionPath: string | null): string {
 	return `pi-desktop:draft:${encodeURIComponent(cwd)}:${encodeURIComponent(sessionPath ?? 'new')}`;
@@ -85,6 +86,8 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const draftKey = draftStorageKey(draftScope.cwd, draftScope.sessionPath);
 	const stopScopeKey = JSON.stringify([cwd, sessionPath, sessionId]);
 	const [text, setText] = useState(() => readDraft(draftKey));
+	const historyCursor = useRef(new PromptHistoryCursor());
+	const [historyIndex, setHistoryIndex] = useState<number | null>(null);
 	const [attachments, setAttachments] = useState<UiAttachment[]>([]);
 	const [sending, setSending] = useState(false);
 	const stopRequestsRef = useRef(new Map<string, { bridge: typeof bridge }>());
@@ -241,6 +244,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 		const next = draftsRef.current.get(draftKey) ?? { text: readDraft(draftKey), attachments: [] };
 		draftsRef.current.set(draftKey, next);
 		currentKeyRef.current = draftKey;
+		historyCursor.current.reset(); setHistoryIndex(null);
 		textRef.current = next.text;
 		attachmentsRef.current = next.attachments;
 		setText(next.text);
@@ -291,7 +295,8 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 		return () => { observer.disconnect(); cancelAnimationFrame(frame); };
 	}, [text, placeholder]);
 
-	function changeText(value: string) {
+	function changeText(value: string, fromHistory = false) {
+		if (!fromHistory) { historyCursor.current.reset(); setHistoryIndex(null); }
 		textEdits.current.set(currentKeyRef.current, (textEdits.current.get(currentKeyRef.current) ?? 0) + 1);
 		textRef.current = value;
 		setText(value);
@@ -311,7 +316,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	}
 
 	function syncCompletions(value: string, start: number, end: number) {
-		if (composingRef.current || contextPicker?.mode === 'menu' || contextUnavailable) return;
+		if (composingRef.current || historyCursor.current.index !== null || contextPicker?.mode === 'menu' || contextUnavailable) return;
 		const trigger = slashTriggerAt(value, start, end);
 		const signature = trigger ? JSON.stringify(trigger) : null;
 		if (trigger && signature !== dismissedSlash.current) {
@@ -478,6 +483,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 			}
 			await pending;
 			applyDraftTransfer(useChatStore.getState().draftTransfer);
+			savePromptHistory(request.scope.cwd, value);
 			sendRequest.current = null;
 			if (!optimisticallyCleared && clearSubmittedDraft(draftsRef.current, request.key, { text: value, attachments: submittedAttachments })) {
 				if (currentKeyRef.current === request.key) {
@@ -512,6 +518,19 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 		if (composingRef.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
 		if (slashTrigger && slashPickerRef.current?.handleKeyDown(event)) return;
 		if (contextPicker && pickerRef.current?.handleKeyDown(event)) return;
+		const direction = promptHistoryDirection(event);
+		const recalled = event.key === 'Escape' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+			? historyCursor.current.cancel()
+			: direction && event.currentTarget.selectionStart === event.currentTarget.selectionEnd
+				? historyCursor.current.navigate(readPromptHistory(draftScope.cwd), textRef.current, direction) : null;
+		if (recalled !== null) {
+			event.preventDefault(); event.stopPropagation();
+			setContextPicker(null); setSlashTrigger(null);
+			changeText(recalled, true); setHistoryIndex(historyCursor.current.index);
+			const key = currentKeyRef.current;
+			requestAnimationFrame(() => { if (currentKeyRef.current === key) textareaRef.current?.setSelectionRange(recalled.length, recalled.length); });
+			return;
+		}
 		if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.nativeEvent.isComposing) return;
 		event.preventDefault();
 		void submit(busy && (event.ctrlKey || event.metaKey) ? defaultBusyBehavior === 'followUp' ? 'steer' : 'followUp' : undefined);
@@ -584,6 +603,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 				{contextPicker && !contextUnavailable && shellRef.current && <ComposerContextPicker ref={pickerRef} anchor={shellRef.current} trigger={contextButtonRef.current} mode={contextPicker.mode} query={contextPicker.mode === 'mention' ? contextPicker.mention.query : ''} workspace={cwd} sessionPath={sessionPath} onSelect={(request) => void selectContext(request)} onUpload={() => { closeContext(); fileInputRef.current?.click(); }} onClose={closeContext} />}
 				{slashTrigger && !contextUnavailable && shellRef.current && <ComposerSlashPicker ref={slashPickerRef} anchor={shellRef.current} query={slashTrigger.query} commands={slashCatalog.key === slashCatalogKey ? slashCatalog.commands : []} loading={slashCatalog.key !== slashCatalogKey || slashCatalog.loading} error={slashCatalog.key === slashCatalogKey ? slashCatalog.error : null} busy={busy} onSelect={selectSlash} onClose={closeSlash} onRetry={() => setSlashRetry((value) => value + 1)} />}
 				{attaching && <p className="pd-composer-attachment-hint" role="status">{t('composer.readingAttachments')}{pdfCount > 0 && <button type="button" onClick={() => { for (const id of pdfJobs.current) void inputBridge?.cancelPdfInput?.(id); }}>{zh ? '取消PDF处理' : 'Cancel PDF processing'}</button>}</p>}
+				{historyIndex !== null && <p className="pd-composer-attachment-hint" role="status">{zh ? '正在查看输入历史 · ↑↓ 切换 · Esc 返回草稿' : 'Prompt history · ↑↓ browse · Esc restores draft'}</p>}
 				{!queueEditing && attachments.length > 0 && <p className="pd-composer-attachment-hint">{inputBridge?.getInputDraft ? (zh ? '附件随草稿保存在本机。PDF以带页码的本地提取文字发送；不支持扫描OCR。' : 'Attachments are saved locally with the draft. PDFs send locally extracted text with page numbers; OCR is unavailable.') : t('composer.attachmentPersistence')}</p>}
 				{imagePreview && <ImagePreviewDialog images={attachments.flatMap((attachment, index) => attachment.kind === 'image' ? [{ id: `pending:${index}`, name: attachment.name, attachment }] : [])} initialIndex={imagePreview.index} returnFocus={imagePreview.trigger} onClose={() => setImagePreview(null)} />}
 				<ConversationMetrics />

@@ -20,6 +20,9 @@ export const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
 	{ id: 'search', keys: 'Ctrl+K', labelKey: 'settings.shortcutSearch', scope: 'global' },
 	{ id: 'commandPalette', keys: 'Ctrl+Shift+P', labelKey: 'settings.shortcutPalette', scope: 'global' },
 	{ id: 'toggleSidebar', keys: 'Ctrl+B', labelKey: 'settings.shortcutSidebar', scope: 'global' },
+	{ id: 'newSession', keys: 'Ctrl+N', labelKey: 'sidebar.newSession', scope: 'global' },
+	{ id: 'openProject', keys: 'Ctrl+O', labelKey: 'sidebar.openProject', scope: 'global' },
+	{ id: 'toggleTerminal', keys: 'Ctrl+`', labelKey: 'settings.shortcutTerminal', scope: 'global' },
 	{ id: 'historyBack', keys: 'Ctrl+[', labelKey: 'settings.shortcutHistoryBack', scope: 'global' },
 	{ id: 'historyForward', keys: 'Ctrl+]', labelKey: 'settings.shortcutHistoryForward', scope: 'global' },
 	{ id: 'findInTranscript', keys: 'Ctrl+F', labelKey: 'chat.find.label', scope: 'transcript' },
@@ -68,6 +71,7 @@ function eventKey(event: { key: string; code?: string }): string {
 	const code = event.code ?? '';
 	if (code === 'BracketLeft') return '[';
 	if (code === 'BracketRight') return ']';
+	if (code === 'Backquote') return '`';
 	return key.length === 1 ? key : event.key;
 }
 

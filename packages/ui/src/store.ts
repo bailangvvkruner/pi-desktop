@@ -7,6 +7,7 @@
  */
 
 import { create } from 'zustand';
+import { sessionOpenMetrics } from './sessionOpenMetrics.ts';
 import { translate } from './i18n.ts';
 import { parseSlashCommand } from './composerSlash.ts';
 import { mergeRuntimeStates, sessionRuntimeKey, type WorkspaceSessionRequest } from './managementState.ts';
@@ -114,6 +115,7 @@ interface ChatState {
 	removeProviderCredential(provider: string): Promise<void>;
 	switchSession(path: string): Promise<void>;
 	selectSession(cwd: string, path: string): Promise<boolean>;
+	selectResidentSession(cwd: string, sessionId: string, sessionPath: string | null): Promise<boolean>;
 	send(text: string, behavior?: 'steer' | 'followUp', attachments?: UiAttachment[], inputId?: string): Promise<void>;
 	/** Rewind to a sent user message and resend the edited text (zcode-style edit). */
 	editMessage(entryId: string, text: string, attachments?: UiAttachment[]): Promise<void>;
@@ -258,6 +260,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 	setBridge(bridge) {
 		if (get().bridge === bridge) return;
+		sessionOpenMetrics.cancel();
 		cancelPreparedInput();
 		sessionPreparation = null;
 		unsubscribeAgentEvent?.();
@@ -374,6 +377,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 			if (!currentSessionNavigation(bridge, request)) return;
 			if (!target) throw new Error(translate('store.noWorkspaceToRetry'));
 			await bridge.initAgent(target);
+			sessionOpenMetrics.rpc(request);
 		} catch (error) {
 			if (!currentSessionNavigation(bridge, request)) return;
 			set({ status: 'error', error: errorMessage(error) });
@@ -448,6 +452,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				return;
 			}
 			case 'ready': {
+				sessionOpenMetrics.snapshot(event.cwd, event.sessionPath, event.sessionId, event.resumeKind);
 				const previous = get();
 				const completedPreparation = previous.sessionPreparation;
 				const pending = currentPreparedInput();
@@ -684,9 +689,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	async switchWorkspace(cwd, options) {
 		const bridge = get().bridge;
 		if (!bridge || !cwd || (cwd === get().cwd && !get().navigationPending && !options?.fresh && !options?.force)) return;
-		const request = beginSessionNavigation();
+		const request = beginSessionNavigation({ cwd });
 		try {
 			await bridge.switchWorkspace(cwd, options?.fresh === undefined ? undefined : { fresh: options.fresh });
+			sessionOpenMetrics.rpc(request);
 			if (!currentSessionNavigation(bridge, request)) return;
 			await Promise.all([get().refreshWorkspaces(), get().refreshWorkspaceSessions(cwd)]);
 		} catch (error) {
@@ -890,10 +896,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 	async switchSession(path) {
 		const bridge = get().bridge;
 		if (!bridge) return;
-		const request = beginSessionNavigation();
+		const request = beginSessionNavigation({ cwd: get().cwd, path });
 		const loadingGeneration = beginSessionLoadIndicator(set);
 		try {
 			await bridge.switchSession(path);
+			sessionOpenMetrics.rpc(request);
 			if (!currentSessionNavigation(bridge, request)) return;
 			await get().refreshSessions();
 		} catch (error) {
@@ -902,10 +909,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, loadingGeneration); }
 	},
 
+	async selectResidentSession(cwd, sessionId, sessionPath) {
+		const bridge = get().bridge;
+		if (!bridge?.activateResidentSession) return false;
+		const request = beginSessionNavigation({ cwd, path: sessionPath, sessionId });
+		const generation = beginSessionLoadIndicator(set);
+		try {
+			const selected = await bridge.activateResidentSession({ cwd, sessionId, sessionPath });
+			sessionOpenMetrics.rpc(request);
+			if (!currentSessionNavigation(bridge, request)) return false;
+			if (!selected) sessionOpenMetrics.cancel(request);
+			if (selected) void Promise.all([get().refreshWorkspaces(), get().refreshWorkspaceSessions(cwd)]);
+			return selected;
+		} catch (error) {
+			if (currentSessionNavigation(bridge, request)) set({ error: errorMessage(error) });
+			throw error;
+		} finally { finishSessionNavigation(bridge, request); finishSessionLoadIndicator(set, generation); }
+	},
+
 	async selectSession(cwd, path) {
 		const bridge = get().bridge;
 		if (!bridge || !cwd || !path) return false;
-		const request = beginSessionNavigation();
+		const request = beginSessionNavigation({ cwd, path });
 		const loadingGeneration = beginSessionLoadIndicator(set);
 		const workspaceChanged = get().cwd !== cwd;
 		try {
@@ -914,6 +939,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				if (!currentSessionNavigation(bridge, request)) return false;
 			}
 			await bridge.switchSession(path);
+			sessionOpenMetrics.rpc(request);
 			if (!currentSessionNavigation(bridge, request)) return false;
 			await Promise.all([get().refreshWorkspaceSessions(cwd), ...(workspaceChanged ? [get().refreshWorkspaces()] : [])]);
 			return currentSessionNavigation(bridge, request);
@@ -948,6 +974,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 				if (!sessionId) throw new Error(translate('store.agentNotReady'));
 				if (command.name === 'new') navigationRequest = beginSessionNavigation();
 				await bridge.executeSlashCommand({ cwd, sessionId, ...command, behavior: delivery, attachments });
+				if (navigationRequest !== undefined) sessionOpenMetrics.rpc(navigationRequest);
 			} else if (inputId && 'submitInput' in bridge && typeof bridge.submitInput === 'function') {
 				const receipt = await bridge.submitInput({ id: inputId, sessionId: sessionId ?? '', text: trimmed, behavior: delivery, attachments });
 				if (receipt.state === 'recovered' || receipt.state === 'failed' || receipt.state === 'reserved') throw new Error(receipt.message ?? translate('store.inputNeedsConfirmation'));
@@ -1051,6 +1078,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		const request = beginSessionNavigation();
 		try {
 			await bridge.newSession(options);
+			sessionOpenMetrics.rpc(request);
 			if (!currentSessionNavigation(bridge, request)) return;
 			await Promise.all([get().refreshWorkspaces(), get().refreshSessions()]);
 		} catch (error) {
@@ -1075,6 +1103,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		preparing.promise = (async () => {
 			try {
 				await bridge.newSession();
+				sessionOpenMetrics.rpc(request);
 				if (!currentSessionNavigation(bridge, request)) return;
 				if (!preparing.ready) {
 					const snapshot = await snapshotWithTimeout(bridge);
@@ -1116,8 +1145,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 		try {
 			const cwd = await bridge.pickWorkspace();
 			if (!currentSessionNavigation(bridge, request)) return;
+			if (!cwd) sessionOpenMetrics.cancel(request);
 			if (cwd) {
 				await bridge.switchWorkspace(cwd, options);
+				sessionOpenMetrics.rpc(request);
 				if (!currentSessionNavigation(bridge, request)) return;
 				await Promise.all([get().refreshWorkspaces(), get().refreshWorkspaceSessions(cwd)]);
 			}
@@ -1266,9 +1297,12 @@ async function refreshSessionCache(cwd: string, reportError = true): Promise<voi
 	}
 }
 
-function beginSessionNavigation(): number {
+function beginSessionNavigation(target: { cwd?: string; path?: string | null; sessionId?: string } = {}): number {
 	cancelPreparedInput();
 	const request = useChatStore.getState().navigationRequestId + 1;
+	const state = useChatStore.getState(), bridge = state.bridge;
+	sessionOpenMetrics.begin(request, target, event => { void Promise.resolve().then(() => bridge?.recordUiDiagnostic?.(event)).catch(() => {}); },
+		state.sessionId ? { cwd: state.cwd, path: state.sessionPath, sessionId: state.sessionId } : undefined);
 	useChatStore.setState({ navigationRequestId: request, navigationPending: true, sessionPreparation: null, draftTransfer: null, error: null });
 	return request;
 }
@@ -1279,7 +1313,12 @@ function currentSessionNavigation(bridge: AgentBridge, request: number): boolean
 }
 
 function finishSessionNavigation(bridge: AgentBridge, request: number): void {
-	if (currentSessionNavigation(bridge, request)) useChatStore.setState({ navigationPending: false });
+	if (currentSessionNavigation(bridge, request)) {
+		const state = useChatStore.getState();
+		if (state.sessionId && !state.error) sessionOpenMetrics.reuseSnapshot(request, state.cwd, state.sessionPath, state.sessionId);
+		sessionOpenMetrics.settled(request, Boolean(state.error) || state.status === 'error');
+		useChatStore.setState({ navigationPending: false });
+	}
 }
 
 /** Convenience selector: is the agent currently producing output? */

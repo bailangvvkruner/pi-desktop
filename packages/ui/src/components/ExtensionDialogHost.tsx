@@ -1,10 +1,12 @@
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import type { UiExtensionDialogRequest } from '@pidesktop/shared';
+import type { UiExtensionDialogRequest, UiExtensionDialogResponse } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { Icon } from './Icons';
 import { ExtensionNotifications } from './ExtensionNotifications';
+import { ApprovalCard } from './ApprovalCard';
+import { ErrorDetails } from './ErrorDetails';
 import './extensionRequests.css';
 
 const ExtensionDialogContext = createContext<ReactNode>(null);
@@ -157,7 +159,7 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 		return () => window.clearTimeout(timer);
 	}, [active?.id, active?.timeout, bridge]);
 
-	async function respond(id: string, response: string | boolean | null) {
+	async function respond(id: string, response: UiExtensionDialogResponse) {
 		if (!bridge || pendingId.current !== null || activeId.current !== id || closedIds.current.has(id)) return;
 		const scope = generation.current;
 		const submittedFocus = { inside: cardRef.current?.contains(document.activeElement) ?? false, version: focusVersion.current };
@@ -214,9 +216,9 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 		</header>
 		<div id={bodyId} className="pd-extension-request-body" hidden={collapsed}>
 			{active.message && <p id={messageId} className="pd-extension-request-message">{active.message}</p>}
-			{error && <div className="pd-extension-request-error" role="alert">{error}</div>}
+			{error && <div className="pd-extension-request-error" role="alert">{error}<ErrorDetails error={error} scope="approval" /></div>}
 			{active.kind === 'select' && <div className="pd-extension-request-options">{active.options?.length ? active.options.map((option, index) => <button key={`${index}-${option}`} type="button" disabled={pending} onClick={() => void respond(active.id, option)}><span className="pd-extension-request-option-number" aria-hidden="true">{index + 1}</span><span>{option}</span><Icon name="chevronRight" width="14" height="14" /></button>) : <p>{t('extension.noOptions')}</p>}</div>}
-			{active.kind === 'confirm' && <div className="pd-extension-request-actions"><button type="button" disabled={pending} onClick={() => void respond(active.id, false)}>{t('extension.cancel')}</button><button type="button" className="is-primary" disabled={pending} onClick={() => void respond(active.id, true)}>{t('extension.confirm')}</button></div>}
+			{active.kind === 'confirm' && (active.approval ? <ApprovalCard key={active.id} approval={active.approval} pending={pending} onRespond={decision => void respond(active.id, decision)} /> : <div className="pd-extension-request-actions"><button type="button" disabled={pending} onClick={() => void respond(active.id, false)}>{t('extension.cancel')}</button><button type="button" className="is-primary" disabled={pending} onClick={() => void respond(active.id, true)}>{t('extension.confirm')}</button></div>)}
 			{(active.kind === 'input' || active.kind === 'editor') && <form onSubmit={onSubmit}>
 				{active.kind === 'editor' ? <textarea value={value} onChange={(event) => setValue(event.target.value)} placeholder={active.placeholder} rows={3} aria-label={active.title} disabled={pending} /> : <input value={value} onChange={(event) => setValue(event.target.value)} placeholder={active.placeholder} aria-label={active.title} disabled={pending} />}
 				<div className="pd-extension-request-actions"><button type="button" disabled={pending} onClick={() => void respond(active.id, null)}>{t('extension.cancel')}</button><button type="submit" className="is-primary" disabled={pending}>{t('extension.submit')}</button></div>

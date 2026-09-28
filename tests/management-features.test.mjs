@@ -36,6 +36,26 @@ test('diagnostics rotate before appending and bound export with a skipped-file m
   await assert.rejects(readFile(join(root, 'events.8.jsonl')), { code: 'ENOENT' });
 });
 
+test('renderer diagnostics retain correlation and timing in exported archives while filtering arbitrary payloads twice', async t => {
+  const root = await fixture(t), service = new DiagnosticsService(join(root, 'logs'));
+  const ui = {id:'navigation-12345678',scope:'session-navigation',kind:'session-open',outcome:'cancelled',temperature:'warm',
+    durationMs:30.25,phases:{rpcMs:10.1,snapshotMs:15.2,renderMs:5.3,paintMs:9.65}};
+  const unsafe = {cwd:'C:/private-project',message:'private conversation',apiKey:'sk-private-secret'};
+  service.record({stage:'renderer',action:'session-open',outcome:'exit',ui:{...ui,...unsafe,phases:{...ui.phases,...unsafe}},...unsafe});
+  await service.flush();
+  const raw = await readFile(join(root,'logs','events.jsonl'),'utf8');
+  assert.deepEqual(JSON.parse(raw).ui, ui);
+  // Old or manually altered files are normalized again at export time.
+  await writeFile(join(root,'logs','events.1.jsonl'), JSON.stringify({time:new Date().toISOString(),stage:'renderer',action:'render-error',outcome:'failure',
+    ui:{id:'error-id-12345678',scope:'conversation',kind:'render-error',outcome:'failure',...unsafe},...unsafe}) + '\n');
+  const output = join(root,'ui-diagnostics.zip');
+  assert.equal((await service.archive(output,1,{app:'test'})).entries,2);
+  const files = unzipSync(await readFile(output));
+  assert.deepEqual(JSON.parse(strFromU8(files['events.jsonl'])).ui,ui);
+  assert.equal(JSON.parse(strFromU8(files['events.1.jsonl'])).ui.id,'error-id-12345678');
+  assert.doesNotMatch(raw + Object.values(files).map(strFromU8).join('\n'),/private-project|private conversation|sk-private-secret/);
+});
+
 function session(cwd, sid, messages) { return [{ type: 'session', id: sid, version: 3, cwd }, ...messages.map((m, i) => ({ type: 'message', id: m.id ?? `message-${i}`, parentId: i ? `message-${i - 1}` : null, message: { role: 'assistant', provider: 'mock', model: m.model ?? 'test-model', timestamp: m.timestamp ?? '2026-09-25T18:00:00.000Z', usage: { input: 10, output: 5, cacheRead: 3, cacheWrite: 2, ...(m.cost === undefined ? {} : { cost: { total: m.cost } }) } } }))].map(v => JSON.stringify(v)).join('\n') + '\n'; }
 test('usage ledger counts real branch messages once, persists cache and respects timezone, source and unknown prices', async t => {
   const root = await fixture(t), sessions = join(root, 'sessions'), dir = join(sessions, 'project'); await mkdir(dir, { recursive: true });

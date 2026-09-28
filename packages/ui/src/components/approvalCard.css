@@ -1,0 +1,10 @@
+.pd-approval-card { display: grid; gap: 10px; min-width: 0; font-size: var(--pd-font-sm); }
+.pd-approval-card p { margin: 0; overflow-wrap: anywhere; }
+.pd-approval-source { color: var(--pd-text-subtle); }
+.pd-approval-command, .pd-approval-diff { overflow: auto; max-height: 240px; margin: 6px 0 0; padding: 10px; border: 1px solid var(--pd-border); border-radius: 6px; background: var(--pd-bg); font: var(--pd-font-sm)/1.6 var(--pd-font-mono); white-space: pre; }
+.pd-approval-diff .is-addition { color: var(--pd-success, #65ba82); }
+.pd-approval-diff .is-deletion { color: var(--pd-danger); }
+.pd-approval-file summary { cursor: pointer; overflow-wrap: anywhere; }
+.pd-approval-scope, .pd-approval-feedback { display: grid; gap: 6px; }
+.pd-approval-scope select { padding: 5px 8px; background: var(--pd-bg); color: var(--pd-text); border: 1px solid var(--pd-border); border-radius: 5px; }
+.pd-approval-feedback textarea { width: 100%; resize: vertical; }

@@ -117,11 +117,23 @@ test('inactive Pi runtimes are bounded and an evicted session can be reopened', 
       paths.push(manager.getSessionFile());
     }
     service = new AgentService();
+    const readyEvents = [];
+    service.onEvent(({ event }) => { if (event.type === 'ready') readyEvents.push(event); });
     await service.init({ cwd: workspace });
     for (const path of paths) await service.switchSession(path);
     assert.ok(service.contexts.size <= 12, 'idle runtime cache should stay bounded');
+    assert.equal([...service.contexts.values()].some((context) => context.getSnapshot().sessionPath === paths[0]), false,
+      'the oldest visited session must have been evicted before its cold reopening is measured');
+    readyEvents.length = 0;
+    await service.switchSession(paths.at(-2));
+    assert.equal(readyEvents.at(-1)?.sessionPath, paths.at(-2));
+    assert.equal(readyEvents.at(-1)?.resumeKind, 'warm', 'a retained runtime is a warm session switch');
+    readyEvents.length = 0;
     await service.switchSession(paths[0]);
     assert.equal(service.getSnapshot().messages[0]?.text, 'Session 0', 'evicted transcript should load from Pi storage');
+    assert.equal(readyEvents.at(-1)?.sessionPath, paths[0]);
+    assert.equal(readyEvents.at(-1)?.resumeKind ?? 'cold', 'cold', 'visiting a session earlier does not make an evicted runtime warm');
+    assert.ok(service.contexts.size <= 12, 'reopening an evicted session preserves the runtime cache limit');
   } finally {
     await service?.dispose();
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;

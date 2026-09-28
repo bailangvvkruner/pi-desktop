@@ -14,6 +14,13 @@ const luminance = color => {
 const ratio = (a, b) => (Math.max(luminance(a), luminance(b)) + 0.05) / (Math.min(luminance(a), luminance(b)) + 0.05);
 const backgrounds = ['bg', 'sidebar', 'header', 'surface', 'surface-hover', 'surface-raised', 'surface-muted', 'selected', 'user-surface', 'code-surface'];
 
+test('saved neutral default migrates to brighter text while edited/custom palettes retain their ink', () => {
+  const old = { preset:'default',accent:'#ffffff',surface:'#161616',ink:'#d4d4d4',contrast:50 };
+  assert.equal(normalizeColorPreferences({dark:old}).dark.ink, '#e5e5e5');
+  assert.equal(normalizeColorPreferences({dark:{...old,preset:'custom'}}).dark.ink, '#d4d4d4');
+  assert.equal(normalizeColorPreferences({dark:{...old,ink:'#cccccc'}}).dark.ink, '#cccccc');
+});
+
 test('color input accepts only explicit opaque hex colors and normalizes shorthand', () => {
   assert.equal(normalizeHexColor(' #AbC '), '#aabbcc');
   assert.equal(normalizeHexColor('#123abc'), '#123abc');

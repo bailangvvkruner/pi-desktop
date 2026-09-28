@@ -10,9 +10,11 @@ export interface ResultFilePreview {
   path: string;
   name: string;
   size: number;
-  kind: 'text' | 'image' | 'pdf' | 'unsupported' | 'directory';
+  kind: 'text' | 'image' | 'pdf' | 'office' | 'unsupported' | 'directory';
   text?: string;
   dataUrl?: string;
+  officeFormat?: 'docx' | 'xlsx';
+  bytesBase64?: string;
   truncated?: boolean;
   reason?: 'too-large' | 'unsupported';
 }

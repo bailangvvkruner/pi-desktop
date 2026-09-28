@@ -67,6 +67,24 @@ test('model requests resolve the OS proxy in Electron without opening an extensi
   }
 });
 
+test('structured approval decisions survive the utility-process reply unchanged', async () => {
+  const host = createHost();
+  const decision = { approved: false, scope: 'once', feedback: 'Inspect before changing files' };
+  const client = new AgentHostClient({
+    requestProjectTrust: async () => ({ trusted: false, remember: false }),
+    requestExtensionDialog: async request => { assert.equal(request.approval.command, 'git diff'); return decision; },
+  });
+  try {
+    const { result } = await startCall(client, host, 'prompt');
+    const call = host.messages.at(-1);
+    host.emit('message', { kind: 'ui-request', id: 71, callId: call.id, request: { kind: 'extension', dialog: { id: 'approval', kind: 'confirm', title: 'Inspect changes', approval: { command: 'git diff' } } } });
+    await settle();
+    assert.deepEqual(host.messages.find(message => message.kind === 'ui-reply'), { kind: 'ui-reply', id: 71, value: decision });
+    host.emit('message', { kind: 'reply', id: call.id, value: undefined });
+    await result;
+  } finally { await client.dispose(); }
+});
+
 test('unanswered RPC rejects while the Pi host remains alive for later calls', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const host = createHost();

@@ -2,8 +2,9 @@ import { appendFile, lstat, mkdir, readFile, readdir, rename, rm, writeFile } fr
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { zipSync, strToU8 } from 'fflate';
+import { normalizeUiDiagnostic, type UiDiagnosticEvent } from '@pidesktop/shared';
 
-export interface DiagnosticEvent { stage: 'startup' | 'rpc' | 'host' | 'plugin'; action: string; outcome: 'start' | 'success' | 'failure' | 'exit'; durationMs?: number; requestId?: number; code?: string }
+export interface DiagnosticEvent { stage: 'startup' | 'rpc' | 'host' | 'plugin' | 'renderer'; action: string; outcome: 'start' | 'success' | 'failure' | 'exit'; durationMs?: number; requestId?: number; code?: string; ui?: UiDiagnosticEvent }
 const MAX_FILE = 512 * 1024, KEEP = 8, MAX_EXPORT = 4 * 1024 * 1024;
 const token = (value: string) => /^[\w:.-]{1,100}$/.test(value) ? value : 'redacted';
 export class DiagnosticsService {
@@ -14,7 +15,8 @@ export class DiagnosticsService {
     // Only explicitly allowed telemetry fields. Never serialize arbitrary errors or IPC payloads.
     const record = { time: new Date().toISOString(), stage: event.stage, action: token(event.action), outcome: event.outcome,
       ...(Number.isFinite(event.durationMs) ? { durationMs: Math.max(0, Math.round(event.durationMs!)) } : {}),
-      ...(Number.isSafeInteger(event.requestId) ? { requestId: event.requestId } : {}), ...(event.code ? { code: token(event.code) } : {}) };
+      ...(Number.isSafeInteger(event.requestId) ? { requestId: event.requestId } : {}), ...(event.code ? { code: token(event.code) } : {}),
+      ...(event.ui && normalizeUiDiagnostic(event.ui) ? { ui: normalizeUiDiagnostic(event.ui) } : {}) };
     this.queue = this.queue.then(async () => {
       await mkdir(this.directory, { recursive: true });
       const active = join(this.directory, 'events.jsonl');
@@ -46,9 +48,10 @@ export class DiagnosticsService {
           try {
             const value = JSON.parse(line);
             if (Date.parse(value.time) < cutoff || !Number.isFinite(Date.parse(value.time))) continue;
-            if (!['startup', 'rpc', 'host', 'plugin'].includes(value.stage) || !['start', 'success', 'failure', 'exit'].includes(value.outcome)) continue;
+            if (!['startup', 'rpc', 'host', 'plugin', 'renderer'].includes(value.stage) || !['start', 'success', 'failure', 'exit'].includes(value.outcome)) continue;
             safe.push(JSON.stringify({ time: new Date(value.time).toISOString(), stage: value.stage, action: token(String(value.action)), outcome: value.outcome,
-              ...(Number.isFinite(value.durationMs) ? { durationMs: value.durationMs } : {}), ...(Number.isSafeInteger(value.requestId) ? { requestId: value.requestId } : {}), ...(value.code ? { code: token(String(value.code)) } : {}) }));
+              ...(Number.isFinite(value.durationMs) ? { durationMs: value.durationMs } : {}), ...(Number.isSafeInteger(value.requestId) ? { requestId: value.requestId } : {}), ...(value.code ? { code: token(String(value.code)) } : {}),
+              ...(normalizeUiDiagnostic(value.ui) ? { ui: normalizeUiDiagnostic(value.ui) } : {}) }));
           } catch { skip(`${name}: 跳过损坏记录`); }
         }
         const data = strToU8(safe.join('\n'));

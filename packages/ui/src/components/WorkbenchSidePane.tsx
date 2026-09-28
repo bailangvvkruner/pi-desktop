@@ -1,18 +1,22 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import type { WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitLogEntry, WorkspaceGitStatus } from '@pidesktop/shared';
+import type { ResultFilePreview, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitLogEntry, WorkspaceGitStatus } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { Icon } from './Icons';
 import { HoverTooltip } from './HoverTooltip';
 import { SegmentedIndicator } from './SegmentedIndicator';
 import { WorkbenchTextView } from './WorkbenchTextView';
+import { ScopedErrorBoundary } from './ScopedErrorBoundary';
 import { appendCommandOutput, commandOutput, groupGitEntries, type DiffSource } from '../workbenchReading';
 import { runWithFeedback } from '../operationFeedback';
 import { contextMenuPosition, type ContextMenuPoint } from '../contextMenuPosition';
 import { WorkbenchGitFeatures } from './WorkbenchGitFeatures';
 import { WorkspaceTerminalPane } from './WorkspaceTerminalPane';
+import { useWorkbenchMemory } from '../useWorkbenchMemory';
 import './workbenchReading.css';
+
+const OfficeFilePreview = lazy(() => import('./OfficeFilePreview'));
 
 type WorkbenchTab = 'files' | 'git' | 'command' | 'terminal';
 type CommandRun = { id: string; command: string; cwd: string };
@@ -29,7 +33,7 @@ function readableSize(size?: number): string {
 	return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function WorkbenchSidePane({ open, onClose, openRequest, modal = false, suspended = false, width = 420, onWidthChange, onResizing }: { open: boolean; onClose(): void; openRequest?: WorkbenchOpenRequest | null; modal?: boolean; suspended?: boolean; width?: number; onWidthChange?(width: number): void; onResizing?(resizing: boolean): void }) {
+export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest, onTabChange, modal = false, suspended = false, width = 420, onWidthChange, onResizing }: { open: boolean; onClose(): void; openRequest?: WorkbenchOpenRequest | null; terminalRequest?: number; onTabChange?(tab: WorkbenchTab): void; modal?: boolean; suspended?: boolean; width?: number; onWidthChange?(width: number): void; onResizing?(resizing: boolean): void }) {
 	const { t, locale } = useT();
 	const label = (zh: string, en: string) => locale === 'zh-CN' ? zh : en;
 	const pane = useRef<HTMLElement>(null);
@@ -49,12 +53,23 @@ export function WorkbenchSidePane({ open, onClose, openRequest, modal = false, s
 	const bridge = useChatStore((state) => state.bridge);
 	const cwd = useChatStore((state) => state.cwd);
 	const navigationPending = useChatStore((state) => state.navigationPending);
-	const [tab, setTab] = useState<WorkbenchTab>('files');
+	const { state: remembered, update: remember } = useWorkbenchMemory(cwd);
+	const { tab, directory, selectedFile, diffPath, diffSource } = remembered;
+	useEffect(() => { onTabChange?.(tab); }, [tab, onTabChange]);
+	const setTab = (value: WorkbenchTab) => remember('tab', value);
+	const setDirectory = (value: string) => remember('directory', value);
+	const setSelectedFile = (value: string | null) => remember('selectedFile', value);
+	const setDiffPath = (value: string | null) => remember('diffPath', value);
+	const setDiffSource = (value: DiffSource) => remember('diffSource', value);
+	const [fileRevision, setFileRevision] = useState(0);
+	const [diffRevision, setDiffRevision] = useState(0);
 	const [terminalVisited, setTerminalVisited] = useState(false);
-	const [directory, setDirectory] = useState('');
+	const handledTerminalRequest = useRef<number | undefined>(undefined);
+	useEffect(() => { if (terminalRequest && terminalRequest !== handledTerminalRequest.current) { handledTerminalRequest.current = terminalRequest; setTerminalVisited(true); setTab('terminal'); } }, [terminalRequest]);
+	useEffect(() => { if (tab === 'terminal') setTerminalVisited(true); }, [tab]);
 	const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
-	const [selectedFile, setSelectedFile] = useState<string | null>(null);
 	const [fileText, setFileText] = useState('');
+	const [officePreview, setOfficePreview] = useState<ResultFilePreview | null>(null);
 	const [fileLoading, setFileLoading] = useState(false);
 	const [fileError, setFileError] = useState<string | null>(null);
 	const [listingLoading, setListingLoading] = useState(false);
@@ -64,8 +79,6 @@ export function WorkbenchSidePane({ open, onClose, openRequest, modal = false, s
 	const [gitLoading, setGitLoading] = useState(false);
 	const [gitError, setGitError] = useState<string | null>(null);
 	const [gitRevision, setGitRevision] = useState(0);
-	const [diffPath, setDiffPath] = useState<string | null>(null);
-	const [diffSource, setDiffSource] = useState<DiffSource>('unstaged');
 	const [diffText, setDiffText] = useState('');
 	const [diffLoading, setDiffLoading] = useState(false);
 	const [diffError, setDiffError] = useState<string | null>(null);
@@ -196,10 +209,11 @@ export function WorkbenchSidePane({ open, onClose, openRequest, modal = false, s
 		setEventRevision((value) => value + 1);
 		fileRequest.current += 1;
 		diffRequest.current += 1;
-		setDirectory('');
 		setEntries([]);
-		setSelectedFile(null);
+		setFileLoading(false);
+		setFileError(null);
 		setFileText('');
+		setOfficePreview(null);
 		setGitStatus(null);
 		setGitLog([]);
 		setGitError(null);
@@ -210,7 +224,6 @@ export function WorkbenchSidePane({ open, onClose, openRequest, modal = false, s
 		setBranchName('');
 		setBranchCreating(false);
 		gitOperation.current = null;
-		setDiffPath(null);
 		setDiffText('');
 		setDiffError(null);
 		setDiffLoading(false);
@@ -285,7 +298,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, modal = false, s
 		return () => { gitRequest.current += 1; };
 	}, [bridge, cwd, open, tab, gitRevision]);
 
-	async function openFile(entry: WorkspaceEntry) {
+	function openFile(entry: WorkspaceEntry) {
 		if (!bridge) return;
 		if (entry.kind === 'directory') {
 			restoreListFocus.current = true;
@@ -293,34 +306,42 @@ export function WorkbenchSidePane({ open, onClose, openRequest, modal = false, s
 			setSelectedFile(null);
 			return;
 		}
-		const request = ++fileRequest.current;
+		setFileLoading(true); setFileError(null); setFileText(''); setOfficePreview(null);
 		setSelectedFile(entry.path);
-		setFileLoading(true);
-		setFileError(null);
-		setFileText('');
-		try {
-			const text = await bridge.readWorkspaceFile(entry.path);
-			if (request === fileRequest.current) setFileText(text);
-		} catch (cause) {
-			if (request === fileRequest.current) setFileError(cause instanceof Error ? cause.message : String(cause));
-		} finally { if (request === fileRequest.current) setFileLoading(false); }
+		setFileRevision(value => value + 1);
 	}
 
-	async function openDiff(path: string, source: DiffSource = 'unstaged') {
-		if (!bridge) return;
-		const request = ++diffRequest.current;
+	function openDiff(path: string, source: DiffSource = 'unstaged') {
+		setDiffLoading(true); setDiffError(null); setDiffText('');
 		setDiffPath(path);
 		setDiffSource(source);
-		setDiffText('');
-		setDiffError(null);
-		setDiffLoading(true);
-		try {
-			const text = await bridge.getWorkspaceGitDiff(path, source);
-			if (request === diffRequest.current) setDiffText(text);
-		} catch (cause) {
-			if (request === diffRequest.current) setDiffError(cause instanceof Error ? cause.message : String(cause));
-		} finally { if (request === diffRequest.current) setDiffLoading(false); }
+		setDiffRevision(value => value + 1);
 	}
+
+	useEffect(() => {
+		if (!bridge || !cwd || !open || tab !== 'files' || !selectedFile) return;
+		const request = ++fileRequest.current;
+		const current = () => request === fileRequest.current && currentCwdRef.current === cwd;
+		setFileLoading(true); setFileError(null); setFileText(''); setOfficePreview(null);
+		const load = /\.(?:docx|xlsx)$/i.test(selectedFile)
+			? bridge.previewResultFile({ cwd, path: selectedFile }).then(preview => { if (current()) setOfficePreview(preview); })
+			: bridge.readWorkspaceFile(selectedFile).then(text => { if (current()) setFileText(text); });
+		void load
+			.catch((cause: unknown) => { if (current()) setFileError(cause instanceof Error ? cause.message : String(cause)); })
+			.finally(() => { if (current()) setFileLoading(false); });
+		return () => { fileRequest.current++; };
+	}, [bridge, cwd, open, tab, selectedFile, fileRevision]);
+
+	useEffect(() => {
+		if (!bridge || !cwd || !open || tab !== 'git' || !diffPath) return;
+		const request = ++diffRequest.current;
+		const current = () => request === diffRequest.current && currentCwdRef.current === cwd;
+		setDiffText(''); setDiffError(null); setDiffLoading(true);
+		void bridge.getWorkspaceGitDiff(diffPath, diffSource).then(text => { if (current()) setDiffText(text); })
+			.catch((cause: unknown) => { if (current()) setDiffError(cause instanceof Error ? cause.message : String(cause)); })
+			.finally(() => { if (current()) setDiffLoading(false); });
+		return () => { diffRequest.current++; };
+	}, [bridge, cwd, open, tab, diffPath, diffSource, diffRevision]);
 
 	function beginGitOperation() {
 		const state = useChatStore.getState();
@@ -501,7 +522,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, modal = false, s
 					{selectedFile && <section className="pd-workbench-preview" aria-label={t('workbench.preview')}>
 						{previewControls}
 						<div className="pd-workbench-preview-head"><strong title={selectedFile}>{selectedFile}</strong><button type="button" className="pd-icon-button" onClick={() => { setSelectedFile(null); setFileText(''); }} aria-label={t('workbench.closePreview')}><Icon name="close" width="14" height="14" /></button></div>
-						{fileLoading ? <div className="pd-workbench-empty">{t('workbench.loadingFile')}</div> : fileError ? <div className="pd-workbench-error" role="alert">{fileError}</div> : <WorkbenchTextView key={selectedFile} text={fileText} path={selectedFile} />}
+						{fileLoading ? <div className="pd-workbench-empty">{t('workbench.loadingFile')}</div> : fileError ? <div className="pd-workbench-error" role="alert">{fileError}</div> : <ScopedErrorBoundary scope="preview" resetKeys={[cwd, selectedFile]}>{officePreview?.kind === 'office' && officePreview.officeFormat && officePreview.bytesBase64 ? <Suspense fallback={<div className="pd-workbench-empty">{t('workbench.loadingFile')}</div>}><OfficeFilePreview bytesBase64={officePreview.bytesBase64} format={officePreview.officeFormat} /></Suspense> : officePreview ? <div className="pd-workbench-empty">{officePreview.reason === 'too-large' ? label('文件较大，无法在这里预览。', 'This file is too large to preview here.') : label('无法预览此文件。', 'This file cannot be previewed.')}<button type="button" onClick={() => { if (bridge) void runWithFeedback({ id: `open:${cwd}:${selectedFile}`, title: label('打开文件', 'Open file'), run: () => bridge.openResultFile({ cwd, path: selectedFile }) }); }}>{label('使用默认应用打开', 'Open in default app')}</button></div> : <WorkbenchTextView key={selectedFile} text={fileText} path={selectedFile} />}</ScopedErrorBoundary>}
 					</section>}
 				</>}
 
@@ -550,7 +571,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, modal = false, s
 							{previewControls}
 							<div className="pd-workbench-diff-source">{diffSource === 'staged' ? label('已暂存差异', 'Staged changes') : label('未暂存差异', 'Unstaged changes')}</div>
 							<div className="pd-workbench-preview-head"><strong title={diffPath}>{diffPath}</strong><span className="pd-workbench-preview-actions"><HoverTooltip title={t('workbench.openInEditor')}><button type="button" className="pd-icon-button" onClick={() => void openInEditor(diffPath)} aria-label={t('workbench.openInEditor')}><Icon name="code" width="14" height="14" /></button></HoverTooltip><HoverTooltip title={t('workbench.revealInFolder')}><button type="button" className="pd-icon-button" onClick={() => void revealPath(diffPath)} aria-label={t('workbench.revealInFolder')}><Icon name="folder" width="14" height="14" /></button></HoverTooltip><button type="button" className="pd-icon-button" onClick={() => setDiffPath(null)} aria-label={t('workbench.closeDiff')}><Icon name="close" width="14" height="14" /></button></span></div>
-							{diffLoading ? <div className="pd-workbench-empty">{t('workbench.loadingDiff')}</div> : diffError ? <div className="pd-workbench-error" role="alert">{diffError}</div> : <WorkbenchTextView key={`${diffSource}:${diffPath}`} diff text={diffText || t('workbench.noDiff')} path={diffPath} />}
+							{diffLoading ? <div className="pd-workbench-empty">{t('workbench.loadingDiff')}</div> : diffError ? <div className="pd-workbench-error" role="alert">{diffError}</div> : <ScopedErrorBoundary scope="preview" resetKeys={[cwd, diffPath, diffSource]}><WorkbenchTextView key={`${diffSource}:${diffPath}`} diff text={diffText || t('workbench.noDiff')} path={diffPath} /></ScopedErrorBoundary>}
 						</section>}
 						<details className="pd-workbench-history">
 							<summary><Icon name="gitCommit" width="13" height="13" />{t('workbench.history')}</summary>

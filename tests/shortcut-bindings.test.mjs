@@ -39,6 +39,14 @@ test('shortcut registry parsing, matching and conflicts (4.3)', async (t) => {
     assert.deepEqual(findShortcutConflicts({}), []);
   });
 
+  await t.test('new session, project and terminal shortcuts support user overrides and keyboard layouts', () => {
+    assert.equal(bindingKeysFor('newSession', {}), 'Ctrl+N');
+    assert.equal(bindingKeysFor('openProject', {}), 'Ctrl+O');
+    assert.equal(bindingKeysFor('toggleTerminal', {}), 'Ctrl+`');
+    assert.equal(bindingKeysFor('newSession', { newSession: 'Ctrl+Shift+N' }), 'Ctrl+Shift+N');
+    assert.equal(matchesShortcut({ ctrlKey: true, metaKey: false, shiftKey: false, altKey: false, key: 'Dead', code: 'Backquote' }, 'Ctrl+`'), true);
+  });
+
   await t.test('unassigned shortcuts do not conflict with each other', () => {
     const overrides = { search: '', historyBack: '', historyForward: '   ' };
     assert.deepEqual(findShortcutConflicts(overrides), []);

@@ -23,6 +23,8 @@ import { backupCorruptStateFile, backupCorruptStateFileAsync, CorruptStateFileEr
 import { SessionGroupService } from './sessionGroups';
 import { createSessionTrash } from './sessionTrash';
 import { broadcastToRenderers, handleRendererInvoke, requireRendererSender } from './rendererIpc';
+import { normalizeUiDiagnostic } from '@pidesktop/shared';
+import { recordDiagnostic } from './diagnostics';
 import { normalizeSessionPath, pruneMissingSessionMeta } from './sessionPaths';
 import { prepareWorkspaceDrop } from './workspaceDrop';
 import { createProjectCreator } from './projectCreation';
@@ -40,11 +42,12 @@ import { inputScopeKey } from '../../../agent/src/attachmentStore.ts';
 import { registerDataFeaturesIpc } from './dataFeaturesIpc';
 import { INPUT_FEATURE_CHANNELS, WORKBENCH_FEATURE_CHANNELS, MANAGEMENT_FEATURE_CHANNELS, requireInputQueueScope, type RecoverableSessionMetadata } from '@pidesktop/shared';
 import type { UiPluginMutation, UiPluginResourceKind, UiPluginScope, UiSaveInstructionRequest } from '@pidesktop/shared';
+import { requireDialogResponse, type UiExtensionDialogResponse } from '@pidesktop/shared';
 
 type PendingDialog = {
 	request: UiExtensionDialogRequest;
 	owner: BrowserWindow;
-	resolve: (value: string | boolean | null) => void;
+	resolve: (value: UiExtensionDialogResponse) => void;
 	cleanup: () => void;
 };
 
@@ -103,7 +106,7 @@ function notificationsFor(owner: BrowserWindow): StartupNotifications {
 	return queue;
 }
 
-function requestExtensionDialog(request: UiExtensionDialogRequest, signal?: AbortSignal): Promise<string | boolean | null> {
+function requestExtensionDialog(request: UiExtensionDialogRequest, signal?: AbortSignal): Promise<UiExtensionDialogResponse> {
 	if (disposingServices) return Promise.resolve(null);
 	// The focused window can still be the logo splash while Pi initializes.
 	// Only a renderer with our preload bridge can display/answer extension UI.
@@ -122,7 +125,7 @@ function requestExtensionDialog(request: UiExtensionDialogRequest, signal?: Abor
 	}
 	return new Promise((resolve) => {
 		let timer: ReturnType<typeof setTimeout> | undefined;
-		const finish = (value: string | boolean | null): void => {
+		const finish = (value: UiExtensionDialogResponse): void => {
 			if (!pendingDialogs.has(request.id)) return;
 			pendingDialogs.delete(request.id);
 			cleanup();
@@ -911,6 +914,29 @@ export function registerIpc(options: {
 	}));
 	handleRendererInvoke(IPC_CHANNELS.agentInit, (_event, cwd: string) => activateWorkspace(cwd, true));
 	handleRendererInvoke(IPC_CHANNELS.agentSnapshot, () => agentService.getSnapshot());
+	handleRendererInvoke(IPC_CHANNELS.agentResidentSnapshot, (_event, scope: { cwd: string; sessionId: string; sessionPath: string | null }) => agentService.getResidentSessionSnapshot(scope));
+	handleRendererInvoke(IPC_CHANNELS.agentActivateResident, (_event, scope: { cwd: string; sessionId: string; sessionPath: string | null }) => queueWorkspaceActivation(async () => {
+		const snapshot = await agentService.getResidentSessionSnapshot(scope);
+		if (!snapshot) return false;
+		if (snapshot.sessionPath && automationExecutor.isSessionRunning(snapshot.sessionPath)) throw new Error('自动化仍在运行，请结束后再打开会话');
+		if (scope.cwd !== activeWorkspace) await workbenchService?.reset();
+		const previous = activeWorkspace;
+		activeWorkspace = scope.cwd;
+		try {
+			if (!await agentService.activateResidentSession(scope)) { activeWorkspace = previous; return false; }
+		} catch (error) { activeWorkspace = previous; throw error; }
+		await saveWorkspaceAsync(scope.cwd, false);
+		await markSessionRead(snapshot.sessionPath);
+		return true;
+	}));
+	let diagnosticWindowStart = 0, diagnosticCount = 0;
+	handleRendererInvoke(IPC_CHANNELS.uiDiagnostic, (_event, value: unknown) => {
+		const diagnostic = normalizeUiDiagnostic(value);
+		if (!diagnostic) throw new Error('Invalid UI diagnostic');
+		if (Date.now() - diagnosticWindowStart > 60_000) { diagnosticWindowStart = Date.now(); diagnosticCount = 0; }
+		if (++diagnosticCount > 240) return;
+		recordDiagnostic({ stage: 'renderer', action: diagnostic.kind, outcome: diagnostic.outcome === 'cancelled' ? 'exit' : diagnostic.outcome, durationMs: diagnostic.durationMs, ui: diagnostic });
+	});
 	handleRendererInvoke(IPC_CHANNELS.agentHistoryPage, (_event, offset: unknown, limit: unknown) => {
 		const pageOffset = typeof offset === 'number' ? offset : Number.NaN;
 		const pageLimit = typeof limit === 'number' ? limit : Number.NaN;
@@ -1175,10 +1201,10 @@ export function registerIpc(options: {
 	handleRendererInvoke(IPC_CHANNELS.agentNewSession, (_event, options?: unknown) => newConversation(options));
 	handleRendererInvoke(IPC_CHANNELS.agentExtensionDialogPending, (event) => [...pendingDialogs.values()]
 		.filter(({ owner }) => owner === invokingWindow(event)).map(({ request }) => request));
-	handleRendererInvoke(IPC_CHANNELS.agentExtensionDialogResponse, (event, id: string, value: string | boolean | null) => {
-		if (typeof id !== 'string' || (!['string', 'boolean'].includes(typeof value) && value !== null)) throw new Error('交互结果无效');
+	handleRendererInvoke(IPC_CHANNELS.agentExtensionDialogResponse, (event, id: string, value: unknown) => {
+		if (typeof id !== 'string') throw new Error('交互结果无效');
 		const pending = pendingDialogs.get(id);
-		if (pending && pending.owner.webContents === event.sender) pending.resolve(value);
+		if (pending && pending.owner.webContents === event.sender) pending.resolve(requireDialogResponse(pending.request, value));
 	});
 }
 

@@ -2,12 +2,12 @@ import { recordDiagnostic } from './diagnostics.ts';
 import { app, utilityProcess, type UtilityProcess } from 'electron';
 import { join } from 'node:path';
 import type { ProjectTrustDecision } from '@pidesktop/agent';
-import type { AgentEventEnvelope, AgentSnapshot, UiExtensionDialogRequest } from '@pidesktop/shared';
+import type { AgentEventEnvelope, AgentSnapshot, UiExtensionDialogRequest, UiExtensionDialogResponse } from '@pidesktop/shared';
 import { createAgentHostProxy, type AgentHostMethod, type AgentHostToMain, type MainToAgentHost } from './agentHostProtocol';
 
 export interface AgentHostUiHandlers {
 	requestProjectTrust(cwd: string): Promise<ProjectTrustDecision>;
-	requestExtensionDialog(request: UiExtensionDialogRequest, signal: AbortSignal): Promise<string | boolean | null>;
+	requestExtensionDialog(request: UiExtensionDialogRequest, signal: AbortSignal): Promise<UiExtensionDialogResponse>;
 	onHostCrash?(): void;
 }
 

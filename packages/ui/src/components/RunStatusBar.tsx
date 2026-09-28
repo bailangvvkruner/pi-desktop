@@ -3,6 +3,7 @@ import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { classifyAgentError, type UiErrorKind } from '../errorAttribution';
 import { useConversationCopy } from '../conversationCopy';
+import { ErrorDetails } from './ErrorDetails';
 
 /**
  * Run-status bar (4.4): surfaces the four run states at the transcript end —
@@ -46,7 +47,7 @@ export function RunStatusBar({ onOpenModelManagement }: { onOpenModelManagement?
 
 	// Session-list and other UI failures must not offer an agent restart that
 	// retryAgent cannot perform while the agent is healthy.
-	if (status !== 'error') return <div className="pd-error-banner" role="alert"><span>{error}</span>{status === 'idle' && lastMessage?.role === 'assistant' && lastMessage.status === 'error' && <div><button type="button" className="pd-run-status-action" disabled={busy} onClick={() => void runAction(() => useChatStore.getState().regenerate())}>{busy ? c('regenerating') : t('message.regenerate')}</button>{onOpenModelManagement && <button type="button" className="pd-run-status-action" onClick={onOpenModelManagement}>{t('chat.runStatus.openSettings')}</button>}</div>}</div>;
+	if (status !== 'error') return <div className="pd-error-banner" role="alert"><span>{error}</span>{status === 'idle' && lastMessage?.role === 'assistant' && lastMessage.status === 'error' && <div><button type="button" className="pd-run-status-action" disabled={busy} onClick={() => void runAction(() => useChatStore.getState().regenerate())}>{busy ? c('regenerating') : t('message.regenerate')}</button>{onOpenModelManagement && <button type="button" className="pd-run-status-action" onClick={onOpenModelManagement}>{t('chat.runStatus.openSettings')}</button>}</div>}<ErrorDetails error={error ?? ''} status={status} /></div>;
 	const kind: UiErrorKind = classifyAgentError(error ?? '');
 	const action = !bridge ? null : (
 		kind === 'auth' ? (
@@ -63,6 +64,7 @@ export function RunStatusBar({ onOpenModelManagement }: { onOpenModelManagement?
 			<span>{error}</span>
 			<span className="pd-run-status-hint">{t(`chat.runStatus.${kind}Hint`)}</span>
 			{action}
+			<ErrorDetails error={error ?? ''} status={status} />
 		</div>
 	);
 }

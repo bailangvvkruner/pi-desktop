@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { basename, extname, isAbsolute, resolve } from 'node:path';
 import type { ResultFilePreview, ResultFileTarget } from '@pidesktop/shared';
 
-export const RESULT_FILE_LIMITS = { text: 1024 * 1024, image: 16 * 1024 * 1024, pdf: 20 * 1024 * 1024 } as const;
+export const RESULT_FILE_LIMITS = { text: 1024 * 1024, image: 16 * 1024 * 1024, pdf: 20 * 1024 * 1024, office: 10 * 1024 * 1024 } as const;
 
 function localPath(value: unknown): value is string {
   if (typeof value !== 'string' || !value.trim() || value.length > 32_768 || /[\u0000-\u001f]/.test(value)) return false;
@@ -111,12 +111,15 @@ export class ResultFileService {
       const head = prefix.subarray(0, prefixLength);
       const mime = imageMime(head);
       const pdf = head.toString('ascii', 0, 5) === '%PDF-';
-      const kind = mime ? 'image' : pdf ? 'pdf' : 'text';
+      const extension = extname(target.path).toLowerCase();
+      const officeFormat = extension === '.docx' ? 'docx' : extension === '.xlsx' ? 'xlsx' : undefined;
+      const office = officeFormat && head.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+      const kind = mime ? 'image' : pdf ? 'pdf' : office ? 'office' : 'text';
       const limit = RESULT_FILE_LIMITS[kind];
       this.assertCurrent(target.cwd);
       if (kind !== 'text' && opened.size > limit) return { ...base, kind: 'unsupported', reason: 'too-large' };
       // Office archives and executables are never misrepresented as a text preview.
-      if (!mime && !pdf && /\.(?:docx?|xlsx?|pptx?|od[tpfs]|zip|7z|rar|exe|dll|wasm|mp[34]|mov|avi|wav|flac|ttf|woff2?)$/i.test(extname(target.path))) {
+      if (kind === 'text' && /\.(?:docx?|xlsx?|pptx?|od[tpfs]|zip|7z|rar|exe|dll|wasm|mp[34]|mov|avi|wav|flac|ttf|woff2?)$/i.test(extension)) {
         return { ...base, kind: 'unsupported', reason: 'unsupported' };
       }
       const bytes = Buffer.alloc(Math.min(opened.size, limit) + 1);
@@ -131,6 +134,7 @@ export class ResultFileService {
       const content = bytes.subarray(0, Math.min(offset, limit));
       if (kind !== 'text') {
         if (truncated) return { ...base, kind: 'unsupported', reason: 'too-large' };
+        if (kind === 'office') return { ...base, kind, officeFormat, bytesBase64: content.toString('base64') };
         return { ...base, kind, dataUrl: `data:${mime ?? 'application/pdf'};base64,${content.toString('base64')}` };
       }
       const text = decodeText(content, truncated);

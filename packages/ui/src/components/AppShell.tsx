@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import type { UiSessionSearchResult, WorkspaceEntry } from '@pidesktop/shared';
 import { ChatView, type SearchMessageTarget } from './ChatView';
+import { ConversationPanes } from './ConversationPanes';
+import { ScopedErrorBoundary } from './ScopedErrorBoundary';
 import { AutomationPage } from './AutomationPage';
 import { PluginsPage } from './PluginsPage';
 import { SearchDialog, type SearchCommand } from './SearchDialog';
@@ -75,6 +77,8 @@ export function AppShell() {
 	const [mainView, setMainView] = useState<'chat' | 'automations' | 'plugins'>('chat');
 	const [searchMessageTarget, setSearchMessageTarget] = useState<SearchMessageTarget | null>(null);
 	const [workbenchRequest, setWorkbenchRequest] = useState<WorkbenchOpenRequest | null>(null);
+	const [terminalRequest, setTerminalRequest] = useState(0);
+	const [workbenchTab, setWorkbenchTab] = useState<'files' | 'git' | 'command' | 'terminal'>('files');
 	const navigationRequest = useRef(0);
 	const [settingsInitialPage, setSettingsInitialPage] = useState<'general' | 'model' | 'updates'>('general');
 	const [modelManagementTarget, setModelManagementTarget] = useState<ModelManagementTarget>({ kind: 'manage' });
@@ -193,9 +197,30 @@ export function AppShell() {
 	}, [paiMode, workbenchOpen]);
 
 	useEffect(() => {
+		// Capture the terminal toggle before xterm and the workbench focus trap
+		// consume it. The workbench itself may be modal on narrow windows.
+		const onTerminalKeyDown = (event: KeyboardEvent) => {
+			if (paiMode || event.defaultPrevented || event.isComposing || event.keyCode === 229 || !matchesShortcut(event, bindingKeysFor('toggleTerminal'))) return;
+			const blocked = [...document.querySelectorAll('[aria-modal="true"], dialog[open]')]
+				.some(element => !element.matches('.pd-workbench') && !element.closest('[hidden], [inert], [aria-hidden="true"]'));
+			if (blocked) return;
+			event.preventDefault(); event.stopPropagation();
+			if (event.repeat) return;
+			setMainView('chat');
+			if (workbenchOpen && workbenchTab === 'terminal') closeWorkbench();
+			else { setWorkbenchOpen(true); setTerminalRequest(value => value + 1); }
+		};
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.defaultPrevented || event.isComposing) return;
 			if (paiMode) return;
+			if (!document.querySelector('[role="dialog"][aria-modal="true"], dialog[open]') && event.keyCode !== 229) {
+				const action = matchesShortcut(event, bindingKeysFor('newSession')) ? 'new' : matchesShortcut(event, bindingKeysFor('openProject')) ? 'open' : null;
+				if (action) {
+					event.preventDefault(); setMainView('chat');
+					if (!useChatStore.getState().navigationPending) void (action === 'new' ? useChatStore.getState().newSession() : useChatStore.getState().pickWorkspace()).catch(() => {});
+					return;
+				}
+			}
 			if (matchesShortcut(event, bindingKeysFor('search')) || matchesShortcut(event, bindingKeysFor('commandPalette'))) {
 				if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
 				event.preventDefault();
@@ -207,9 +232,10 @@ export function AppShell() {
 				setSidebarOpen((open) => !open);
 			}
 		};
+		window.addEventListener('keydown', onTerminalKeyDown, true);
 		window.addEventListener('keydown', onKeyDown);
-		return () => window.removeEventListener('keydown', onKeyDown);
-	}, [paiMode]);
+		return () => { window.removeEventListener('keydown', onTerminalKeyDown, true); window.removeEventListener('keydown', onKeyDown); };
+	}, [paiMode, workbenchOpen, workbenchTab]);
 
 	async function selectSearchSession(result: UiSessionSearchResult) {
 		if (!await useChatStore.getState().selectSession(result.cwd, result.path)) return;
@@ -309,13 +335,13 @@ export function AppShell() {
 				setSidebarWidth((value) => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, value + (event.key === 'ArrowRight' ? 16 : -16))));
 			}} />}
 			<div className="pd-main-view">
-			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ChatView onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} historyControls={mainView === 'chat' ? headerControls : undefined} /></div>
+			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ConversationPanes><ChatView onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} historyControls={mainView === 'chat' ? headerControls : undefined} /></ConversationPanes></div>
 			{mainView === 'automations' && <AutomationPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} />}
 			{mainView === 'plugins' && <PluginsPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} />}
 			<div className="pd-notification-center"><OperationFeedback /><UpdateNotice /><div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>
 			</div>
 			<button type="button" className={`pd-workbench-scrim${workbenchOpen && mainView === 'chat' ? ' is-open' : ''}`} aria-label={t('app.closeWorkbench')} aria-hidden={!workbenchOpen || mainView !== 'chat'} inert={!workbenchOpen || mainView !== 'chat'} tabIndex={-1} onClick={closeWorkbench} />
-			<WorkbenchSidePane open={workbenchOpen && mainView === 'chat'} modal={workbenchOverlay && !settingsOpen && !searchOpen} suspended={settingsOpen || searchOpen} width={clampWorkbenchWidth(workbenchWidth, viewportWidth)} onWidthChange={value => setWorkbenchWidth(clampWorkbenchWidth(value, viewportWidth))} onResizing={setWorkbenchResizing} onClose={closeWorkbench} openRequest={workbenchRequest} />
+			<ScopedErrorBoundary scope="workbench" resetKeys={[workbenchRequest?.cwd, workbenchRequest?.requestId]}><WorkbenchSidePane open={workbenchOpen && mainView === 'chat'} modal={workbenchOverlay && !settingsOpen && !searchOpen} suspended={settingsOpen || searchOpen} width={clampWorkbenchWidth(workbenchWidth, viewportWidth)} onWidthChange={value => setWorkbenchWidth(clampWorkbenchWidth(value, viewportWidth))} onResizing={setWorkbenchResizing} onClose={closeWorkbench} openRequest={workbenchRequest} terminalRequest={terminalRequest} onTabChange={setWorkbenchTab} /></ScopedErrorBoundary>
 			{mainView === 'chat' && <HoverTooltip title={t('app.workbench')}><button ref={workbenchToggleRef} type="button" className="pd-workbench-toggle pd-icon-button" aria-label={t(workbenchOpen ? 'app.closeWorkbench' : 'app.openWorkbench')} aria-pressed={workbenchOpen} onClick={() => setWorkbenchOpen((value) => !value)}><Icon name="panelRight" width="17" height="17" /></button></HoverTooltip>}
 			{settingsOpen && <SettingsPanel initialPage={settingsInitialPage} modelManagementTarget={settingsInitialPage === 'model' ? modelManagementTarget : undefined} onClose={() => setSettingsOpen(false)} themePreference={themePreference} onThemePreferenceChange={setThemePreference} colorPreferences={colorPreferences} onColorPreferencesChange={setColorPreferences} colorSaveFailed={colorSaveFailed} />}
 			{searchOpen && <SearchDialog commands={searchCommands} onClose={() => setSearchOpen(false)} onSelectSession={selectSearchSession} onSelectFile={selectSearchFile} />}

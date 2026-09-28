@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import hljs from 'highlight.js/lib/common';
 import { useT } from '../i18n';
 import { literalMatches, readingRows } from '../workbenchReading';
 
-const LANGUAGES: Record<string, string> = { ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript', py: 'python', sh: 'bash', ps1: 'powershell', yml: 'yaml', md: 'markdown', h: 'cpp', rs: 'rust', cs: 'csharp' };
+import { useReadingAnalysis } from '../useReadingAnalysis';
+import { WordDiffText } from './WordDiffText';
 
 /** The copy action always uses the original text; line numbers and marks are presentation only. */
 export function WorkbenchTextView({ text, path = '', diff = false, command = false, omitted = false, errorRanges = [], onClear }: { text: string; path?: string; diff?: boolean; command?: boolean; omitted?: boolean; errorRanges?: Array<{ start: number; end: number }>; onClear?(): void }) {
@@ -11,7 +11,7 @@ export function WorkbenchTextView({ text, path = '', diff = false, command = fal
   const label = (zh: string, en: string) => locale === 'zh-CN' ? zh : en;
   const [query, setQuery] = useState('');
   const [match, setMatch] = useState(0);
-  const [limit, setLimit] = useState(2000);
+  const [limit, setLimit] = useState(400);
   const [notice, setNotice] = useState('');
   const [following, setFollowing] = useState(true);
   const body = useRef<HTMLDivElement>(null);
@@ -32,8 +32,8 @@ export function WorkbenchTextView({ text, path = '', diff = false, command = fal
   const active = matches[index];
   const activeRow = active ? rows.findIndex((row, i) => row.offset <= active.start && (rows[i + 1]?.offset ?? Infinity) > active.start) : -1;
   const shown = Math.max(limit, activeRow + 1);
-  const extension = path.split('.').at(-1)?.toLowerCase() ?? '';
-  const language = LANGUAGES[extension] ?? extension;
+  const analysis = useReadingAnalysis(text, path, diff ? 'diff' : 'text', !command);
+  useEffect(() => { setLimit(400); setMatch(0); }, [path, diff]);
   useEffect(() => { setMatch(0); }, [query]);
   useLayoutEffect(() => {
     if (active) body.current?.querySelector('[data-current-match]')?.scrollIntoView({ block: 'center', inline: 'nearest' });
@@ -43,7 +43,7 @@ export function WorkbenchTextView({ text, path = '', diff = false, command = fal
   }, [text, following, command, query]);
   const move = (delta: number) => { setFollowing(false); setMatch((index + delta + matches.length) % Math.max(1, matches.length)); };
   const copy = async () => { try { await navigator.clipboard.writeText(text); setNotice(label('已复制', 'Copied')); } catch { setNotice(label('复制失败，请选择文本复制', 'Copy failed; select the text to copy')); } };
-  function content(row: typeof rows[number]): ReactNode {
+  function content(row: typeof rows[number], index: number): ReactNode {
     if (query) {
       const ranges = matchesByRow.get(row.offset) ?? [];
       const parts: ReactNode[] = []; let offset = 0;
@@ -53,9 +53,9 @@ export function WorkbenchTextView({ text, path = '', diff = false, command = fal
       }
       parts.push(row.text.slice(offset)); return parts;
     }
-    if (!diff && !command && text.length <= 100_000 && hljs.getLanguage(language)) {
-      try { return <span dangerouslySetInnerHTML={{ __html: hljs.highlight(row.text, { language, ignoreIllegals: true }).value }} />; } catch { /* Plain text remains readable. */ }
-    }
+    const words = analysis.words[index];
+    if (words?.length) return <WordDiffText text={row.text} ranges={words} />;
+    if (analysis.html[index]) return <span dangerouslySetInnerHTML={{ __html: analysis.html[index] }} />;
     return row.text || '\u200b';
   }
   return <div className={`pd-workbench-reader${command ? ' is-command' : ''}`} onKeyDown={event => {
@@ -73,9 +73,9 @@ export function WorkbenchTextView({ text, path = '', diff = false, command = fal
     {notice && <p className="pd-workbench-reader-notice" role="status">{notice}</p>}
     <div ref={body} className="pd-workbench-reader-body" tabIndex={0} aria-label={label('文本内容', 'Text content')} onScroll={() => { const element = body.current; if (command && element) setFollowing(element.scrollHeight - element.scrollTop - element.clientHeight < 24); }}>
       <div className="pd-workbench-reader-lines">{rows.slice(0, command ? rows.length : shown).map((row, i) => <div key={i} className={`pd-workbench-code-line is-${row.kind}${errorRanges.some(range => range.start < row.offset + row.text.length && range.end > row.offset) ? ' is-stderr' : ''}`}>
-        {diff && <span className="pd-workbench-line-number" aria-hidden="true">{row.oldLine}</span>}<span className="pd-workbench-line-number" aria-hidden="true">{row.newLine}</span><code>{content(row)}</code>
+        {diff && <span className="pd-workbench-line-number" aria-hidden="true">{row.oldLine}</span>}<span className="pd-workbench-line-number" aria-hidden="true">{row.newLine}</span><code>{content(row, i)}</code>
       </div>)}</div>
-      {!command && shown < rows.length && <button type="button" className="pd-workbench-show-lines" onClick={() => setLimit(value => value + 2000)}>{label('继续显示后续行', 'Show more lines')} ({Math.min(shown, rows.length)}/{rows.length})</button>}
+      {!command && shown < rows.length && <button type="button" className="pd-workbench-show-lines" onClick={() => setLimit(value => value + 400)}>{label('继续显示后续行', 'Show more lines')} ({Math.min(shown, rows.length)}/{rows.length})</button>}
     </div>
   </div>;
 }

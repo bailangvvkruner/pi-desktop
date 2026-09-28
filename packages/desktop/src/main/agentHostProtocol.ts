@@ -1,4 +1,4 @@
-import type { AgentEventEnvelope, UiExtensionDialogRequest } from '@pidesktop/shared';
+import type { AgentEventEnvelope, UiExtensionDialogRequest, UiExtensionDialogResponse } from '@pidesktop/shared';
 import type { AgentService, ProjectTrustDecision } from '@pidesktop/agent';
 import type { readSessionContext, searchSessions, searchWorkspaceFiles, searchSessionsPage, searchProjectFiles, rebuildSearchIndex, cancelDataSearch, getProjectSearchRules, setProjectSearchRules } from './searchService';
 
@@ -29,6 +29,8 @@ export const AGENT_HOST_METHODS = [
 	'switchWorkspace',
 	'forgetWorkspace',
 	'getSnapshot',
+	'getResidentSessionSnapshot',
+	'activateResidentSession',
 	'getHistoryPage',
 	'getMessageAttachment',
 	'getSessionStats',
@@ -103,7 +105,7 @@ export async function invokeAgentHostMethod(methods: AgentHostImplementation, me
 
 export type MainToAgentHost =
 	| { kind: 'call'; id: number; method: AgentHostMethod; args: unknown[] }
-	| { kind: 'ui-reply'; id: number; value: ProjectTrustDecision | string | boolean | null }
+	| { kind: 'ui-reply'; id: number; value: ProjectTrustDecision | UiExtensionDialogResponse }
 	| { kind: 'ui-error'; id: number; message: string };
 
 export type AgentHostToMain =

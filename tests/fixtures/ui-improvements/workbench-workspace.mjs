@@ -33,6 +33,7 @@ export default async function workbenchWorkspaceScenario(review) {
   await review.click('.pd-workbench-branch button');
   await review.fill('.pd-workbench-branch-form input','a-draft');
   await review.evaluate('window.__workbenchWorkspace.switchWorkspace("project-b")');
+  await review.click('[data-segment-key=git]');
   await review.waitFor('document.querySelector(".pd-workbench-branch")?.textContent.includes("project-b")');
   await review.assert('!document.querySelector(".pd-workbench-discard-confirm") && !document.querySelector(".pd-workbench-branch-form") && window.__workbenchWorkspace.mutations.length===0','Switching projects removes A discard confirmation and branch draft without discarding B');
 

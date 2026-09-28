@@ -47,6 +47,7 @@ import type {
 	UiContextSource,
 	UiContextUsage,
 	UiExtensionDialogRequest,
+	UiExtensionDialogResponse,
 	UiExtensionSummary,
 	UiFileChange,
 	UiMessage,
@@ -91,6 +92,8 @@ import { AttachmentStore } from './attachmentStore.ts';
 import { DurableInputQueue } from './inputQueue.ts';
 import { ConversationRunTracker, isConversationRunEntry, latestUnassociatedRunId, readConversationRuns, selectConversationRuns } from './conversationRuns.ts';
 import { sessionTiming } from './sessionMetrics.ts';
+import { requestDesktopConfirmation } from './extensionApproval.ts';
+export type { DesktopApprovalOptions } from './extensionApproval.ts';
 import { requireInputQueueScope, type UiInputQueue, type UiInputQueueScope, type UiInputQueueMutation, type UiInputReceipt, type UiSubmitInput } from '../../shared/src/inputFeatures.ts';
 import type { ModelTestRequest, ProjectDefaultsWrite } from '../../shared/src/managementFeatures.ts';
 import { ModelTestService } from './modelTest.ts';
@@ -114,7 +117,7 @@ export interface ProjectTrustDecision {
 }
 
 export type RequestProjectTrust = (cwd: string) => Promise<ProjectTrustDecision>;
-export type RequestExtensionDialog = (request: UiExtensionDialogRequest, signal?: AbortSignal) => Promise<string | boolean | null>;
+export type RequestExtensionDialog = (request: UiExtensionDialogRequest, signal?: AbortSignal) => Promise<UiExtensionDialogResponse>;
 
 type EventEmitter = (event: AgentEventEnvelope) => void;
 
@@ -355,6 +358,10 @@ class SingleAgentService {
 			? userText(firstUser.message) : this.state.messages.find((message) => message.role === 'user')?.text ?? '';
 		return { path: this.state.sessionPath, id: this.state.sessionId, name: manager?.getSessionName(), firstMessage,
 			modified: this.runtimeModified, messageCount: this.state.messages.length, runtime };
+	}
+
+	matchesSession(scope: { cwd: string; sessionId: string; sessionPath: string | null }): boolean {
+		return this.cwd === scope.cwd && this.state.sessionId === scope.sessionId && this.state.sessionPath === scope.sessionPath;
 	}
 
 	getSnapshot(): AgentSnapshot {
@@ -1319,8 +1326,7 @@ class SingleAgentService {
 				const value = await request({ id: randomUUID(), kind: 'select', title, options, timeout: opts?.timeout }, opts?.signal);
 				return typeof value === 'string' && options.includes(value) ? value : undefined;
 			},
-			confirm: async (title, message, opts) =>
-				(await request({ id: randomUUID(), kind: 'confirm', title, message, timeout: opts?.timeout }, opts?.signal)) === true,
+			confirm: (title, message, opts) => requestDesktopConfirmation(request, title, message, opts),
 			input: async (title, placeholder, opts) => {
 				const value = await request({ id: randomUUID(), kind: 'input', title, placeholder, timeout: opts?.timeout }, opts?.signal);
 				return typeof value === 'string' ? value : undefined;
@@ -1925,6 +1931,29 @@ export class AgentService {
 			thinkingLevel: 'off', availableThinkingLevels: ['off'], contextUsage: null, cwd: '', sessionId: null,
 			sessionPath: null, messages: [], activities: [], queuedCount: 0, queuedMessages: [], fileChanges: [], error: null,
 		};
+	}
+
+	/** Background previews never activate or create a runtime. */
+	getResidentSessionSnapshot(scope: { cwd: string; sessionId: string; sessionPath: string | null }): AgentSnapshot | null {
+		if (!scope || typeof scope.cwd !== 'string' || scope.cwd.length > 32768 || typeof scope.sessionId !== 'string' || scope.sessionId.length > 256) throw new Error('Invalid session scope');
+		for (const context of this.contexts.values()) {
+			if (context.matchesSession(scope)) return context.getSnapshot();
+		}
+		return null;
+	}
+
+	async activateResidentSession(scope: { cwd: string; sessionId: string; sessionPath: string | null }): Promise<boolean> {
+		if (!scope || typeof scope.cwd !== 'string' || scope.cwd.length > 32768 || typeof scope.sessionId !== 'string' || scope.sessionId.length > 256) throw new Error('Invalid session scope');
+		let activated = false;
+		await this.runTransition(async () => {
+			const entry = [...this.contexts.entries()].find(([, service]) => service.matchesSession(scope));
+			if (!entry) return;
+			const path = entry[1].getSnapshot().sessionPath;
+			if (path && this.isSessionReserved(path)) throw new Error('会话正在切换或删除，请稍后重试');
+			this.activate(entry[0], entry[1]);
+			activated = true;
+		});
+		return activated;
 	}
 
 	/** Forwards to the active context; older timeline slices load on demand. */
@@ -2533,7 +2562,7 @@ export class AgentService {
 		const snapshot = service.getSnapshot();
 		this.fire({ type: 'reset', cwd: snapshot.cwd });
 		if (snapshot.sessionId) this.fire({
-			type: 'ready', model: snapshot.model, modelName: snapshot.modelName ?? null, modelProvider: snapshot.modelProvider,
+			type: 'ready', resumeKind: 'warm', model: snapshot.model, modelName: snapshot.modelName ?? null, modelProvider: snapshot.modelProvider,
 			thinkingLevel: snapshot.thinkingLevel, availableThinkingLevels: snapshot.availableThinkingLevels,
 			contextUsage: snapshot.contextUsage,
 			cwd: snapshot.cwd, sessionId: snapshot.sessionId, sessionPath: snapshot.sessionPath,

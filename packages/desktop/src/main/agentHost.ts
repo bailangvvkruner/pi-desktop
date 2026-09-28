@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { readSessionContext, searchSessions, searchWorkspaceFiles, searchSessionsPage, searchProjectFiles, rebuildSearchIndex, cancelDataSearch, getProjectSearchRules, setProjectSearchRules } from './searchService';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ProjectTrustDecision } from '@pidesktop/agent';
-import type { UiExtensionDialogRequest } from '@pidesktop/shared';
+import type { UiExtensionDialogRequest, UiExtensionDialogResponse } from '@pidesktop/shared';
 import { createAgentHostMethods, invokeAgentHostMethod, type AgentHostToMain, type MainToAgentHost } from './agentHostProtocol';
 
 const parent = process.parentPort;
@@ -61,7 +61,7 @@ configureProviderNetwork(async (url) => {
 
 const agent = new AgentService(
 	(cwd): Promise<ProjectTrustDecision> => askMain({ kind: 'project-trust', cwd }),
-	(dialog: UiExtensionDialogRequest, signal?: AbortSignal): Promise<string | boolean | null> =>
+	(dialog: UiExtensionDialogRequest, signal?: AbortSignal): Promise<UiExtensionDialogResponse> =>
 		askMain({ kind: 'extension', dialog }, signal),
 );
 agent.onEvent((envelope) => post({ kind: 'event', envelope }));

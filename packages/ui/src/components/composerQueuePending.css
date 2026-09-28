@@ -1,0 +1,2 @@
+.pd-queue-pending { flex: 0 0 auto; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); white-space: nowrap; }
+.pd-composer-queue-item.is-pending { background: color-mix(in srgb, var(--pd-selected) 45%, transparent); }

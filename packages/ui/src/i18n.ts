@@ -1010,6 +1010,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'settings.extensionToggle': { 'zh-CN': '切换 {name} 的启用状态', 'en-US': 'Toggle {name}' },
   'settings.shortcutsDescription': { 'zh-CN': '常用操作可以直接从键盘完成。', 'en-US': 'Use the keyboard for common actions.' },
   'settings.shortcutSidebar': { 'zh-CN': '展开或收起侧栏', 'en-US': 'Toggle sidebar' },
+  'settings.shortcutTerminal': { 'zh-CN': '展开或收起终端', 'en-US': 'Toggle terminal' },
   'settings.shortcutSend': { 'zh-CN': '发送消息', 'en-US': 'Send a message' },
   'settings.shortcutSendWhileRunning': { 'zh-CN': '发送消息 / 任务进行时{action}', 'en-US': 'Send a message / {action} while running' },
   'settings.shortcutNewline': { 'zh-CN': '输入换行', 'en-US': 'Insert a new line' },

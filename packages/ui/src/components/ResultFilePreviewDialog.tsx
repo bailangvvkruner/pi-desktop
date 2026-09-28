@@ -1,10 +1,12 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ResultFilePreview, ResultFileTarget } from '@pidesktop/shared';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
 import { Icon } from './Icons';
 import { WorkbenchTextView } from './WorkbenchTextView';
+import { ScopedErrorBoundary } from './ScopedErrorBoundary';
+const OfficeFilePreview = lazy(() => import('./OfficeFilePreview'));
 import './workbenchReading.css';
 import './resultFilePreview.css';
 
@@ -141,15 +143,16 @@ export function ResultFilePreviewDialog({ target, onClose }: { target: ResultFil
 			<button type="button" disabled={!bridge || busy !== null} onClick={() => void act('reveal')}><Icon name="folder" width="14" height="14" />{busy === 'reveal' ? label('正在打开…', 'Opening…') : label('打开所在位置', 'Show in folder')}</button>
 		</div>
 		{actionError && <p className="pd-result-file-preview-error" role="alert">{actionError}</p>}
-		<div className={`pd-result-file-preview-body${preview ? ` is-${preview.kind}` : ''}`} aria-busy={loading}>
+		<ScopedErrorBoundary scope="preview" resetKeys={[targetKey, retry]}><div className={`pd-result-file-preview-body${preview ? ` is-${preview.kind}` : ''}`} aria-busy={loading}>
 			{loadError ? <div className="pd-result-file-preview-state" role="alert"><Icon name="file" width="32" height="32" /><strong>{label('无法预览文件', 'Unable to preview this file')}</strong><p>{loadError}</p><button type="button" onClick={retryPreview}>{label('重试', 'Retry')}</button></div> : loading ?
 				<div className="pd-result-file-preview-state" role="status"><p>{label('正在加载预览…', 'Loading preview…')}</p></div> : preview?.kind === 'text' ?
 				<WorkbenchTextView key={`${targetKey}:${retry}`} path={preview.path} text={preview.text ?? ''} omitted={preview.truncated} /> : preview?.kind === 'image' ? <>
 					<div className="pd-result-file-preview-zoom"><button type="button" aria-pressed={zoom === null} onClick={() => setZoom(null)}>{label('适应窗口', 'Fit to window')}</button><button type="button" aria-pressed={zoom === 1} onClick={() => setZoom(1)}>100%</button><button type="button" aria-label={label('缩小', 'Zoom out')} disabled={zoom === .25} onClick={() => changeZoom(-.25)}>−</button><output>{zoom === null ? label('适应', 'Fit') : `${Math.round(zoom * 100)}%`}</output><button type="button" aria-label={label('放大', 'Zoom in')} disabled={zoom === 4} onClick={() => changeZoom(.25)}>+</button></div>
 					{mediaError || !imageSource ? <div className="pd-result-file-preview-state" role="alert"><p>{label('无法显示此图片。', 'This image could not be displayed.')}</p><button type="button" onClick={retryPreview}>{label('重试', 'Retry')}</button></div> : <div className={`pd-result-file-preview-image${zoom === null ? ' is-fit' : ''}`}><img key={`${targetKey}:${retry}`} src={imageSource} alt={name} style={zoom === null ? undefined : { zoom }} onError={() => setMediaError(true)} /></div>}
-				</> : preview?.kind === 'pdf' && pdfSource && !mediaError ?
+				</> : preview?.kind === 'office' && preview.bytesBase64 && preview.officeFormat ?
+				<Suspense fallback={<div className="pd-result-file-preview-state" role="status">{label('正在加载预览…', 'Loading preview…')}</div>}><OfficeFilePreview key={`${targetKey}:${retry}`} bytesBase64={preview.bytesBase64} format={preview.officeFormat} /></Suspense> : preview?.kind === 'pdf' && pdfSource && !mediaError ?
 				<iframe className="pd-result-file-preview-pdf" title={`${label('PDF 预览', 'PDF preview')}: ${name}`} src={pdfSource} onError={() => setMediaError(true)} /> :
 				<div className="pd-result-file-preview-state"><Icon name={preview?.kind === 'directory' ? 'folder' : 'file'} width="36" height="36" /><strong>{preview?.kind === 'directory' ? label('文件夹', 'Folder') : label('暂无预览', 'Preview unavailable')}</strong><p>{preview?.kind === 'pdf' ? label('无法显示此 PDF，请使用默认应用打开。', 'This PDF could not be displayed. Open it in its default app.') : unavailableReason()}</p><button type="button" disabled={!bridge || busy !== null} onClick={() => void act('open')}>{openLabel}</button></div>}
-		</div>
+		</div></ScopedErrorBoundary>
 	</dialog>, document.body);
 }

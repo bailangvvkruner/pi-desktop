@@ -6,7 +6,7 @@
 
 export const UI_FONT_SIZE_MIN = 12;
 export const UI_FONT_SIZE_MAX = 20;
-export const DEFAULT_UI_FONT_SIZE = 13;
+export const DEFAULT_UI_FONT_SIZE = 14;
 const STORAGE_KEY = 'pi-desktop.ui-font-size.v1';
 const CSS_PROPERTY = '--pd-ui-font-size';
 
