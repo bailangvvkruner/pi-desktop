@@ -20,12 +20,18 @@
     Push $2
     ; ReadRegStr alone cannot distinguish a missing key from an existing key
     ; without a default value. Preserve either kind of foreign registration.
+    ; EnumRegKey does NOT set the error flag when the index runs past the
+    ; last subkey - it returns an empty name instead. Terminate on the empty
+    ; name (a real subkey can never be named ""), keep the Errors check as a
+    ; fallback, and cap iterations so a pathological hive can never hang the
+    ; installer forever while it holds the single-instance mutex.
     StrCpy $0 0
     StrCpy $2 ""
     ${Do}
       ClearErrors
       EnumRegKey $1 SHCTX "${PAI_APP_PATHS_ROOT}" $0
       ${If} ${Errors}
+      ${OrIf} $1 == ""
         ${ExitDo}
       ${EndIf}
       ${If} $1 == "pai.exe"
@@ -33,6 +39,9 @@
         ${ExitDo}
       ${EndIf}
       IntOp $0 $0 + 1
+      ${If} $0 >= 1000
+        ${ExitDo}
+      ${EndIf}
     ${Loop}
     ReadRegStr $1 SHCTX "${PAI_APP_PATH_KEY}" "PiDesktopManaged"
     ${If} $2 != "exists"
