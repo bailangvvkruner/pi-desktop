@@ -87,7 +87,7 @@ test('manual titles persist empty sessions and remain bound to their original wo
     delete globalThis.__piRenameSetup;
     for (const [key, value] of previous) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     const resolvedRoot = resolve(root);
-    if (!resolvedRoot.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
+    if (!resolvedRoot.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedRoot, { recursive: true, force: true });
   }
 });

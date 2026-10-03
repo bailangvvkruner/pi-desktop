@@ -338,7 +338,7 @@ test('desktop slash commands use current SDK resources, enforce session ownershi
     await service?.dispose();
     for (const [name, value] of environment) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
     const target = resolve(root);
-    if (!target.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
+    if (!target.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(target, { recursive: true, force: true });
   }
 });

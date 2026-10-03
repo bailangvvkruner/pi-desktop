@@ -77,7 +77,7 @@ test('project extensions load only after Pi project trust is granted', async () 
       else process.env[name] = value;
     }
     const resolvedTemp = resolve(tempRoot);
-    const resolvedParent = realpathSync(tmpdir());
+    const resolvedParent = realpathSync.native(tmpdir());
     if (!resolvedTemp.startsWith(resolvedParent + sep)) {
       throw new Error('Refusing to remove a test directory outside the temporary folder');
     }
@@ -105,7 +105,7 @@ test('overlapping session initialization is rejected before a second runtime is 
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
     const resolvedTemp = resolve(tempRoot);
-    const resolvedParent = realpathSync(tmpdir());
+    const resolvedParent = realpathSync.native(tmpdir());
     if (!resolvedTemp.startsWith(resolvedParent + sep)) {
       throw new Error('Refusing to remove a test directory outside the temporary folder');
     }

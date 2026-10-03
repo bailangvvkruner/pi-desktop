@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -22,7 +22,7 @@ const colors = {
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('shared appearance state reads, writes, validates and survives corruption', () => {
-  const root = mkdtempSync(join(tmpdir(), 'pi-desktop-appearance-'));
+  const root = mkdtempSync(join(realpathSync.native(tmpdir()), 'pi-desktop-appearance-'));
   try {
     const path = appearanceStatePath(root);
     assert.equal(path, join(root, 'appearance.json'));
@@ -45,7 +45,7 @@ test('shared appearance state reads, writes, validates and survives corruption',
 });
 
 test('watching the shared file reports only real external changes', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'pi-desktop-appearance-watch-'));
+  const root = mkdtempSync(join(realpathSync.native(tmpdir()), 'pi-desktop-appearance-watch-'));
   try {
     const path = appearanceStatePath(root);
     writeAppearanceState(path, { theme: 'system', colors });

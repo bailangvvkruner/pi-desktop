@@ -105,7 +105,7 @@ test('context usage comes from Pi projection after persistence and stays isolate
       else process.env[name] = value;
     }
     const resolvedTemp = resolve(tempRoot);
-    if (!resolvedTemp.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
+    if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
 });

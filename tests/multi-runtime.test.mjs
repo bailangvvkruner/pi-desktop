@@ -46,7 +46,7 @@ test('colliding workspace directory encodings never share session ownership or r
       else process.env[key] = value;
     }
     const resolvedTemp = resolve(tempRoot);
-    if (!resolvedTemp.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
+    if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
 });
@@ -86,7 +86,7 @@ test('cached unsaved sessions can be revisited within their workspace before Pi 
       else process.env[key] = value;
     }
     const resolvedTemp = resolve(tempRoot);
-    if (!resolvedTemp.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
+    if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
 });
@@ -139,7 +139,7 @@ test('inactive Pi runtimes are bounded and an evicted session can be reopened', 
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
     const resolvedTemp = resolve(tempRoot);
-    if (!resolvedTemp.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
+    if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
 });
@@ -201,7 +201,7 @@ test('workspace restoration reuses a busy cached runtime after its remembered un
       else process.env[key] = value;
     }
     const resolvedTemp = resolve(tempRoot);
-    if (!resolvedTemp.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
+    if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
 });
@@ -249,6 +249,7 @@ test('Pi extension dialogs reach the desktop callback and a background session k
     const { AgentService } = await import('../packages/agent/src/index.ts');
     const seen = [];
     const runtimeEvents = [];
+    const backgroundActivities = [];
     let releaseAuthorization;
     let authorizationStarted;
     const requestedAuthorization = new Promise(resolve => { authorizationStarted = resolve; });
@@ -268,6 +269,7 @@ test('Pi extension dialogs reach the desktop callback and a background session k
       },
     );
     service.onEvent(({ event }) => { if (event.type === 'session-runtime') runtimeEvents.push(event); });
+    service.onBackgroundActivity((cwd, path) => { backgroundActivities.push({ cwd, path }); });
     await service.init({ cwd: workspace });
     assert.deepEqual(seen, ['select', 'input', 'confirm', 'editor']);
     assert.deepEqual(JSON.parse(readFileSync(dialogMarker, 'utf8')),
@@ -284,6 +286,10 @@ test('Pi extension dialogs reach the desktop callback and a background session k
     assert.equal(existsSync(commandMarker), true, 'the background Pi runtime must finish its command');
     assert.equal(service.getSnapshot().sessionId, secondSessionId);
     assert.equal(runtimeEvents.filter(event => event.path === firstPath).at(-1).runtime.phase, 'idle');
+    await new Promise(resolve => setImmediate(resolve));
+    // zcode 语义：后台对话只在回合落定时点亮未读，运行途中不标记。
+    assert.deepEqual(backgroundActivities, [{ cwd: workspace, path: firstPath }],
+      'background unread is marked exactly once when the turn settles');
     const waitingPath = service.getSnapshot().sessionPath;
     const waiting = service.prompt('/desktop-wait');
     await requestedAuthorization;
@@ -307,7 +313,7 @@ test('Pi extension dialogs reach the desktop callback and a background session k
       else process.env[key] = value;
     }
     const resolvedTemp = resolve(tempRoot);
-    if (!resolvedTemp.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
+    if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
 });
@@ -342,7 +348,7 @@ test('removed projects dispose their idle cached runtimes without deleting sessi
       else process.env[key] = value;
     }
     const resolvedTemp = resolve(tempRoot);
-    if (!resolvedTemp.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
+    if (!resolvedTemp.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(resolvedTemp, { recursive: true, force: true });
   }
 });

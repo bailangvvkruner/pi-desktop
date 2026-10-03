@@ -12,7 +12,7 @@ function fixture(t) {
   let current = cwd;
   t.after(() => {
     const target = realpathSync(root);
-    const rel = relative(realpathSync(tmpdir()), target);
+    const rel = relative(realpathSync.native(tmpdir()), target);
     assert.ok(rel.startsWith('pi-desktop-result-files-') && !rel.includes(sep) && !isAbsolute(rel));
     rmSync(target, { recursive: true, force: true });
   });

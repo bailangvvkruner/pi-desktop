@@ -13,7 +13,7 @@ test('message component renders historical image and text attachments', async ()
   const server = await createServer({
     root: fileURLToPath(new URL('../packages/ui', import.meta.url)),
     configFile: false,
-    server: { middlewareMode: true },
+    server: { middlewareMode: true, hmr: false },
     optimizeDeps: { noDiscovery: true, include: [] },
     appType: 'custom',
   });

@@ -114,7 +114,7 @@ test('Pi SDK runtime initializes, replaces a session, and publishes a current sn
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
     const resolvedTemp = resolve(tempRoot);
-    const resolvedParent = realpathSync(tmpdir());
+    const resolvedParent = realpathSync.native(tmpdir());
     if (!resolvedTemp.startsWith(resolvedParent + sep)) {
       throw new Error('Refusing to remove a test directory outside the temporary folder');
     }

@@ -120,17 +120,18 @@ test('compact activity components preserve accessible details and support a pare
       assert.match(diff, /pd-activity-output-actions/);
     });
 
-    await context.test('thinking defaults can follow the enclosing run while retaining the real model content', () => {
+    await context.test('thinking stays collapsed by default with a live preview while retaining the real model content', () => {
       const message = { id: 'thinking-1', order: 2, role: 'assistant', text: '', thinking: 'Actual model note with **a concrete check**.', thinkingStatus: 'done', status: 'done' };
-      const opened = render(ThinkingActivity, { message, defaultExpanded: true });
-      assert.match(opened, /pd-thinking-summary[^>]*aria-expanded="true"/);
-      assert.match(opened, /Actual model note with <strong>a concrete check<\/strong>/);
-      const closed = render(ThinkingActivity, { message: { ...message, thinkingStatus: 'streaming', status: 'streaming' }, defaultExpanded: false });
-      assert.match(closed, /pd-thinking-summary[^>]*aria-expanded="false"/);
-      assert.match(closed, /Actual model note/);
-      assert.match(closed, /aria-hidden="true" inert=""/);
-      assert.match(render(ThinkingActivity, { message: { ...message, thinkingStatus: 'streaming', status: 'streaming' } }), /pd-thinking-summary[^>]*aria-expanded="true"/);
-      assert.doesNotMatch(render(ThinkingActivity, { message: { ...message, thinking: '' }, defaultExpanded: true }), /aria-expanded="true"/);
+      const settled = render(ThinkingActivity, { message });
+      assert.match(settled, /pd-thinking-summary[^>]*aria-expanded="false"/);
+      assert.match(settled, /pd-thinking-preview[^>]*><span>Actual model note with \*\*a concrete check\*\*\.<\/span>/);
+      assert.match(settled, /Actual model note with <strong>a concrete check<\/strong>/);
+      assert.match(settled, /aria-hidden="true" inert=""/);
+      const streaming = render(ThinkingActivity, { message: { ...message, thinkingStatus: 'streaming', status: 'streaming' } });
+      assert.match(streaming, /pd-thinking-summary[^>]*aria-expanded="false"/);
+      assert.match(streaming, /pd-thinking-preview/);
+      assert.match(streaming, /Actual model note/);
+      assert.doesNotMatch(render(ThinkingActivity, { message: { ...message, thinking: '' } }), /aria-expanded="true"/);
     });
   } finally { await server.close(); }
 });

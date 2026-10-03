@@ -68,7 +68,7 @@ async function fixture(options = {}) {
         else process.env[name] = value;
       }
       const resolvedRoot = resolve(root);
-      if (!resolvedRoot.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
+      if (!resolvedRoot.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
       rmSync(resolvedRoot, { recursive: true, force: true });
     }
   };

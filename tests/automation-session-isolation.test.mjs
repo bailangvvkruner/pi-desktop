@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 
 test('real offline foreground sessions exclude a worker transcript and preserve their own unsaved draft', async () => {
-  const temporaryParent = realpathSync(tmpdir());
+  const temporaryParent = realpathSync.native(tmpdir());
   const root = mkdtempSync(join(temporaryParent, 'pi-automation-isolation-'));
   const workspace = join(root, 'project');
   const otherWorkspace = join(root, 'other-project');
@@ -60,7 +60,7 @@ test('real offline foreground sessions exclude a worker transcript and preserve 
 });
 
 test('automation model and thinking overrides preserve the saved defaults while manual changes still persist', async () => {
-  const temporaryParent = realpathSync(tmpdir());
+  const temporaryParent = realpathSync.native(tmpdir());
   const root = mkdtempSync(join(temporaryParent, 'pi-automation-defaults-'));
   const workspace = join(root, 'project');
   const agentDirectory = join(root, 'isolated-agent');

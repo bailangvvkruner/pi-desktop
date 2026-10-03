@@ -44,7 +44,7 @@ function draftRelease(version = VERSION, { macos = false } = {}) {
 
 /** All commands are simulated. This fixture never spawns Git, GitHub CLI or pnpm. */
 function fixture(t) {
-  const parent = realpathSync(tmpdir());
+  const parent = realpathSync.native(tmpdir());
   const cwd = mkdtempSync(join(parent, 'pi-release-script-'));
   t.after(() => {
     const target = realpathSync(cwd);

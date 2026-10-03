@@ -7,7 +7,7 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { test } from 'node:test';
 
 function removeSafeTemp(tempRoot) {
-  const base = realpathSync(tmpdir());
+  const base = realpathSync.native(tmpdir());
   const target = realpathSync(tempRoot);
   const rel = relative(base, target);
   if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)

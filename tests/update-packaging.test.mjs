@@ -10,7 +10,7 @@ import { WINDOWS_PTY_PREBUILD_CONFIG, verifyWindowsPtyPrebuilds } from '../scrip
 
 const defaultUrl = 'https://github.com/shuaichao171/pi-desktop/releases/latest/download/';
 function fixture(t) {
-  const base = realpathSync(tmpdir());
+  const base = realpathSync.native(tmpdir());
   const root = mkdtempSync(join(base, 'pi-update-packaging-'));
   const source = join(root, 'packages', 'desktop', 'build', 'update-config.json');
   mkdirSync(dirname(source), { recursive: true });
@@ -119,7 +119,7 @@ test('Windows installer and unpacked packaging both await pai preparation before
 });
 
 test('missing node-pty Windows prebuilds abort packaging before node-gyp runs', (t) => {
-  const root = mkdtempSync(join(realpathSync(tmpdir()), 'pi-pty-prebuilds-'));
+  const root = mkdtempSync(join(realpathSync.native(tmpdir()), 'pi-pty-prebuilds-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   assert.throws(() => verifyWindowsPtyPrebuilds({ resolve: () => join(root, 'package.json') }), { code: 'ENOENT' });
 });

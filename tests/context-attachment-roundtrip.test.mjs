@@ -119,7 +119,7 @@ test('context attachments survive prompt events and persisted Pi history', async
       else process.env[name] = value;
     }
     const target = resolve(root);
-    if (!target.startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
+    if (!target.startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe temporary path');
     rmSync(target, { recursive: true, force: true });
   }
 });

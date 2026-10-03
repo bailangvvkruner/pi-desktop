@@ -27,7 +27,7 @@ async function fixture(run, extension = 'export default function (pi) { pi.regis
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    if (!resolve(root).startsWith(realpathSync(tmpdir()) + sep)) throw new Error('Unsafe fixture cleanup');
+    if (!resolve(root).startsWith(realpathSync.native(tmpdir()) + sep)) throw new Error('Unsafe fixture cleanup');
     rmSync(root, { recursive: true, force: true });
   }
 }
