@@ -47,6 +47,15 @@ export class WorkspaceTerminalService {
     // node-pty's Windows natural-exit callback closes the pipe but does not dispose
     // its ConPTY output worker. Always invoke the public cleanup API exactly once.
     try { terminal.pty.kill(); } catch {}
+    // The non-DLL ConPTY kill path only marks the agent sockets unreadable and
+    // its conout worker thread can stay blocked on the console pipe after the
+    // shell tree died; both keep a short-lived host process's event loop alive
+    // forever (test runners hang on exit). Destroy the pipes and unref the
+    // blocked worker so the host may exit.
+    const agent = (terminal.pty as unknown as { _agent?: { inSocket?: { destroy(): void }, outSocket?: { destroy(): void }, _conoutSocketWorker?: { _worker?: { unref(): void } } } })._agent;
+    try { agent?.inSocket?.destroy(); } catch {}
+    try { agent?.outSocket?.destroy(); } catch {}
+    try { agent?._conoutSocketWorker?._worker?.unref(); } catch {}
   }
   private async stop(terminal: Terminal) {
     if (terminal.snapshot.running) {
