@@ -1875,6 +1875,8 @@ export class AgentService {
 	private readonly personalization = createPersonalizationService({ userDirectory: homedir(), agentDirectory: getAgentDir() });
 	private readonly contexts = new Map<string, SingleAgentService>();
 	private readonly waitingContexts = new Map<SingleAgentService, Map<symbol, UiSessionRuntimeState>>();
+	/** Background services that reported a busy/starting turn and have not settled yet. */
+	private readonly backgroundBusyContexts = new WeakSet<SingleAgentService>();
 	private readonly reservedSessionPaths = new Map<string, SingleAgentService>();
 	/** Held across the main-process trash move, including cross-volume copies. */
 	private readonly deletingSessionPaths = new Map<string, string>();
@@ -2496,14 +2498,27 @@ export class AgentService {
 			return () => { if (this.reservedSessionPaths.get(path) === service) this.reservedSessionPaths.delete(path); };
 		}, this.mcp);
 		service.onEvent(({ event }) => {
+			// Busy tracking covers every context: a foreground run that the user
+			// switches away from must still light the unread dot when it settles.
+			if (event.type === 'status') {
+				if (event.status === 'busy' || event.status === 'starting') {
+					this.backgroundBusyContexts.add(service);
+				} else if (this.backgroundBusyContexts.delete(service) && this.active !== service) {
+					// zcode semantics: the unread dot appears when a background turn
+					// settles (completed or failed), never for mid-run output. A turn the
+					// user watched to the end stays unread-free.
+					const snapshot = service.getSnapshot();
+					if (snapshot.sessionPath) {
+						this.backgroundActivity(service.cwd, snapshot.sessionPath);
+						this.fire({ type: 'sessions-changed', cwd: service.cwd });
+					}
+				}
+			}
 			if (this.active === service) this.fire(event);
 			else if (event.type === 'user-message') this.fire({ type: 'sessions-changed', cwd: service.cwd });
 			else if (event.type === 'assistant-end' || (event.type === 'tool' && event.activity.status === 'done')) {
-				const snapshot = service.getSnapshot();
-				if (snapshot.sessionPath) {
-					this.backgroundActivity(service.cwd, snapshot.sessionPath);
-					this.fire({ type: 'sessions-changed', cwd: service.cwd });
-				}
+				// Mid-run background output only refreshes the row (title, counts).
+				if (service.getSnapshot().sessionPath) this.fire({ type: 'sessions-changed', cwd: service.cwd });
 			}
 			if (event.type === 'status' || event.type === 'ready' || event.type === 'error' || event.type === 'assistant-end') this.publishRuntime(service);
 		});
