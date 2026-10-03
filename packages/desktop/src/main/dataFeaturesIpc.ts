@@ -2,7 +2,7 @@ import { dialog } from 'electron';
 import { basename, dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
-import { DATA_FEATURE_CHANNELS, type ProjectSearchRequest, type ProjectSearchRules, type RecoverableSessionMetadata, type SessionSearchRequest, type SessionTrashEntry, type TrashCleanupRequest, type TrashRestoreRequest } from '../../../shared/src/dataFeatures.ts';
+import { DATA_FEATURE_CHANNELS, type ProjectSearchRequest, type ProjectSearchRules, type RecoverableSessionMetadata, type SessionSearchRequest, type SessionTrashEntry, type TrashCleanupRequest, type TrashRestoreRequest } from '@pidesktop/shared';
 import { handleRendererInvoke, requireRendererSender } from './rendererIpc.ts';
 import { createSessionTrash } from './sessionTrash.ts';
 import { createCompleteBackup, createSessionImporter, readBoundedImport, validateNativeSession, type BackupSource } from './sessionImport.ts';

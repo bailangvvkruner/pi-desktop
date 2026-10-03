@@ -2,7 +2,7 @@ import { constants, existsSync, mkdirSync } from 'node:fs';
 import { copyFile, rename, unlink, readFile, readdir, lstat, mkdir, link, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { RecoverableSessionMetadata, SessionTrashEntry, TrashCleanupRequest } from '../../../shared/src/dataFeatures';
+import type { RecoverableSessionMetadata, SessionTrashEntry, TrashCleanupRequest } from '@pidesktop/shared';
 import { writeStateFileAsync } from './stateFiles';
 
 type TrashCapture = { cwd: string; sessionId?: string; name?: string; metadata?: RecoverableSessionMetadata };

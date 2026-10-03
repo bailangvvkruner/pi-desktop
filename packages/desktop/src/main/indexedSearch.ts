@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, opendir, readFile, realpath, stat } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import type { IndexedSessionResult, ProjectSearchMatch, ProjectSearchPage, ProjectSearchRequest, ProjectSearchRules, RecoverableSessionMetadata, SessionSearchPage, SessionSearchRequest } from '../../../shared/src/dataFeatures';
+import type { IndexedSessionResult, ProjectSearchMatch, ProjectSearchPage, ProjectSearchRequest, ProjectSearchRules, RecoverableSessionMetadata, SessionSearchPage, SessionSearchRequest } from '@pidesktop/shared';
 import { readSessionForIndex, type ParsedSession, type SearchMessage } from './searchService.ts';
 import { writeStateFileAsync } from './stateFiles.ts';
 

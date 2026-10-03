@@ -1,8 +1,8 @@
 import { join } from 'node:path';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import type { UiAttachment } from '@pidesktop/shared';
-import { INPUT_FEATURE_CHANNELS, type UiInputScope, type UiSaveInputDraft, type UiPdfInputRequest } from '../../../shared/src/inputFeatures.ts';
-import { AttachmentStore } from '../../../agent/src/attachmentStore.ts';
+import { INPUT_FEATURE_CHANNELS, type UiInputScope, type UiSaveInputDraft, type UiPdfInputRequest } from '@pidesktop/shared';
+import { AttachmentStore } from '@pidesktop/agent/attachmentStore';
 import { handleRendererInvoke } from './rendererIpc.ts';
 import { PdfInputProcessor } from './pdfInput.ts';
 

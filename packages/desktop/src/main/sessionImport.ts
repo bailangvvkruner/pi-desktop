@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { link, lstat, mkdir, open, readFile, rm } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import type { RecoverableSessionMetadata, SessionImportResult } from '../../../shared/src/dataFeatures';
+import type { RecoverableSessionMetadata, SessionImportResult } from '@pidesktop/shared';
 import { writeStateFileAsync } from './stateFiles.ts';
 
 export const NATIVE_SESSION_LIMIT = 64 * 1024 * 1024;

@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
-import type { UiPdfInputRequest, UiPdfInputResult } from '../../../shared/src/inputFeatures';
+import type { UiPdfInputRequest, UiPdfInputResult } from '@pidesktop/shared';
 
 const WORKER = `
 const { parentPort, workerData } = require('node:worker_threads');

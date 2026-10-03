@@ -39,7 +39,7 @@ import { createPluginDiscovery } from './pluginDiscovery';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { registerWorkbenchFeatureIpc } from './workbenchFeatureIpc';
 import { registerInputAttachmentIpc } from './inputAttachmentIpc';
-import { inputScopeKey } from '../../../agent/src/attachmentStore.ts';
+import { inputScopeKey } from '@pidesktop/agent/attachmentStore';
 import { registerDataFeaturesIpc } from './dataFeaturesIpc';
 import { INPUT_FEATURE_CHANNELS, WORKBENCH_FEATURE_CHANNELS, MANAGEMENT_FEATURE_CHANNELS, requireInputQueueScope, type RecoverableSessionMetadata } from '@pidesktop/shared';
 import type { UiPluginMutation, UiPluginResourceKind, UiPluginScope, UiSaveInstructionRequest } from '@pidesktop/shared';
