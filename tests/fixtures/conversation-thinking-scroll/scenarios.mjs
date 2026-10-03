@@ -26,6 +26,10 @@ export default async function conversationThinkingScrollScenarios(review) {
 	// Settled turns fold their process by default; open the thinking run first.
 	await review.click('.pd-conversation-turn button.pd-turn-summary');
 	await review.waitFor('document.querySelectorAll(".pd-thinking-markdown").length === 1 && document.querySelector(".pd-transcript").scrollHeight > document.querySelector(".pd-transcript").clientHeight');
+	// Reasoning collapses by default even after the turn opens; only its newest
+	// line stays visible in the preview until the reader expands the block.
+	await review.assert('(() => { const summary = document.querySelector(".pd-conversation-turn .pd-thinking-summary"); return summary.getAttribute("aria-expanded") === "false" && window.__thinkingReview.visible(summary.querySelector(".pd-thinking-preview")); })()', 'Settled reasoning stays collapsed by default and previews its newest line');
+	await review.click('.pd-conversation-turn .pd-thinking-summary');
 	await review.evaluate('document.querySelector("[data-message-id=deep-answer]").scrollIntoView({ block: "center" })');
 	await review.waitFor('window.__thinkingReview.visible(document.querySelector(".pd-thinking-markdown"))');
 

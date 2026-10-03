@@ -129,8 +129,8 @@ const UserMessageItem = memo(function UserMessageItem({ message, highlighted, fi
 	);
 });
 
-interface AssistantPresentation { hideThinking?: boolean; process?: boolean; thinkingExpanded?: boolean; hidePending?: boolean }
-const AssistantMessageItem = memo(function AssistantMessageItem({ message, highlighted, showHeading = true, findMatch, canRegenerate = false, hideThinking = false, process = false, thinkingExpanded, hidePending = false }: { message: UiMessage; highlighted: boolean; showHeading?: boolean; findMatch?: boolean; canRegenerate?: boolean } & AssistantPresentation) {
+interface AssistantPresentation { hideThinking?: boolean; process?: boolean; hidePending?: boolean }
+const AssistantMessageItem = memo(function AssistantMessageItem({ message, highlighted, showHeading = true, findMatch, canRegenerate = false, hideThinking = false, process = false, hidePending = false }: { message: UiMessage; highlighted: boolean; showHeading?: boolean; findMatch?: boolean; canRegenerate?: boolean } & AssistantPresentation) {
 	const { t } = useT();
 	const c = useConversationCopy();
 	const idle = useChatStore((s) => s.status === 'idle');
@@ -207,7 +207,7 @@ const AssistantMessageItem = memo(function AssistantMessageItem({ message, highl
 		<div className={`pd-message-row is-assistant${process ? ' is-process-message' : ''}${highlighted ? ' is-search-match' : ''}${findMatch ? ' is-find-match' : ''}`} data-message-id={message.id}>
 			<div className="pd-message-column">
 				{showHeading && <div className="pd-assistant-heading"><span className="pd-assistant-mark">π</span><span>Pi</span></div>}
-				{hasThinking && !hideThinking && <ThinkingActivity message={message} defaultExpanded={thinkingExpanded} />}
+				{hasThinking && !hideThinking && <ThinkingActivity message={message} />}
 				{message.text && <div ref={bodyRef} data-message-body className="pd-markdown" onPointerUp={inspectSelection} onKeyUp={inspectSelection}><ConversationMarkdown>{message.text}</ConversationMarkdown></div>}
 				{selection && createPortal(<button type="button" className="pd-quote-selection" data-quote-for={message.id} style={{ position: 'fixed', zIndex: 60, ...selectionPosition }} onMouseDown={(event) => event.preventDefault()} onClick={quote}>{c('quote')}</button>, document.body)}
 				{!hidePending && message.status === 'streaming' && message.thinkingStatus !== 'streaming' && <span className="pd-response-pending" role="status"><ActivityLabel active>{t(message.text ? 'message.generating' : 'message.preparing')}</ActivityLabel></span>}

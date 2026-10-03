@@ -34,6 +34,7 @@ test('activity transcript presents genuine reasoning, accessible disclosures and
       const html = renderMessage({ status: 'done', thinking: 'A **retained** explanation', thinkingStatus: 'done', thinkingTruncated: true });
       assert.ok(html.includes(translate('message.thinking.done')));
       assert.match(html, /A <strong>retained<\/strong> explanation/);
+      assert.match(html, /pd-thinking-preview[^>]*><span>A \*\*retained\*\* explanation<\/span>/, 'the collapsed row previews the newest reasoning line');
       assert.match(html, /aria-expanded="false"/);
       assert.match(html, /aria-hidden="true" inert=""/);
       assert.ok(html.includes(translate('message.thinking.truncated')));
@@ -42,8 +43,12 @@ test('activity transcript presents genuine reasoning, accessible disclosures and
 
     await t.test('only streaming reasoning has active feedback; failed and interrupted states finish it', () => {
       const html = renderMessage({ thinking: 'Inspecting the parser', thinkingStatus: 'streaming' });
-      assert.match(html, /aria-expanded="true"/);
+      assert.match(html, /aria-expanded="false"/, 'streaming reasoning stays collapsed by default');
       assert.match(html, /pd-activity-label is-active/);
+      assert.match(html, /pd-thinking-preview[^>]*><span>Inspecting the parser<\/span>/, 'the collapsed row previews the live reasoning');
+      assert.match(html, /aria-hidden="true" inert=""/, 'the full transcript stays inert behind the collapsed disclosure');
+      const multiline = renderMessage({ thinking: 'One consideration\nStill checking the parser', thinkingStatus: 'streaming' });
+      assert.match(multiline, /pd-thinking-preview[^>]*><span>Still checking the parser<\/span>/, 'the preview follows the newest non-empty line');
       assert.ok(!html.includes(translate('message.preparing')));
       for (const status of ['error', 'interrupted']) {
         const ended = renderMessage({ status: 'error', thinking: 'Partial explanation', thinkingStatus: status });

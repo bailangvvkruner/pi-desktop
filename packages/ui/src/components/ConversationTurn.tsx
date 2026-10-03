@@ -80,7 +80,7 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
           // Thinking and live prose share a stable position throughout the run.
           // Only the final answer moves out when the whole run has settled.
           return <div key={message.id}>
-            {(message.thinking || message.thinkingStatus) && <div data-thinking-for={message.id}><ThinkingActivity message={message} defaultExpanded /></div>}
+            {(message.thinking || message.thinkingStatus) && <div data-thinking-for={message.id}><ThinkingActivity message={message} /></div>}
             {message.id !== answer?.id && <MessageItem message={message} process hideThinking showHeading={false} hidePending highlighted={highlightedId === message.id} findMatch={findIds.has(message.id)} />}
           </div>;
         })}</div>}

@@ -55,7 +55,9 @@ export default async function conversationProcessScenarios(review) {
     state.send({ type: 'assistant-thinking', id: 'live-analysis', thinking: '先检查生命周期，再验证整轮折叠和计时。', thinkingStatus: 'streaming' });
   })()`);
   await review.waitFor(expanded('live', true));
-  await review.assert('window.__processReview.visible(document.querySelector("[data-run-id=live] .pd-thinking-markdown")) && document.querySelector("[data-run-id=live] .pd-thinking-markdown").textContent.includes("先检查生命周期")', 'Running turn exposes the provider thinking content');
+  await review.assert('(() => { const summary=document.querySelector("[data-run-id=live] .pd-thinking-summary"); const preview=summary.querySelector(".pd-thinking-preview"); return summary.getAttribute("aria-expanded") === "false" && window.__processReview.visible(preview) && preview.textContent.includes("先检查生命周期") && !window.__processReview.visible(document.querySelector("[data-run-id=live] .pd-thinking-markdown")); })()', 'Streaming reasoning stays collapsed by default and previews its newest line');
+  await review.click('[data-run-id=live] .pd-thinking-summary');
+  await review.assert('window.__processReview.visible(document.querySelector("[data-run-id=live] .pd-thinking-markdown")) && document.querySelector("[data-run-id=live] .pd-thinking-markdown").textContent.includes("先检查生命周期")', 'Expanding the collapsed reasoning exposes the provider thinking content');
   await review.assert(`${elapsed('live')} >= 62000`, 'Elapsed time begins at the recorded run start, not component mount');
   await review.evaluate(`window.__processReview.beforeTick = ${elapsed('live')}`);
   await review.waitFor(`${elapsed('live')} >= window.__processReview.beforeTick + 900`);
@@ -125,7 +127,7 @@ export default async function conversationProcessScenarios(review) {
 
   await review.evaluate(`(() => { const s=window.__processReview; s.start('manual','手动收起运行过程'); s.assistant('manual','manual-analysis'); s.send({type:'assistant-thinking',id:'manual-analysis',thinking:'这段思考应允许手动收起。',thinkingStatus:'streaming'}); s.send({type:'assistant-delta',id:'manual-analysis',delta:'正在检查手动收起。'}); })()`);
   await review.waitFor(expanded('manual', true));
-  await review.waitFor('window.__processReview.visible(document.querySelector("[data-run-id=manual] .pd-thinking-markdown")) && window.__processReview.visible(document.querySelector("[data-message-id=manual-analysis] [data-message-body]"))');
+  await review.waitFor('window.__processReview.visible(document.querySelector("[data-message-id=manual-analysis] [data-message-body]")) && document.querySelector("[data-run-id=manual] .pd-thinking-summary").getAttribute("aria-expanded") === "false"');
   await review.evaluate('(() => { window.__processReview.manualBody=document.querySelector("[data-message-id=manual-analysis] [data-message-body]"); window.__processReview.manualThinking=document.querySelector("[data-run-id=manual] .pd-thinking-markdown"); })()');
   await review.click(summary('manual'));
   await review.assert('!window.__processReview.visible(window.__processReview.manualBody) && !window.__processReview.visible(window.__processReview.manualThinking)', 'Manually collapsing a running process hides both prose and thinking together');
@@ -134,6 +136,7 @@ export default async function conversationProcessScenarios(review) {
   await review.assert(`${expanded('manual', false)} && !window.__processReview.visible(window.__processReview.manualBody) && !window.__processReview.visible(window.__processReview.manualThinking) && !document.querySelector("[data-run-id=manual] .pd-turn-answer")`, 'Further prose and thinking deltas stay hidden and never reopen a manually collapsed running process');
   await review.screenshot('process-live-manually-collapsed');
   await review.click(summary('manual'));
+  await review.click('[data-run-id=manual] .pd-thinking-summary');
   await review.assert('(() => { const s=window.__processReview; return document.querySelector("[data-message-id=manual-analysis] [data-message-body]") === s.manualBody && document.querySelector("[data-run-id=manual] .pd-thinking-markdown") === s.manualThinking && s.visible(s.manualBody) && s.visible(s.manualThinking) && s.manualBody.textContent.includes("收起后收到的新内容") && s.manualThinking.textContent.includes("收起后收到的新思考"); })()', 'Reopening a live process retains both original nodes and all content received while collapsed');
   await review.click(summary('manual'));
   await review.evaluate(`(() => { const s=window.__processReview; s.send({type:'assistant-end',id:'manual-analysis',text:'中间检查完成。'}); s.assistant('manual','manual-final'); s.send({type:'assistant-end',id:'manual-final',text:'手动折叠不会隐藏这条最终回答。'}); s.finish('manual'); })()`);
@@ -212,6 +215,8 @@ export default async function conversationProcessScenarios(review) {
     s.longThinking=Array.from({length:32},(_,i)=>'第 '+(i+1)+' 步：检查实时内容、工具衔接与结束折叠。').join('\\n\\n');
     s.send({type:'assistant-thinking',id:'long-thinking-a',thinking:s.longThinking,thinkingStatus:'streaming'});
   })()`);
+  await review.waitFor('document.querySelector("[data-run-id=long-thinking] .pd-thinking-summary .pd-thinking-preview") !== null');
+  await review.click('[data-run-id=long-thinking] .pd-thinking-summary');
   await review.waitFor('(() => { const node=document.querySelector("[data-run-id=long-thinking] .pd-thinking-markdown"); return node && node.clientHeight > 200 && node.scrollHeight-node.scrollTop-node.clientHeight < 3; })()');
   await review.assert('(() => { const node=document.querySelector("[data-run-id=long-thinking] .pd-thinking-markdown"), tail=node.lastElementChild; const box=node.getBoundingClientRect(), tailBox=tail.getBoundingClientRect(); return window.__processReview.visible(node) && tailBox.bottom <= box.bottom+2 && tailBox.bottom > box.top && box.bottom <= document.querySelector(".pd-transcript").getBoundingClientRect().bottom+2; })()', 'Long thinking follows its latest line in the visible conversation during normal animation');
   await review.evaluate(`(() => { const s=window.__processReview; s.longThinking+='\\n\\n后续实时思考仍应可见。'; s.send({type:'assistant-thinking',id:'long-thinking-a',thinking:s.longThinking,thinkingStatus:'streaming'}); })()`);
@@ -227,10 +232,20 @@ export default async function conversationProcessScenarios(review) {
   await review.click(summary('long-thinking'));
   await review.assert('window.__processReview.visible(document.querySelector("[data-run-id=long-thinking] .pd-thinking-markdown")) && document.querySelector("[data-run-id=long-thinking] .pd-thinking-markdown").textContent.includes("读者向上查看")', 'Completed long reasoning remains available after expanding the completed process');
   await review.click('[data-run-id=long-thinking] .pd-thinking-summary');
-  await review.evaluate(`(() => { const s=window.__processReview; s.start('next-thinking','再执行一轮'); s.assistant('next-thinking','next-thinking-a'); s.send({type:'assistant-thinking',id:'next-thinking-a',thinking:'新一轮思考应自动展开。',thinkingStatus:'streaming'}); })()`);
-  await review.waitFor(expanded('next-thinking', true));
-  await review.assert('window.__processReview.visible(document.querySelector("[data-run-id=next-thinking] .pd-thinking-markdown")) && document.querySelector("[data-run-id=next-thinking] .pd-thinking-summary").getAttribute("aria-expanded")==="true"', 'Collapsing an earlier reasoning block never hides thinking in the next run');
+  await review.evaluate(`(() => { const s=window.__processReview; s.start('next-thinking','再执行一轮'); s.assistant('next-thinking','next-thinking-a'); s.send({type:'assistant-thinking',id:'next-thinking-a',thinking:'新一轮思考默认折叠。',thinkingStatus:'streaming'}); })()`);
+  // Animation-sensitive checks are done; restore reduced motion so the new
+  // run's disclosure cannot shift under the pointer between click steps.
   await review.reducedMotion(true);
+  await review.waitFor(expanded('next-thinking', true));
+  await review.assert('(() => { const summary=document.querySelector("[data-run-id=next-thinking] .pd-thinking-summary"); return summary.getAttribute("aria-expanded")==="false" && window.__processReview.visible(summary.querySelector(".pd-thinking-preview")) && summary.querySelector(".pd-thinking-preview").textContent.includes("新一轮思考") && !window.__processReview.visible(document.querySelector("[data-run-id=next-thinking] .pd-thinking-markdown")); })()', 'A new run previews its reasoning collapsed instead of auto-expanding');
+  // The row sits near the virtualized bottom; scroll it fully into place
+  // and wait for its position to stop moving so the click cannot land on a
+  // spacer while the virtualizer settles.
+  await review.evaluate('document.querySelector("[data-run-id=next-thinking] .pd-thinking-summary").scrollIntoView({ block: "center" });');
+  await review.evaluate('window.__stableSummaryTop = document.querySelector("[data-run-id=next-thinking] .pd-thinking-summary").getBoundingClientRect().top;');
+  await review.waitFor('(() => { const top = document.querySelector("[data-run-id=next-thinking] .pd-thinking-summary").getBoundingClientRect().top; const stable = Math.abs(top - window.__stableSummaryTop) < 2; window.__stableSummaryTop = top; return stable; })()');
+  await review.click('[data-run-id=next-thinking] .pd-thinking-summary');
+  await review.assert('window.__processReview.visible(document.querySelector("[data-run-id=next-thinking] .pd-thinking-markdown")) && document.querySelector("[data-run-id=next-thinking] .pd-thinking-summary").getAttribute("aria-expanded")==="true"', 'Collapsing an earlier reasoning block never hides thinking in the next run');
 
   // Layout evidence uses real built styles and the public theme control.
   await review.evaluate('(() => { const s=window.__processReview, snapshot=s.completedSnapshot; s.ready(s.path+"-layout",snapshot.messages,snapshot.activities,snapshot.runs); })()');
@@ -272,6 +287,9 @@ export default async function conversationProcessScenarios(review) {
   await review.fill('.pd-transcript-find-input', 'Virtual process 070');
   await review.waitFor(expanded('virtual-run-70', true));
   await review.key('Escape');
+  // Reasoning mounts collapsed; expand then collapse it so the reader's explicit
+  // choice (not the default) is what virtual remount must retain.
+  await review.click('[data-run-id=virtual-run-70] .pd-thinking-summary');
   await review.click('[data-run-id=virtual-run-70] .pd-thinking-summary');
   await review.click('[data-run-id=virtual-run-70] .pd-activity-head');
   await review.assert('document.querySelector("[data-run-id=virtual-run-70] .pd-thinking-summary").getAttribute("aria-expanded")==="false" && document.querySelector("[data-run-id=virtual-run-70] .pd-activity-head").getAttribute("aria-expanded")==="true"', 'Reader chooses independent thinking and tool states before virtual eviction');

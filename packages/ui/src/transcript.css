@@ -130,6 +130,16 @@
 .pd-thinking-content .pd-thinking-markdown { max-height: 260px; overflow: auto; overscroll-behavior: auto; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); line-height: 1.8; }
 .pd-thinking-content .pd-thinking-markdown > :first-child { margin-top: 0; }
 .pd-thinking-content .pd-thinking-markdown > :last-child { margin-bottom: 0; }
+.pd-thinking-preview {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap;
+  color: var(--pd-text-weak); font-size: var(--pd-font-caption); line-height: 1.5;
+}
+.pd-thinking-preview > span { display: inline-block; min-width: 100%; }
+.pd-thinking-preview.is-overflow {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 18px, black calc(100% - 18px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, black 18px, black calc(100% - 18px), transparent 100%);
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-size: 100% 100%; mask-size: 100% 100%;
+}
 .pd-thinking-activity.is-error .pd-thinking-summary { color: var(--pd-danger); }
 .pd-thinking-activity.is-interrupted .pd-thinking-summary { color: var(--pd-warning); }
 .pd-response-pending { display: inline-flex; padding: 5px 0; color: var(--pd-text-weak); font-size: var(--pd-font-caption); }
