@@ -4,6 +4,13 @@ import { realpath, stat } from 'node:fs/promises';
 import type { IPty } from 'node-pty';
 import type { WorkspaceTerminalEvent, WorkspaceTerminalSnapshot } from '@pidesktop/shared/workbenchFeatures';
 type Terminal = { pty: IPty; snapshot: WorkspaceTerminalSnapshot; pending: Map<number, number>; pendingBytes: number; paused: boolean; buffer: string; released?: boolean; timer?: ReturnType<typeof setTimeout> };
+type PtyAgentSocket = { on?(event: 'error', listener: (error: Error) => void): unknown; destroy?(): void };
+// node-pty's Windows ConPTY agent exposes its pipes only through private fields.
+function agentSockets(pty: IPty): PtyAgentSocket[] {
+  const agent = (pty as unknown as { _agent?: { inSocket?: PtyAgentSocket, outSocket?: PtyAgentSocket, _conoutSocketWorker?: { _worker?: { unref(): void } } } })._agent;
+  const sockets = agent ? [agent.inSocket, agent.outSocket] : [];
+  return sockets.filter((socket): socket is PtyAgentSocket => Boolean(socket));
+}
 export class WorkspaceTerminalService {
   private terminal: Terminal | null = null; private opening = false;
   private currentCwd: () => string; private emit: (event: WorkspaceTerminalEvent) => void;
@@ -22,6 +29,11 @@ export class WorkspaceTerminalService {
       const processPty = pty.spawn(shell, process.platform === 'win32' ? ['-NoLogo', '-NoProfile'] : [], { name: 'xterm-256color', cwd, cols: request.cols, rows: request.rows, env: { ...process.env, TERM: 'xterm-256color' }, useConpty: process.platform === 'win32' });
       const terminal: Terminal = { pty: processPty, snapshot: { id: randomUUID(), cwd: request.cwd, shell, running: true, output: '', sequence: 0, truncated: false }, pending: new Map(), pendingBytes: 0, paused: false, buffer: '' };
       this.terminal = terminal;
+      // node-pty leaves its ConPTY pipes without 'error' listeners: a queued
+      // write that fails after the shell tree dies surfaces as an
+      // uncaughtException (write EPIPE) in the host long after dispose(),
+      // crashing test runs. Swallow pipe errors for the socket's lifetime.
+      for (const socket of agentSockets(processPty)) try { socket.on?.('error', () => {}); } catch {}
       processPty.onData(data => {
         terminal.snapshot.output += data; if (terminal.snapshot.output.length > 256 * 1024) { terminal.snapshot.output = terminal.snapshot.output.slice(-256 * 1024); terminal.snapshot.truncated = true; }
         terminal.buffer += data;
@@ -52,10 +64,8 @@ export class WorkspaceTerminalService {
     // shell tree died; both keep a short-lived host process's event loop alive
     // forever (test runners hang on exit). Destroy the pipes and unref the
     // blocked worker so the host may exit.
-    const agent = (terminal.pty as unknown as { _agent?: { inSocket?: { destroy(): void }, outSocket?: { destroy(): void }, _conoutSocketWorker?: { _worker?: { unref(): void } } } })._agent;
-    try { agent?.inSocket?.destroy(); } catch {}
-    try { agent?.outSocket?.destroy(); } catch {}
-    try { agent?._conoutSocketWorker?._worker?.unref(); } catch {}
+    for (const socket of agentSockets(terminal.pty)) try { socket.destroy?.(); } catch {}
+    try { (terminal.pty as unknown as { _agent?: { _conoutSocketWorker?: { _worker?: { unref(): void } } } })._agent?._conoutSocketWorker?._worker?.unref(); } catch {}
   }
   private async stop(terminal: Terminal) {
     if (terminal.snapshot.running) {
