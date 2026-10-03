@@ -36,6 +36,10 @@ export default defineConfig({
 					index: resolve('src/main/index.ts'),
 					agentHost: resolve('src/main/agentHost.ts'),
 				},
+				// undici must stay a runtime require of the real package: bundling it into
+				// this ESM output breaks its internal `require('node:http2')` shim (issue #1),
+				// silently disabling HTTP/2 for every provider whose TLS negotiates h2.
+				external: ['undici'],
 			},
 		},
 	},

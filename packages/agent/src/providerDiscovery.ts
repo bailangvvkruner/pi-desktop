@@ -28,7 +28,9 @@ const MAX_PAGES = 10;
 const MAX_MODELS = 1000;
 const MAX_PAGE_BYTES = 2_000_000;
 const MAX_TOTAL_BYTES = 8_000_000;
-const TIMEOUT_MS = 15_000;
+// Slow proxy tunnels can need 15s+ just for the upstream handshake, so a manual
+// fetch must outlive them; failures still surface through the network errors.
+const TIMEOUT_MS = 45_000;
 const record = (value: unknown): value is JsonObject => value !== null && typeof value === 'object' && !Array.isArray(value);
 const safeText = (value: unknown, maximum = 200): string | undefined => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= maximum && !/[\u0000-\u001f\u007f]/u.test(value) ? value.trim() : undefined;
 const positiveInteger = (...values: unknown[]): number | undefined => values.find((value) => Number.isSafeInteger(value) && Number(value) > 0 && Number(value) <= 100_000_000) as number | undefined;

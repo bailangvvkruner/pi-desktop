@@ -207,7 +207,7 @@ test('the whole discovery has a deadline even when a fetch implementation ignore
     return new Promise(() => {});
   });
   const rejected = assert.rejects(pending, hasCode('timeout'));
-  t.mock.timers.tick(15_000);
+  t.mock.timers.tick(45_000);
   await rejected;
   assert.equal(signal.aborted, true);
 });

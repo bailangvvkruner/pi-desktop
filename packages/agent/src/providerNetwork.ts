@@ -3,6 +3,7 @@ import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { Agent, ProxyAgent, fetch as networkFetch, type Dispatcher, type RequestInit as NetworkRequestInit } from 'undici';
 import { readProviderDocument } from './customProviders.ts';
 import { normalizeResponsesReasoningStream } from './providerResponseStream.ts';
+import { ProviderDiscoveryError } from './providerDiscovery.ts';
 
 type NetworkScope = { useSystemProxy: boolean } | { provider: string; api: string; modelsPath: string; policy?: Promise<boolean | undefined> };
 type SystemProxyResolver = (url: string) => Promise<string>;
@@ -29,21 +30,24 @@ function direct(): Agent {
 /** A PAC fallback must never silently turn an unsupported proxy into direct access. */
 function systemDispatcher(proxyResult: string): Dispatcher {
   const directive = proxyResult.split(';').map((item) => item.trim()).find(Boolean);
-  if (!directive) throw new Error('系统代理未返回有效连接方式');
+  if (!directive) throw new ProviderDiscoveryError('network', '系统代理未返回有效连接方式');
   if (/^DIRECT$/i.test(directive)) return direct();
   const match = /^(PROXY|HTTP|HTTPS)\s+(\S+)$/i.exec(directive);
-  if (!match) throw new Error(/^SOCKS/i.test(directive)
+  if (!match) throw new ProviderDiscoveryError('network', /^SOCKS/i.test(directive)
     ? '当前系统代理使用 SOCKS，暂不支持此协议；请在本机代理软件中启用 HTTP/HTTPS 代理'
     : '系统代理返回了不支持的连接方式');
   let endpoint: URL;
   try {
     endpoint = new URL(`${match[1]!.toUpperCase() === 'HTTPS' ? 'https' : 'http'}://${match[2]}`);
     if (!endpoint.hostname || endpoint.username || endpoint.password || endpoint.pathname !== '/' || endpoint.search || endpoint.hash) throw new Error();
-  } catch { throw new Error('系统代理地址无效'); }
+  } catch { throw new ProviderDiscoveryError('network', '系统代理地址无效'); }
   const key = endpoint.href;
   let dispatcher = proxyDispatchers.get(key);
   if (!dispatcher) {
-    dispatcher = new ProxyAgent({ uri: key, proxyTunnel: true, connect: { timeout: 15_000 }, bodyTimeout: 300_000, headersTimeout: 300_000 });
+    // undici 8.x ProxyAgent reads the tunnel connect timeout from the top-level
+    // connectTimeout option; connect:{timeout} is silently ignored there and the
+    // tunnel would fall back to the 10s default, breaking slow proxy handshakes.
+    dispatcher = new ProxyAgent({ uri: key, proxyTunnel: true, connectTimeout: 20_000, bodyTimeout: 300_000, headersTimeout: 300_000 });
     proxyDispatchers.set(key, dispatcher);
     // Drain an older pool when proxy settings change repeatedly. Active requests
     // finish normally; no live sockets are destroyed by this cache bound.
@@ -80,7 +84,9 @@ function installFetchRouter(): void {
     request.signal.throwIfAborted();
     let dispatcher: Dispatcher;
     if (useSystemProxy) {
-      if (!resolveSystemProxy) throw new Error('系统代理服务尚未初始化');
+      // Outside the Electron host (tests, plain Node) no resolver is installed;
+      // keep those environments working by falling back to the inherited fetch.
+      if (!resolveSystemProxy) return normalize(await inheritedFetch(input, init));
       const result = await abortable(resolveSystemProxy(request.url), request.signal);
       dispatcher = systemDispatcher(result);
     } else dispatcher = direct();

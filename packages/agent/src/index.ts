@@ -81,7 +81,7 @@ import type {
 } from '@pidesktop/shared';
 import { BUILTIN_SLASH_COMMANDS, expandSlashPrompt, validateSlashCommandRequest, validSlashCommandName } from './slashCommands.ts';
 import { commitProviderDocument, CUSTOM_PROVIDER_APIS, getCachedDisabledModels, getBuiltinProviderIds, isEditableProvider, literalApiKey, loadModelPrefs, mergeProvider, readProviderDocument, safeProviderUrl, setModelDisabled, validateDiscoveryRequest, validateProviderId, validateProviderRequest, validateProviderWithSdk, type ProviderDocument } from './customProviders.ts';
-import { discoverProviderModels } from './providerDiscovery.ts';
+import { discoverProviderModels, ProviderDiscoveryError } from './providerDiscovery.ts';
 import { bindProviderNetwork, runWithProviderNetwork } from './providerNetwork.ts';
 export { configureProviderNetwork } from './providerNetwork.ts';
 import { applyPluginMutation, readPluginCatalog, readPluginResourcePreview } from './plugins.ts';
@@ -626,7 +626,7 @@ class SingleAgentService {
 		return this.runtime?.session.modelRuntime.getRegisteredProviderIds().includes(provider) ?? false;
 	}
 
-	listModelProviders(document: ProviderDocument, builtinIds: Set<string>): UiModelProvider[] {
+	listModelProviders(document: ProviderDocument): UiModelProvider[] {
 		const runtime = this.runtime?.session.modelRuntime;
 		if (!runtime) return [];
 		const providers = new Map(runtime.getProviders().map((provider) => [provider.id, provider]));
@@ -637,14 +637,18 @@ class SingleAgentService {
 			const config = Object.hasOwn(document.data.providers, id) ? document.data.providers[id] : undefined;
 			const custom = config !== undefined;
 			const credential = readStoredCredential(id, join(this.agentDirectory, 'auth.json'));
+			const catalog = runtime.getModels(id);
+			// Builtin providers surface their catalog baseUrl/api so the UI can offer
+			// live model discovery for them; custom providers keep config-only values.
+			const catalogApi = !custom && typeof catalog[0]?.api === 'string' ? catalog[0].api : null;
 			return {
 				provider: id, name: typeof config?.name === 'string' ? config.name : providers.get(id)?.name ?? id,
-				custom, editable: custom && !builtinIds.has(id) && !registered.has(id) && isEditableProvider(config!) && (!credential || credential.type === 'api_key'),
+				custom, editable: custom && !registered.has(id) && isEditableProvider(config!) && (!credential || credential.type === 'api_key'),
 				configured: runtime.getProviderAuthStatus(id).configured,
-				baseUrl: safeProviderUrl(config?.baseUrl), api: typeof config?.api === 'string' ? config.api : null,
+				baseUrl: safeProviderUrl(config?.baseUrl) ?? (custom ? null : safeProviderUrl(catalog[0]?.baseUrl)), api: typeof config?.api === 'string' ? config.api : catalogApi,
 				headerNames: config?.headers && typeof config.headers === 'object' && !Array.isArray(config.headers) ? Object.keys(config.headers) : [],
 				...(typeof config?.desktopUseSystemProxy === 'boolean' ? { useSystemProxy: config.desktopUseSystemProxy } : {}),
-				models: runtime.getModels(id).map((model) => ({ provider: model.provider, id: model.id, name: model.name, reasoning: model.reasoning,
+				models: catalog.map((model) => ({ provider: model.provider, id: model.id, name: model.name, reasoning: model.reasoning,
 					input: [...model.input], contextWindow: model.contextWindow, maxTokens: model.maxTokens, thinkingLevels: getSupportedThinkingLevels(model),
 					...(model.thinkingLevelMap ? { thinkingLevelMap: { ...model.thinkingLevelMap } } : {}) })),
 				...(disabledByProvider[id]?.length ? { disabledModels: [...disabledByProvider[id]!] } : {}),
@@ -692,7 +696,23 @@ class SingleAgentService {
 			}
 			return discoverProviderModels({ baseUrl, api: api as UiProviderApi, apiKey: key, headers: Object.fromEntries(headers) });
 		};
-		return useSystemProxy === undefined ? discover() : runWithProviderNetwork(useSystemProxy, discover);
+		if (useSystemProxy === undefined) return await discover();
+		try {
+			return await runWithProviderNetwork(useSystemProxy, discover);
+		} catch (error) {
+			// Network failures must say which route was attempted, so a broken proxy
+			// exit or a blocked direct connection is actionable instead of mysterious.
+			if (!(error instanceof ProviderDiscoveryError) || (error.code !== 'network' && error.code !== 'timeout')) throw error;
+			const via = useSystemProxy ? '系统代理' : '直连';
+			const advice = useSystemProxy
+				? '请确认本机代理软件运行正常、且代理出口能够访问该地址；也可在“高级”中取消“使用系统代理”改用直连后重试'
+				: '该地址可能需要代理才能访问；请在“高级”中勾选“使用系统代理”后重试';
+			const reason = error.code === 'timeout' ? `通过${via}获取模型列表超时` : `无法通过${via}连接供应商获取模型列表`;
+			// Crafted proxy diagnostics (e.g. a SOCKS system proxy) survive as details.
+			const generic = error.code === 'timeout' ? '获取模型列表超时，请检查供应商连接后重试' : '无法连接供应商以获取模型列表，请检查地址、网络和凭据';
+			const detail = error.message === generic ? undefined : error.message;
+			throw new ProviderDiscoveryError(error.code, `${detail && detail !== reason ? `${reason}（${detail}）` : reason}。${advice}。`, error.status);
+		}
 	}
 
 	lockProviderConfiguration(allowWhileRunning = false): () => void {
@@ -2190,8 +2210,8 @@ export class AgentService {
 	async listModelProviders(): Promise<UiModelProvider[]> {
 		if (this.providerOperation) { try { await this.providerOperation; } catch { /* Read restored state after an unsuccessful edit. */ } }
 		const service = this.requireActive();
-		const [document, builtinIds] = await Promise.all([readProviderDocument(join(service.agentDirectory, 'models.json')), getBuiltinProviderIds(), loadModelPrefs(service.agentDirectory)]);
-		return service.listModelProviders(document, builtinIds);
+		const [document] = await Promise.all([readProviderDocument(join(service.agentDirectory, 'models.json')), getBuiltinProviderIds(), loadModelPrefs(service.agentDirectory)]);
+		return service.listModelProviders(document);
 	}
 	async setModelEnabled(provider: string, modelId: string, enabled: boolean): Promise<void> {
 		const providerId = validateProviderId(provider);
@@ -2426,13 +2446,17 @@ export class AgentService {
 		const operation = Promise.resolve().then(async () => {
 			const directory = service.agentDirectory;
 			const path = join(directory, 'models.json');
-			const [document, builtinIds] = await Promise.all([readProviderDocument(path), getBuiltinProviderIds()]);
+			const [document] = await Promise.all([readProviderDocument(path), getBuiltinProviderIds()]);
 			if (contexts.some((context) => context.usesExtensionProvider(provider))) throw new Error('此供应商 ID 已由已打开工作区的扩展管理，请使用其他 ID');
-			const listed = service.listModelProviders(document, builtinIds);
+			const listed = service.listModelProviders(document);
 			const existing = listed.find((entry) => entry.provider === provider);
 			if (request?.mode === 'create' && existing) throw new Error('供应商 ID 已存在，请使用其他 ID');
-			if (request?.mode === 'update' && !existing?.custom) throw new Error('自定义供应商不存在，请刷新后重试');
-			if (existing && !existing.editable) throw new Error('此供应商由内置、扩展或高级外部配置管理，不能在此修改');
+			// Importing a live model list for a configured builtin provider pins it as a
+			// custom catalog entry; only the builtin's own api/baseUrl may be written.
+			const builtinImport = Boolean(request && existing && !existing.custom && existing.configured
+				&& request.api === existing.api && request.baseUrl === existing.baseUrl && CUSTOM_PROVIDER_APIS.includes(request.api));
+			if (request?.mode === 'update' && !existing) throw new Error('自定义供应商不存在，请刷新后重试');
+			if (existing && !existing.editable && !builtinImport) throw new Error('此供应商由内置、扩展或高级外部配置管理，不能在此修改');
 			if (!request && !existing?.custom) throw new Error('自定义供应商不存在');
 			for (const context of contexts) {
 				const selected = context.getSnapshot();
