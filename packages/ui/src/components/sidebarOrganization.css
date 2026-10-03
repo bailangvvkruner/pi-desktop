@@ -1,10 +1,11 @@
 .pd-organized-sessions { padding-top: 0; border-top: 0; }
-.pd-session-runtime { display: block; font-size: var(--pd-font-sm); line-height: 1.5; color: var(--pd-text-subtle); }
-.pd-session-runtime.is-running, .pd-session-state-counts .is-running { color: var(--pd-brand); }
-.pd-session-runtime.is-waiting-input, .pd-session-runtime.is-waiting-approval, .pd-session-state-counts .is-waiting { color: var(--pd-warning); }
-.pd-session-runtime.is-failed, .pd-session-state-counts .is-failed { color: var(--pd-danger); }
-.pd-sidebar-group-toggle > .pd-session-state-counts { display: inline-flex; flex: 0 0 auto; gap: 5px; margin-left: auto; overflow: visible; font-size: var(--pd-font-sm); }
-.pd-session-state-counts b { font-weight: 500; white-space: nowrap; }
+.pd-sidebar-group-toggle > .pd-session-state-counts { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; margin-left: auto; overflow: visible; }
+/* Group-heading aggregates share the row indicator vocabulary (zcode STATUS_DOT). */
+.pd-session-state-counts b { width: 6px; height: 6px; border-radius: 50%; }
+.pd-session-state-counts b.is-running { background: var(--pd-warning); animation: pd-pulse 1.6s ease-in-out infinite; }
+.pd-session-state-counts b.is-waiting { background: var(--pd-warning); }
+.pd-session-state-counts b.is-failed { background: var(--pd-danger); }
+.pd-session-state-counts b.is-unread { background: var(--pd-status-unread); }
 .pd-workspace-list-error { margin: 8px; padding: 8px; font-size: var(--pd-font-sm); line-height: 1.5; color: var(--pd-text-subtle); overflow-wrap: anywhere; }
 .pd-workspace-list-error { border: 1px solid var(--pd-danger-border); border-radius: 7px; }
 .pd-workspace-list-error p { margin: 5px 0; color: var(--pd-danger); }
@@ -42,7 +43,7 @@
 .pd-sidebar-group-content { margin-left: 12px; padding-left: 5px; border-left: 1px solid var(--pd-sidebar-surface); }
 .pd-sidebar-group.is-custom > .pd-sidebar-group-content { border-left-color: var(--pd-group-color); }
 .pd-organized-list .pd-session-item .pd-session-row { min-height: 36px; padding: 5px 7px; gap: 5px; }
-.pd-organized-list .pd-session-item { --pd-session-actions-width: 52px; }
+.pd-organized-list .pd-session-item { --pd-session-actions-width: 30px; }
 .pd-organized-list .pd-session-copy strong { line-height: 1.5; }
 .pd-organized-list .pd-session-actions { top: 50%; right: 1px; transform: translateY(-50%); }
 .pd-organized-list .pd-session-action { width: 25px; height: 26px; }

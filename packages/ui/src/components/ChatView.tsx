@@ -8,6 +8,7 @@ import type { ModelManagementTarget } from '../modelManagement';
 import { buildConversationTimeline, entryContainsMessage, type ConversationTimelineEntry } from '../conversationTimeline';
 import { ConversationDisclosureProvider } from '../conversationDisclosure';
 import { ConversationRail } from './ConversationRail';
+import { useExtensionRequestPending } from './ExtensionDialogHost';
 import { Composer } from './Composer';
 import { ComposerChanges } from './ComposerChanges';
 import { RunStatusBar } from './RunStatusBar';
@@ -66,6 +67,7 @@ export interface SearchMessageTarget { sessionPath: string; messageId: string; s
 
 export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget, historyControls, navigationError, compact = false }: { onToggleSidebar(): void; onOpenModelManagement(target: ModelManagementTarget): void; searchTarget?: SearchMessageTarget | null; historyControls?: ReactNode; navigationError?: string | null; compact?: boolean }) {
 	const { t } = useT();
+	const extensionRequestPending = useExtensionRequestPending();
 	const messages = useChatStore((s) => s.messages);
 	const c = useConversationCopy();
 	const historyGeneration = useChatStore((s) => s.historyGeneration);
@@ -462,7 +464,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 				<div className="pd-chat-header-actions"><WorkspaceOpenButton cwd={cwd} /></div>
 			</header>
 
-			<div ref={bodyRef} className={`pd-conversation-body${isEmpty ? ' is-empty' : ''}`}>
+			<div ref={bodyRef} className={`pd-conversation-body${isEmpty ? ' is-empty' : ''}${extensionRequestPending ? ' has-extension-request' : ''}`}>
 				<div className="pd-chat-content">
 					{findOpen && <div className="pd-transcript-find-anchor">
 						<TranscriptFind

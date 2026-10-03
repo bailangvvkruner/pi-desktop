@@ -10,6 +10,12 @@ import { ErrorDetails } from './ErrorDetails';
 import './extensionRequests.css';
 
 const ExtensionDialogContext = createContext<ReactNode>(null);
+const ExtensionRequestPendingContext = createContext(false);
+
+/** True while a plugin/extension question renders in the chat composer slot. */
+export function useExtensionRequestPending(): boolean {
+	return useContext(ExtensionRequestPendingContext);
+}
 
 function getActiveModal(): HTMLElement | null {
 	const native = document.querySelectorAll<HTMLDialogElement>('dialog:modal');
@@ -227,10 +233,13 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 		</div>
 	</section> : null;
 
-	return <ExtensionDialogContext.Provider value={chatVisible && !modalTarget ? card : null}>
-		{children}
-		{notices.length > 0 && notificationTarget && createPortal(<ExtensionNotifications requests={notices} onDismiss={dismissNotice} />, notificationTarget)}
-		{card && modalTarget && createPortal(<div className="pd-extension-modal-slot">{card}</div>, modalTarget)}
-		{card && !modalTarget && !chatVisible && createPortal(<div className="pd-extension-fallback-slot">{card}</div>, document.body)}
+	const cardInChat = Boolean(active) && chatVisible && !modalTarget;
+	return <ExtensionDialogContext.Provider value={cardInChat ? card : null}>
+		<ExtensionRequestPendingContext.Provider value={cardInChat}>
+			{children}
+			{notices.length > 0 && notificationTarget && createPortal(<ExtensionNotifications requests={notices} onDismiss={dismissNotice} />, notificationTarget)}
+			{card && modalTarget && createPortal(<div className="pd-extension-modal-slot">{card}</div>, modalTarget)}
+			{card && !modalTarget && !chatVisible && createPortal(<div className="pd-extension-fallback-slot">{card}</div>, document.body)}
+		</ExtensionRequestPendingContext.Provider>
 	</ExtensionDialogContext.Provider>;
 }

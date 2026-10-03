@@ -31,6 +31,7 @@
   --pd-brand-mark-bg: #ffffff12;
   --pd-danger: #f87171;
   --pd-warning: #fbbf24;
+  --pd-status-unread: #38bdf8;
   --pd-success: #4ade80;
   --pd-chrome-border: #2b2b2b;
   --pd-surface-raised: #2b2b2b;
@@ -107,6 +108,7 @@
   --pd-brand-mark-bg: #00000012;
   --pd-danger: #ef4444;
   --pd-warning: #d97706;
+  --pd-status-unread: #0ea5e9;
   --pd-success: #16a34a;
   --pd-chrome-border: #e0e0e0;
   --pd-surface-raised: #ffffff;
@@ -202,6 +204,12 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px
 .pd-conversation-body.is-empty { overflow-y: auto; overflow-x: hidden; }
 .pd-conversation-body.is-empty::before { content: ''; flex: 0 1 29dvh; min-height: 72px; }
 .pd-conversation-body.is-empty::after { content: ''; flex: 1 0 24px; }
+/* A pending plugin/extension question anchors the conversation bottom (zcode):
+   the empty draft stops centering its composer mid-screen and docks the card
+   with the composer at the bottom like an active conversation. */
+.pd-conversation-body.is-empty.has-extension-request::before { flex: 1 1 auto; min-height: 72px; }
+.pd-conversation-body.is-empty.has-extension-request::after { flex: 0 0 24px; }
+.pd-conversation-body.is-empty.has-extension-request .pd-empty-state { margin-bottom: 0; }
 .pd-main.is-empty .pd-chat-header { border-bottom-color: transparent; background: var(--pd-bg); }
 .pd-conversation-body.is-empty .pd-chat-content { flex: 0 0 auto; }
 .pd-conversation-body.is-empty .pd-transcript { overflow: visible; scrollbar-gutter: auto; }
@@ -550,7 +558,8 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pd-spinning { animation: none; }
+  .pd-spinning, .pd-session-spinner { animation: none; }
+  .pd-session-state-counts b.is-running { animation: none; }
   .pd-chevron { transition: none; }
 }
 
@@ -594,7 +603,7 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 }
 .pd-brand-mark { display: grid; flex: 0 0 24px; place-items: center; width: 24px; height: 24px; border: 1px solid var(--pd-mark-border); border-radius: 7px; background: var(--pd-brand-mark-bg); color: var(--pd-brand); font: 19px/1 Georgia, serif; }
 .pd-sidebar-navigation { gap: 4px; padding: 7px 9px 4px; }
-.pd-project-section { padding-top: 10px; }
+.pd-project-section { padding-top: 6px; }
 .pd-project-heading { flex-basis: 34px; padding-left: 18px; padding-right: 12px; text-transform: uppercase; }
 .pd-project-heading small { margin-left: 3px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); font-weight: 400; }
 .pd-project-list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 2px 9px 16px; scrollbar-gutter: stable; }
@@ -611,13 +620,26 @@ div.pd-hover-tooltip:has(.pd-update-notes-body) { max-width: min(400px, calc(100
 .pd-section-heading { height: 29px; min-height: 29px; padding: 0 3px 0 13px; }
 .pd-session-group + .pd-session-group { margin-top: 3px; }
 .pd-session-group-label { height: 25px; padding-left: 11px; }
-.pd-session-item { --pd-session-background: var(--pd-sidebar); --pd-session-actions-width: 56px; position: relative; display: flex; align-items: center; min-height: 34px; border-radius: 7px; }
+.pd-session-item { --pd-session-background: var(--pd-sidebar); --pd-session-actions-width: 30px; position: relative; display: flex; align-items: center; min-height: 34px; border-radius: 7px; }
 .pd-session-item:hover { --pd-session-background: var(--pd-surface-hover); background: var(--pd-session-background); }
 .pd-session-item.is-active { --pd-session-background: var(--pd-selected); background: var(--pd-session-background); }
 .pd-session-item .pd-session-row { min-height: 34px; width: 100%; padding: 0 9px; background: transparent; }
 .pd-session-item .pd-session-row:hover:not(:disabled), .pd-session-item .pd-session-row.is-active { background: transparent; }
 .pd-session-item .pd-session-copy strong { font-size: var(--pd-font-base); }
-.pd-session-unread { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--pd-brand); }
+/* zcode-style leading slot: one vocabulary for rows and group headings. */
+.pd-session-leading { flex: 0 0 16px; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; }
+.pd-session-indicator { width: 6px; height: 6px; border-radius: 50%; }
+.pd-session-indicator.is-failed { background: var(--pd-danger); }
+.pd-session-indicator.is-unread { background: var(--pd-status-unread); }
+.pd-session-indicator.is-waiting { background: var(--pd-warning); }
+.pd-session-spinner { color: var(--pd-text-subtle); animation: pd-spin 1.2s linear infinite; }
+/* The pin action lives in the leading slot (zcode): hover or focus swaps the
+   indicator for it; a pinned row without live state keeps it visible. */
+.pd-session-pin { position: absolute; left: 2px; top: 50%; transform: translateY(-50%); z-index: 2; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--pd-text-subtle); opacity: 0; pointer-events: none; }
+.pd-session-pin:hover { color: var(--pd-text); }
+.pd-session-pin[aria-pressed='true'] { color: var(--pd-text); }
+.pd-session-item:is(:hover, :has(:focus-visible)) .pd-session-pin, .pd-session-item.is-pinned:not(.has-indicator) .pd-session-pin { opacity: 1; pointer-events: auto; }
+.pd-session-item:is(:hover, :has(:focus-visible)) .pd-session-leading { visibility: hidden; }
 .pd-session-actions { position: absolute; top: 3px; right: 3px; z-index: 2; display: flex; align-items: center; gap: 2px; border-radius: 0 6px 6px 0; background: var(--pd-session-background); opacity: 0; pointer-events: none; }
 .pd-session-actions::before { content: ''; position: absolute; top: 0; bottom: 0; right: 100%; width: 12px; background: linear-gradient(to right, transparent, var(--pd-session-background)); pointer-events: none; }
 .pd-session-item:hover .pd-session-actions, .pd-session-item:has(:focus-visible) .pd-session-actions { opacity: 1; pointer-events: auto; }
