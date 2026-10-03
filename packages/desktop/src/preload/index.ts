@@ -152,6 +152,8 @@ const bridge: AgentBridge = {
 	onUpdateStateChanged,
 	getDesktopSettings: () => invoke(IPC_CHANNELS.desktopSettingsGet),
 	setDesktopSettings: (patch) => invoke(IPC_CHANNELS.desktopSettingsSet, patch),
+	getAppearance: () => invoke(IPC_CHANNELS.appearanceGet),
+	setAppearance: (state) => invoke(IPC_CHANNELS.appearanceSet, state),
 	onAppCommand,
 	getWindowChromeState: () => invoke(IPC_CHANNELS.windowChromeState),
 	onWindowChromeStateChanged,

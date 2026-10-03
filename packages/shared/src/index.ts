@@ -79,6 +79,8 @@ export const IPC_CHANNELS = {
   appCommand: 'app:command',
   desktopSettingsGet: 'desktop-settings:get',
   desktopSettingsSet: 'desktop-settings:set',
+  appearanceGet: 'appearance:get',
+  appearanceSet: 'appearance:set',
   agentListSessionGroups: 'agent:list-session-groups',
   agentUpdateSessionGroups: 'agent:update-session-groups',
   agentUpdateSessionOrders: 'agent:update-session-orders',
@@ -799,7 +801,14 @@ export interface UiDesktopSettings {
 }
 
 /** Main → renderer commands (tray menu, notification clicks). */
-export type UiAppCommand = { type: 'new-session' } | { type: 'switch-session'; path: string; cwd?: string } | { type: 'open-settings' };
+/** Look-and-feel shared by every window, including pai chat windows. */
+export interface UiAppearanceState {
+  theme: 'system' | 'dark' | 'light';
+  colors: { light: { preset: string; accent: string; surface: string; ink: string; contrast: number }; dark: { preset: string; accent: string; surface: string; ink: string; contrast: number } };
+}
+
+/** Main → renderer commands (tray menu, notification clicks). */
+export type UiAppCommand = { type: 'new-session' } | { type: 'switch-session'; path: string; cwd?: string } | { type: 'open-settings' } | { type: 'appearance-changed'; appearance: UiAppearanceState };
 
 export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, WorkbenchFeaturesBridge, ManagementFeaturesBridge, PluginUpdatesBridge, McpFeaturesBridge, ResultFilesBridge {
   getPersonalization(): Promise<UiInstructionDocument[]>;
@@ -830,6 +839,9 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   onUpdateStateChanged(listener: (state: UiUpdateState) => void): () => void;
   getDesktopSettings(): Promise<UiDesktopSettings>;
   setDesktopSettings(patch: Partial<UiDesktopSettings>): Promise<UiDesktopSettings>;
+  /** Shared appearance state; null when nothing has been saved yet. */
+  getAppearance(): Promise<UiAppearanceState | null>;
+  setAppearance(state: UiAppearanceState): Promise<void>;
   onAppCommand(listener: (command: UiAppCommand) => void): () => void;
   getWindowChromeState(): Promise<WindowChromeState>;
   onWindowChromeStateChanged(listener: (state: WindowChromeState) => void): () => void;

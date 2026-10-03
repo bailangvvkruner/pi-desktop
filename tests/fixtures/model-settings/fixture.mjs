@@ -50,6 +50,8 @@ export function installModelSettingsFixture(options = {}) {
     getUpdateState: () => ({ phase: 'unavailable', unavailableReason: 'development', currentVersion: '0.1.5-review' }),
     getDesktopSettings: () => clone(state.desktopSettings),
     setDesktopSettings: (patch) => clone(Object.assign(state.desktopSettings, patch)),
+    getAppearance: () => clone(state.appearance ?? null),
+    setAppearance: (value) => { state.appearance = clone(value); },
     pickConversationStorageDirectory: () => null,
     listSlashCommands: () => [],
     getWorkspaceBranches: () => ({ isRepository: true, current: 'review-fixture', detached: false, branches: ['review-fixture'] }),

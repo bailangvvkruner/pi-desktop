@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
-import type { UiSessionSearchResult, WorkspaceEntry } from '@pidesktop/shared';
+import type { UiAppearanceState, UiSessionSearchResult, WorkspaceEntry } from '@pidesktop/shared';
 import { ChatView, type SearchMessageTarget } from './ChatView';
 import { ScopedErrorBoundary } from './ScopedErrorBoundary';
 import { AutomationPage } from './AutomationPage';
@@ -22,7 +22,7 @@ import { useT } from '../i18n';
 import { useSessionNavigation } from '../useSessionNavigation';
 import { HistoryNavigation, type HistoryNavigationProps } from './HistoryNavigation';
 import { SearchButton } from './SearchButton';
-import { applyThemeColors, readColorPreferences, writeColorPreferences } from '../themeColors';
+import { applyThemeColors, normalizeColorPreferences, readColorPreferences, writeColorPreferences, type ThemeColorPreferences } from '../themeColors';
 import type { ModelManagementTarget } from '../modelManagement';
 import './shellMotion.css';
 import './paiWindow.css';
@@ -68,8 +68,8 @@ export function AppShell() {
 	const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW_WINDOW_QUERY).matches);
 	const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
 	const [sidebarResizing, setSidebarResizing] = useState(false);
-	const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference);
-	const [colorPreferences, setColorPreferences] = useState(readColorPreferences);
+	const [themePreference, setThemePreferenceLocal] = useState<ThemePreference>(readThemePreference);
+	const [colorPreferences, setColorPreferencesLocal] = useState(readColorPreferences);
 	const [colorSaveFailed, setColorSaveFailed] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [searchOpen, setSearchOpen] = useState(false);
@@ -97,6 +97,27 @@ export function AppShell() {
 	const workbenchToggleRef = useRef<HTMLButtonElement>(null);
 	const platform = useChatStore((state) => state.appInfo?.platform);
 	const commandBridge = useChatStore((state) => state.bridge);
+	const appearanceRef = useRef({ themePreference, colorPreferences });
+	appearanceRef.current = { themePreference, colorPreferences };
+	/** Apply look-and-feel shared through the main process (pai windows follow it). */
+	const applySharedAppearance = (appearance: UiAppearanceState) => {
+		const theme = appearance.theme === 'dark' || appearance.theme === 'light' ? appearance.theme : 'system';
+		setThemePreferenceLocal(theme);
+		setColorPreferencesLocal(normalizeColorPreferences(appearance.colors));
+	};
+	// Reader choices are persisted locally and shared with every other window.
+	const shareAppearance = (appearance: UiAppearanceState) => {
+		try { void commandBridge?.setAppearance(appearance)?.catch(() => { /* Local preferences still apply; sharing resumes on the next change. */ }); }
+		catch { /* A bridge that rejects sharing outright keeps local-only preferences. */ }
+	};
+	const setThemePreference = (theme: ThemePreference) => {
+		setThemePreferenceLocal(theme);
+		shareAppearance({ theme, colors: appearanceRef.current.colorPreferences });
+	};
+	const setColorPreferences = (colors: ThemeColorPreferences) => {
+		setColorPreferencesLocal(colors);
+		shareAppearance({ theme: appearanceRef.current.themePreference, colors });
+	};
 	const isWindows = (platform ?? (navigator.userAgent.includes('Windows') ? 'win32' : '')) === 'win32';
 	const history: HistoryNavigationProps = {
 		canGoBack: navigation.canGoBack,
@@ -137,6 +158,11 @@ export function AppShell() {
 		const bridge = commandBridge;
 		if (!bridge?.onAppCommand) return;
 		return bridge.onAppCommand((command) => {
+			if (command.type === 'appearance-changed') {
+				// Follow a shared change saved by another window or process.
+				applySharedAppearance(command.appearance);
+				return;
+			}
 			if (command.type === 'open-settings') {
 				setSearchOpen(false);
 				setSettingsInitialPage('general');
@@ -154,6 +180,27 @@ export function AppShell() {
 				.find(([, sessions]) => sessions.some((session) => session.path === command.path))?.[0];
 			if (workspace) void state.selectSession(workspace, command.path).catch(() => { /* Navigation errors are shown by the store. */ });
 		});
+	}, [commandBridge]);
+
+	// Pick up the shared look-and-feel once per mount; pai windows start from it
+	// instead of their isolated profile defaults. First launch seeds the shared
+	// store from this window's saved local preference.
+	useEffect(() => {
+		const bridge = commandBridge;
+		try {
+			if (!bridge?.getAppearance) return;
+			let cancelled = false;
+			void bridge.getAppearance().then((appearance) => {
+				if (cancelled) return;
+				if (appearance) applySharedAppearance(appearance);
+				// First launch seeds the shared store from this window's saved preference.
+				else shareAppearance({ theme: appearanceRef.current.themePreference, colors: appearanceRef.current.colorPreferences });
+			}, () => { /* Sharing is unavailable; local preferences keep working. */ });
+			return () => { cancelled = true; };
+		} catch {
+			// A bridge that cannot share appearance leaves this window local-only.
+			return;
+		}
 	}, [commandBridge]);
 
 	useEffect(() => {

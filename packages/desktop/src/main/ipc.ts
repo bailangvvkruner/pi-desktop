@@ -31,6 +31,7 @@ import { createProjectCreator } from './projectCreation';
 import { createConversationWorkspace, createConversationWorkspaceSync, prepareConversationStorageDirectory } from './conversationStorage';
 import { createDesktopNotifier } from './notifications';
 import { readDesktopSettings, writeDesktopSettings, type DesktopSettings } from './desktopSettings';
+import { appearanceStatePath, isValidAppearanceState, readAppearanceState, watchAppearanceState, writeAppearanceState } from './appearance';
 import { readWorkspaceContext, validateContextRequest } from './contextService';
 import { createAutomationService } from './automationService';
 import { createAutomationExecutor } from './automationExecutor';
@@ -232,6 +233,8 @@ function readWorkspaceSettingsAsync(): Promise<WorkspaceSettings> {
 
 let workspaceSettingsQueue: Promise<void> = Promise.resolve();
 let desktopSettingsQueue: Promise<void> = Promise.resolve();
+let appearancePath = appearanceStatePath(app.getPath('userData'));
+let stopAppearanceWatch: (() => void) | null = null;
 function withWorkspaceSettings<T>(action: (settings: WorkspaceSettings) => Promise<T> | T): Promise<T> {
 	const result = workspaceSettingsQueue.then(async () => action(await readWorkspaceSettingsAsync()));
 	workspaceSettingsQueue = result.then(() => undefined, () => undefined);
@@ -637,6 +640,7 @@ export function registerIpc(options: {
 	windowMode?: 'full' | 'pai';
 	onRendererReady?(win: BrowserWindow): void;
 	getDialogWindow?(): BrowserWindow | undefined;
+	baseUserData?: string;
 } = {}): void {
 	const windowMode = options.windowMode ?? 'full';
 	currentWindowMode = windowMode;
@@ -646,6 +650,7 @@ export function registerIpc(options: {
 		getMainWindow: () => getDialogWindow() ?? null,
 		revealSession: (path, cwd) => sendAppCommand({ type: 'switch-session', path, cwd }),
 	});
+	appearancePath = appearanceStatePath(options.baseUserData ?? app.getPath('userData'));
 		handleRendererInvoke(MCP_FEATURE_CHANNELS.getMcpSnapshot, () => agentService.getMcpSnapshot());
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.saveMcpServer, (_event, request: Parameters<typeof agentService.saveMcpServer>[0]) => agentService.saveMcpServer(request));
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.removeMcpServer, (_event, request: Parameters<typeof agentService.removeMcpServer>[0]) => agentService.removeMcpServer(request));
@@ -691,6 +696,15 @@ export function registerIpc(options: {
 		onRunFinished: (entry, task) => { notifier.handleAutomationRun(entry, task.name, task.cwd); if (entry.sessionPath) void managementFeatures?.rememberAutomation(entry.sessionPath, entry.id).catch(error => console.error('Usage identity persistence failed', error)); },
 	});
 	handleRendererInvoke(IPC_CHANNELS.desktopSettingsGet, () => readCurrentDesktopSettings());
+	stopAppearanceWatch = watchAppearanceState(appearancePath, (state) => {
+		if (state) sendAppCommand({ type: 'appearance-changed', appearance: state });
+	});
+	handleRendererInvoke(IPC_CHANNELS.appearanceGet, () => readAppearanceState(appearancePath));
+	handleRendererInvoke(IPC_CHANNELS.appearanceSet, (_event, state: unknown) => {
+		if (!isValidAppearanceState(state)) throw new Error('外观设置无效');
+		writeAppearanceState(appearancePath, state);
+		sendAppCommand({ type: 'appearance-changed', appearance: state });
+	});
 	handleRendererInvoke(IPC_CHANNELS.desktopSettingsSet, (event, patch: unknown) => {
 		const win = invokingWindow(event);
 		if (event.senderFrame !== win.webContents.mainFrame) throw new Error('Invalid desktop-settings sender');
@@ -1218,6 +1232,8 @@ export function disposeServices(): Promise<void> {
 	if (serviceShutdown) return serviceShutdown;
 	disposingServices = true;
 	updateService.stop();
+	stopAppearanceWatch?.();
+	stopAppearanceWatch = null;
 	destroyAppTray();
 	for (const queue of startupNotifications.values()) queue.cleanup();
 	for (const pending of pendingDialogs.values()) pending.resolve(null);

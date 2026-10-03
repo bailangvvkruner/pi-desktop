@@ -10,12 +10,17 @@ import { createAppTray, destroyAppTray } from './tray';
 import { parseDesktopLaunch, rendererLaunchUrl, reservePaiProfile, validatePaiWorkspace, type DesktopLaunch, type PaiProfile } from './desktopLaunch.ts';
 
 let paiProfile: PaiProfile | null = null;
+// Pai windows relocate userData to an isolated profile; appearance and other
+// shared state still live in the original base directory.
+let baseUserData: string | undefined;
 const launch: DesktopLaunch = (() => {
 	try {
 		const parsed = parseDesktopLaunch(process.argv);
 		if (parsed.windowMode === 'full') return parsed;
 		const cwd = validatePaiWorkspace(parsed.cwd);
-		paiProfile = reservePaiProfile(app.getPath('userData'));
+		// The pai profile relocates userData; keep the base path for shared state.
+		baseUserData = app.getPath('userData');
+		paiProfile = reservePaiProfile(baseUserData);
 		// Must be configured before app.ready creates Chromium's default session.
 		app.setPath('userData', paiProfile.userData);
 		app.setPath('sessionData', paiProfile.sessionData);
@@ -299,6 +304,7 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 		updateService = launch.windowMode === 'full' ? module.updateService : null;
 		module.registerIpc({
 			windowMode: launch.windowMode,
+			baseUserData,
 			onRendererReady: (win) => pendingWindowReveals.get(win)?.(),
 			getDialogWindow: () => {
 				const focused = BrowserWindow.getFocusedWindow();
