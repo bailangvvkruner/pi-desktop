@@ -211,7 +211,7 @@ function ProviderEditor({ provider, template, disabled, onSave, onCancel, autoDi
 	async function discover(savedConnection = false) {
 		if (disabled || discovering || !bridge) return;
 		let request: UiDiscoverProviderModelsRequest;
-		try { request = savedConnection && provider ? { provider: provider.provider } : connectionRequest(); }
+		try { request = savedConnection && provider ? { provider: provider.provider, ...(useSystemProxy !== undefined ? { useSystemProxy } : {}) } : connectionRequest(); }
 		catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); return; }
 		const generation = ++requestGeneration.current;
 		setDiscovering(true); setError(null);
@@ -271,6 +271,8 @@ function ProviderEditor({ provider, template, disabled, onSave, onCancel, autoDi
 		<label className="pd-model-settings-field">{t('settings.providerBaseUrl')}<input data-field="provider.baseUrl" required type="url" value={baseUrl} onChange={(event) => { const value = event.target.value; invalidateDiscovery(); setBaseUrl(value); }} disabled={busy} spellCheck={false} autoComplete="off" placeholder="https://api.example.com/v1" /><small>{t('settings.providerBaseUrlHint')}</small></label>
 		<label className="pd-model-settings-field">{t('settings.providerProtocol')}<select data-field="provider.api" value={api} onChange={(event) => { const value = event.target.value as UiProviderApi; invalidateDiscovery(); setApi(value); }} disabled={busy}>{PROTOCOLS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
 		{mode === 'create' && <label className="pd-model-settings-field">{t('settings.apiKey')}<span className="pd-model-key-row"><input data-field="provider.apiKey" type={keyVisible ? 'text' : 'password'} value={apiKey} onChange={(event) => { const value = event.target.value; invalidateDiscovery(); setApiKey(value); }} disabled={busy} autoComplete="new-password" spellCheck={false} placeholder={t(provider?.configured ? 'settings.replaceKey' : 'settings.enterKey')} /><button type="button" className="pd-model-key-reveal" data-action="toggle-key-visibility" disabled={busy} aria-label={t(keyVisible ? 'settings.hideApiKey' : 'settings.showApiKey')} aria-pressed={keyVisible} onClick={() => setKeyVisible(!keyVisible)}><Icon name={keyVisible ? 'eyeOff' : 'eye'} width="14" height="14" /></button></span><small>{t('settings.providerKeyOptional')}</small></label>}
+		</>}
+		{(mode !== 'discover' || !provider?.custom) && <>
 		<details className="pd-model-advanced"><summary>{t('settings.providerAdvanced')}</summary>
 		<section className="pd-model-headers" aria-label={t('settings.providerHeaders')}>
 			<div className="pd-model-settings-subhead"><h4>{t('settings.providerHeaders')}</h4><button type="button" className="pd-model-settings-button" data-action="add-header" disabled={busy} onClick={() => changeHeaders([...headers, { key: nextHeaderKey.current++, name: '', value: '', stored: false }])}><Icon name="plus" width="13" height="13" />{t('settings.providerHeaderAdd')}</button></div>
@@ -404,6 +406,9 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 	const defaultProvider = configuredProviders.find((item) => item.provider === modelProvider) ?? configuredProviders[0];
 	const selected = configuredProviders.find((item) => item.provider === selectedId) ?? defaultProvider;
 	const selectedConfigured = selected ? configured(selected) : false;
+	// Builtin providers whose catalog api speaks a standard protocol can also
+	// discover their live model list (agent falls back to the catalog definition).
+	const discoverable = Boolean(selected?.api && (!selected.custom || selected.editable) && PROTOCOLS.some((protocol) => protocol.value === selected.api));
 	const matches = configuredProviders.filter((item) => `${item.provider} ${item.name}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
 	const groups = [{ id: 'configured', items: matches, label: 'settings.providersConfigured' }];
 	const setupProvider = editor?.kind === 'credentials' ? providers.find((item) => item.provider === editor.provider) : undefined;
@@ -562,7 +567,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 					</>}
 					{credential}
 					</section>
-					<section className="pd-model-catalog"><div className="pd-model-settings-subhead"><h4>{t('settings.availableModels')} <span className="pd-model-count">{selected.models.length}</span></h4>{selected.custom && selected.editable && <div className="pd-model-page-actions"><button type="button" data-action="discover-models" className="pd-model-settings-button" disabled={!canChange} onClick={() => openEditor({ kind: 'discover', provider: selected })}><Icon name="refresh" width="13" height="13" />{t('settings.providerFetchModels')}</button><button type="button" data-action="add-model" className="pd-model-settings-button" disabled={!canChange} onClick={() => openEditor({ kind: 'model', provider: selected })}><Icon name="plus" width="13" height="13" />{t('settings.customModelAdd')}</button></div>}</div>
+					<section className="pd-model-catalog"><div className="pd-model-settings-subhead"><h4>{t('settings.availableModels')} <span className="pd-model-count">{selected.models.length}</span></h4>{(discoverable || selected.custom && selected.editable) && <div className="pd-model-page-actions">{discoverable && <button type="button" data-action="discover-models" className="pd-model-settings-button" disabled={!canChange} onClick={() => openEditor({ kind: 'discover', provider: selected })}><Icon name="refresh" width="13" height="13" />{t('settings.providerFetchModels')}</button>}{selected.custom && selected.editable && <button type="button" data-action="add-model" className="pd-model-settings-button" disabled={!canChange} onClick={() => openEditor({ kind: 'model', provider: selected })}><Icon name="plus" width="13" height="13" />{t('settings.customModelAdd')}</button>}</div>}</div>
 						<input className="pd-model-provider-search" type="search" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} aria-label={t('composer.pickerSearchLabel')} placeholder={t('composer.pickerSearchPlaceholder')} />
 						<div className="pd-model-settings-models" aria-label={t('settings.availableModels')}>{filteredModels.map((item) => {
 							const current = item.provider === modelProvider && item.id === model;

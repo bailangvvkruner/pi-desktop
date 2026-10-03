@@ -876,7 +876,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'settings.providerHeaderRemove': { 'zh-CN': '移除请求头 {name}', 'en-US': 'Remove header {name}' },
   'settings.providerHeaderInvalid': { 'zh-CN': '请求头名称不能为空、包含无效字符或重复；值不可包含换行。', 'en-US': 'Header names must be valid, nonempty and unique. Values cannot contain line breaks.' },
   'settings.providerSystemProxy': { 'zh-CN': '使用系统代理', 'en-US': 'Use system proxy' },
-  'settings.providerProxyInherited': { 'zh-CN': '尚未单独配置，沿用 Pi 网络设置。勾选使用系统代理，取消勾选后直连。', 'en-US': 'Inherits Pi network settings until changed. Check to use the system proxy; uncheck for a direct connection.' },
+  'settings.providerProxyInherited': { 'zh-CN': '尚未单独配置，沿用 Pi 网络设置（直连）。勾选使用系统代理，取消勾选后直连。', 'en-US': 'Inherits Pi network settings (direct connection) until changed. Check to use the system proxy; uncheck for a direct connection.' },
   'settings.providerProxyEnabled': { 'zh-CN': '获取模型和对话请求使用本机系统代理设置。', 'en-US': 'Model discovery and chat requests use this computer’s system proxy settings.' },
   'settings.providerProxyDisabled': { 'zh-CN': '获取模型和对话请求直接连接，不使用代理。', 'en-US': 'Model discovery and chat requests connect directly without a proxy.' },
   'settings.providerProxyInheritedShort': { 'zh-CN': '沿用 Pi 网络设置', 'en-US': 'Inherit Pi network settings' },

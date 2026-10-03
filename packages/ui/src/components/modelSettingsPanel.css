@@ -1,4 +1,9 @@
 .pd-settings-dialog:has(.pd-model-settings) { height: 820px; max-height: calc(100vh - 48px); }
+/* The frameless title bar pushes the overlay down 56px; without these the
+   model page override above would let the dialog spill past the window edge. */
+.is-frameless .pd-settings-dialog:has(.pd-model-settings) { max-height: calc(100vh - 104px); }
+@media (max-width: 650px) { .is-frameless .pd-settings-dialog:has(.pd-model-settings) { max-height: calc(100vh - 76px); } }
+@media (max-width: 450px) { .is-frameless .pd-settings-dialog:has(.pd-model-settings) { max-height: none; } }
 .pd-settings-dialog:has(.pd-settings-discard) { position: relative; }
 .pd-settings-dialog > .pd-settings-discard { position: absolute; z-index: 1; top: 50%; left: 50%; width: min(440px, calc(100% - 40px)); margin: 0; transform: translate(-50%, -50%); border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xl); background: var(--pd-surface); box-shadow: 0 0 0 100vmax var(--pd-overlay), var(--pd-shadow-dialog); }
 .pd-settings-content:has(.pd-model-settings) { display: flex; flex-direction: column; overflow: hidden; padding: 20px; scrollbar-gutter: auto; }
@@ -187,8 +192,8 @@
 
 /* API key reveal button */
 .pd-model-key-row { position: relative; display: block; min-width: 0; }
-.pd-model-key-row > input { width: 100%; }
-.pd-model-key-reveal { position: absolute; top: 50%; right: 5px; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--pd-text); cursor: pointer; }
+.pd-model-key-row > input { width: 100%; padding-right: 30px; }
+.pd-model-key-reveal { position: absolute; top: 50%; right: 5px; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--pd-text); cursor: pointer; }
 .pd-model-key-reveal:hover:not(:disabled) { background: var(--pd-selected); }
 .pd-model-key-reveal:disabled { opacity: 0.5; cursor: not-allowed; }
 

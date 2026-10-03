@@ -3,7 +3,7 @@ export function installModelSettingsFixture(options = {}) {
   const clone = (value) => structuredClone(value);
   const model = (provider, id, name, extra = {}) => ({ provider, id, name, reasoning: true, input: ['text', 'image'], contextWindow: 200000, maxTokens: 16000, ...extra });
   const providers = [
-    { provider: 'openai', name: 'OpenAI', custom: false, editable: false, configured: true, baseUrl: null, api: 'openai-responses', models: [model('openai', 'gpt-review', 'GPT Review')] },
+    { provider: 'openai', name: 'OpenAI', custom: false, editable: false, configured: true, baseUrl: 'https://api.openai.com/v1', api: 'openai-responses', models: [model('openai', 'gpt-review', 'GPT Review')] },
     { provider: 'review-gateway', name: '团队模型网关', custom: true, editable: true, configured: true, baseUrl: 'https://models.example.invalid/v1', api: 'openai-completions', headerNames: ['X-Review-Version'], useSystemProxy: false, disabledModels: ['hidden-model'], models: [model('review-gateway', 'review-reasoner', '团队推理模型'), model('review-gateway', 'review-fast', '快速模型', { reasoning: false, input: ['text'] }), model('review-gateway', 'hidden-model', '已隐藏模型')] },
     { provider: 'anthropic', name: 'Anthropic', custom: false, editable: false, configured: false, baseUrl: null, api: 'anthropic-messages', models: [model('anthropic', 'claude-review', 'Claude Review')] },
   ];

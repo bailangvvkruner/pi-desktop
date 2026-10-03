@@ -26,6 +26,10 @@ export default async function runScenarios(review) {
   await review.clickText('.pd-settings-nav button', '模型管理');
   await review.waitFor('document.querySelectorAll("[data-provider]").length === 2');
   await review.assert('document.querySelector("[data-provider-group=configured] [data-provider=openai]") !== null', 'Configured providers are grouped');
+  // The default selection is the builtin OpenAI provider: it must also offer
+  // live model discovery, while manual model adding stays custom-only.
+  await review.assert('Boolean(document.querySelector(".pd-model-catalog [data-action=discover-models]"))', 'Builtin provider offers model discovery');
+  await review.assert('document.querySelector(".pd-model-catalog [data-action=add-model]") === null', 'Builtin provider keeps manual model adding hidden');
   await review.assert('document.querySelector("[data-provider=anthropic], [data-provider-group=unconfigured], [data-add-provider=anthropic]") === null', 'Unconfigured providers are absent until opening Add provider');
   await selectGateway();
   if (process.argv.includes('--trace-inputs')) await review.evaluate('window.__modelReview.traceInputs()');
@@ -53,6 +57,12 @@ export default async function runScenarios(review) {
     }
   }
   await review.viewport(1440, 1000);
+  // The frameless title bar (56px) must be part of the dialog's height budget;
+  // without it the model page spills past the window bottom and looks covered.
+  await review.viewport(1440, 860);
+  await review.assert('document.querySelector(".pd-settings-dialog").getBoundingClientRect().bottom <= innerHeight + 0.5', 'Settings dialog stays inside the frameless viewport at 860px height');
+  await review.screenshot('01-frameless-fit-1440x860');
+  await review.viewport(1440, 1000);
   }
 
   // Template-to-create changes the native dialog content and focuses its first input.
@@ -62,6 +72,7 @@ export default async function runScenarios(review) {
   await review.click('dialog[open] [data-template="custom"]');
   await review.waitFor('Boolean(document.querySelector("dialog[open][data-model-dialog=create]"))');
   await dialogCentered('create');
+  await review.assert(`(() => {const dialog=document.querySelector('dialog[open][data-model-dialog=create]');const input=dialog.querySelector('[data-field="provider.apiKey"]');const eye=dialog.querySelector('.pd-model-key-reveal');if(!input||!eye)return false;const box=(element)=>element.getBoundingClientRect();const key=box(input),eyeBox=box(eye);return eyeBox.top>=key.top-0.5&&eyeBox.bottom<=key.bottom+0.5&&eyeBox.right<=key.right;})()`, 'The key reveal eye stays vertically centered inside the key input');
   await review.assert(`document.activeElement === document.querySelector(${JSON.stringify('dialog[open] [data-field="provider.id"]')})`, 'Template transition focuses the new provider id');
   await review.screenshot('02-create-provider-focus');
   await review.click('dialog[open][data-model-dialog="create"] .pd-model-dialog-header button');
@@ -341,4 +352,28 @@ export default async function runScenarios(review) {
   await review.screenshot('09-all-unconfigured-providers');
   await review.click(`${templatesDialog} .pd-model-dialog-header button`);
   await noOpenModelDialog();
+
+  // Builtin providers join the configured list with a key and can import their
+  // live model list, pinning a custom catalog entry for the provider.
+  // Earlier steps swap the discovery fixture; restore the standard catalog first.
+  await review.evaluate(`window.__modelReview.discovery = ${JSON.stringify({ models: [{ id: 'discovered-model', name: '新发现模型', contextWindow: 128000, maxTokens: 8192, input: ['text'], reasoning: false }, { id: 'metadata-missing', name: '需要核对能力的模型' }], warnings: ['模拟目录：不连接真实供应商'] })}`);
+  await review.click('[data-action="add-provider"]');
+  await waitForTemplates();
+  await review.click(`${templatesDialog} [data-add-provider="openai"]`);
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(credentialsDialog)}))`);
+  await review.fill(`${credentialsDialog} input#pd-api-key-openai`, 'fixture-openai-key');
+  await review.click(`${credentialsDialog} button[type="submit"]`);
+  await noOpenModelDialog();
+  await review.waitFor('Boolean(document.querySelector("[data-provider=openai]"))');
+  await review.click('[data-provider="openai"]');
+  await review.waitFor('Boolean(document.querySelector(".pd-model-catalog [data-action=discover-models]"))');
+  await review.click('[data-action="discover-models"]');
+  await review.waitFor('Boolean(document.querySelector("dialog[open][data-model-dialog=discover] [data-import-model=discovered-model]"))');
+  await review.assert(`Boolean(document.querySelector('dialog[open][data-model-dialog=discover] [data-field="provider.useSystemProxy"]'))`, 'Builtin discovery offers the system proxy option');
+  const beforeBuiltinImport = await review.evaluate(`${saveCalls}.length`);
+  await review.click('dialog[open][data-model-dialog=discover] button[type="submit"]');
+  await review.waitFor(`${saveCalls}.length === ${beforeBuiltinImport} + 1`);
+  await review.waitFor('document.querySelector("dialog[open].pd-model-dialog") === null');
+  await review.assert('window.__modelReview.providers.find(provider=>provider.provider==="openai").models.some(model=>model.id==="discovered-model")', 'Importing a builtin catalog pins the discovered model');
+  await review.screenshot('10-builtin-import');
 }
