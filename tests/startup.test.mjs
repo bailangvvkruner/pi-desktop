@@ -262,6 +262,20 @@ test('pai boot uses an isolated profile, opens a fresh cwd, and closes without a
   assert.equal(harness.calls.quit, 2);
 });
 
+test('pai boot accepts a Windows drive root workspace without trying to mkdir it', { skip: process.platform !== 'win32' }, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-pai-drive-root-'));
+  // Windows drive roots already exist and reject even recursive mkdir with
+  // EPERM, which used to fail the whole workspace startup.
+  const drive = `${root.slice(0, root.indexOf(':') + 1)}\\`;
+  const harness = await createStartupHarness(t, { launchArgs: ['--pai', '--cwd', drive], userData: root, closeBehavior: 'tray' });
+  t.after(async () => { await rm(root, { recursive: true, force: true, maxRetries: 4 }); });
+  const main = await harness.start();
+  assert.ok(main, 'the main window is created for a drive-root workspace');
+  assert.deepEqual(harness.calls.init, [[{ cwd: drive, fresh: true }]], 'the agent starts with the drive root as its workspace');
+  assert.equal(harness.calls.errors.length, 0, 'no startup failure is reported');
+  assert.doesNotMatch(harness.splash.url, /EPERM/, 'the splash does not fall back to the startup error page');
+});
+
 test('renderer readiness only reveals its own main window after load and first paint', async (t) => {
   const harness = await createStartupHarness(t);
   const main = await harness.start();

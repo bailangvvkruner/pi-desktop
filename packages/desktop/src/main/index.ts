@@ -1,6 +1,6 @@
 import { initializeDiagnostics, recordDiagnostic } from './diagnostics.ts';
 import { app, BrowserWindow, dialog, Menu, session, shell } from 'electron';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IPC_CHANNELS } from '@pidesktop/shared';
@@ -306,7 +306,10 @@ async function bootstrap(splash: BrowserWindow): Promise<void> {
 			},
 		});
 		const workspace = module.defaultWorkspace(launch.windowMode === 'pai' ? launch.cwd : undefined);
-		mkdirSync(workspace, { recursive: true });
+		// A workspace that already exists — notably a Windows drive root such as
+		// D:\ — must not be passed to mkdirSync: recursive mkdir still fails with
+		// EPERM on drive roots. Only create the directory when it is missing.
+		if (!statSync(workspace, { throwIfNoEntry: false })?.isDirectory()) mkdirSync(workspace, { recursive: true });
 		updateService?.setBeforeInstall(async () => {
 			if (ipc) await ipc.disposeServices();
 			readyToQuit = true;
