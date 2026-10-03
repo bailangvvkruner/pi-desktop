@@ -1,103 +1,41 @@
-import { UsageService } from './usageService';
 /**
- * Pi runs in an Electron utility process so SDK work cannot block the window's
- * main process. Only plain data crosses this internal RPC boundary.
+ * Pi agent host bootstrap entry (utility process).
+ *
+ * Stays dependency-free on purpose: when a custom engine is configured the
+ * module redirect for `@earendil-works/pi-coding-agent` must be installed
+ * before anything imports the SDK, so the real implementation is loaded via a
+ * dynamic import from `agentHostImpl`. Load failures are reported to the main
+ * process as a `fatal` message and exit the process so the crash path stays
+ * observable.
  */
-import { AgentService, configureProviderNetwork } from '@pidesktop/agent';
-import { getAgentDir } from '@earendil-works/pi-coding-agent';
-import { join } from 'node:path';
-import { readSessionContext, searchSessions, searchWorkspaceFiles, searchSessionsPage, searchProjectFiles, rebuildSearchIndex, cancelDataSearch, getProjectSearchRules, setProjectSearchRules } from './searchService';
-import { AsyncLocalStorage } from 'node:async_hooks';
-import type { ProjectTrustDecision } from '@pidesktop/agent';
-import type { UiExtensionDialogRequest, UiExtensionDialogResponse } from '@pidesktop/shared';
-import { createAgentHostMethods, invokeAgentHostMethod, type AgentHostToMain, type MainToAgentHost } from './agentHostProtocol';
+import { installEngineRedirect, missingSdkExports } from './piEngine';
 
 const parent = process.parentPort;
 if (!parent) throw new Error('Pi agent host requires an Electron parent port');
 
-let nextUiRequestId = 0;
-const callContext = new AsyncLocalStorage<number>();
-const pendingUi = new Map<number, {
-	resolve(value: unknown): void;
-	reject(error: Error): void;
-}>();
-
-function post(message: AgentHostToMain): void {
-	parent.postMessage(message);
+function fatal(message: string): void {
+	parent.postMessage({ kind: 'fatal', message });
+	// Give the parent port a moment to flush before exiting.
+	setTimeout(() => process.exit(1), 100);
 }
 
-function askMain<T>(
-	request: Extract<AgentHostToMain, { kind: 'ui-request' }>['request'],
-	signal?: AbortSignal,
-): Promise<T> {
-	if (signal?.aborted) return Promise.resolve(null as T);
-	const id = ++nextUiRequestId;
-	return new Promise<T>((resolve, reject) => {
-		const abort = (): void => {
-			pendingUi.delete(id);
-			post({ kind: 'ui-cancel', id });
-			resolve(null as T);
-		};
-		pendingUi.set(id, {
-			resolve: (value) => {
-				signal?.removeEventListener('abort', abort);
-				resolve(value as T);
-			},
-			reject: (error) => {
-				signal?.removeEventListener('abort', abort);
-				reject(error);
-			},
-		});
-		signal?.addEventListener('abort', abort, { once: true });
-		post({ kind: 'ui-request', id, callId: callContext.getStore(), request });
-	});
-}
-
-configureProviderNetwork(async (url) => {
-	const proxy = await askMain<string | null>({ kind: 'resolve-proxy', url }, AbortSignal.timeout(10000));
-	if (proxy === null) throw new Error('系统代理解析超时，请检查本机代理设置');
-	return proxy;
-});
-
-const agent = new AgentService(
-	(cwd): Promise<ProjectTrustDecision> => askMain({ kind: 'project-trust', cwd }),
-	(dialog: UiExtensionDialogRequest, signal?: AbortSignal): Promise<UiExtensionDialogResponse> =>
-		askMain({ kind: 'extension', dialog }, signal),
-);
-agent.onEvent((envelope) => post({ kind: 'event', envelope }));
-agent.onBackgroundActivity((cwd, path) => post({ kind: 'background-activity', cwd, path }));
-
-const usage = new UsageService(join(getAgentDir(), 'sessions'), join(getAgentDir(), 'desktop-usage-index.json'));
-const methods = createAgentHostMethods(agent, {
- getUsageReport: (query, workspaces, automatedPaths) => usage.report(query, workspaces, automatedPaths),
- cancelUsageReport: id => usage.cancel(id),
- searchSessionsPage: (workspaces, request, metadata, excludedPaths) => searchSessionsPage(join(getAgentDir(), 'sessions'), workspaces, request, metadata, agent.getSessionBranchHeads(), excludedPaths),
- searchProjectFiles, cancelDataSearch, getProjectSearchRules, setProjectSearchRules,
- rebuildSearchIndex: workspaces => rebuildSearchIndex(join(getAgentDir(), 'sessions'), workspaces),
-	searchSessions: (workspaces, query) => searchSessions(join(getAgentDir(), 'sessions'), workspaces, query),
-	searchWorkspaceFiles,
-	readSessionContext: (cwd, path) => readSessionContext(join(getAgentDir(), 'sessions'), cwd, path),
-});
-parent.on('message', (event) => {
-	const message = event.data as MainToAgentHost;
-	if (!message || typeof message !== 'object') return;
-	if (message.kind === 'ui-reply' || message.kind === 'ui-error') {
-		const pending = pendingUi.get(message.id);
-		if (!pending) return;
-		pendingUi.delete(message.id);
-		if (message.kind === 'ui-reply') pending.resolve(message.value);
-		else pending.reject(new Error(message.message));
-		return;
-	}
-	if (message.kind !== 'call') return;
-	void callContext.run(message.id, async () => {
-		try {
-			const value = await invokeAgentHostMethod(methods, message);
-			post({ kind: 'reply', id: message.id, value });
-		} catch (error) {
-			post({ kind: 'error', id: message.id, message: error instanceof Error ? error.message : String(error) });
+async function bootstrap(): Promise<void> {
+	const engineDir = process.env.PI_DESKTOP_ENGINE_DIR?.trim();
+	if (engineDir) {
+		const redirect = installEngineRedirect(engineDir);
+		if (!redirect.ok) {
+			throw new Error(`自定义 Pi 引擎不可用：${redirect.problems.join('；')}`);
 		}
-	});
-});
+		const sdk: object = await import('@earendil-works/pi-coding-agent');
+		const missing = missingSdkExports(sdk);
+		if (missing.length > 0) {
+			throw new Error(`自定义 Pi 引擎（${redirect.version ?? '未知版本'}）缺少必需导出：${missing.join('、')}`);
+		}
+	}
+	await import('./agentHostImpl.js');
+}
 
-post({ kind: 'ready' });
+bootstrap().catch((error: unknown) => {
+	const detail = error instanceof Error ? error.message : String(error);
+	fatal(process.env.PI_DESKTOP_ENGINE_DIR ? `自定义 Pi 引擎加载失败：${detail}` : `Pi 引擎初始化失败：${detail}`);
+});

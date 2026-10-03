@@ -79,6 +79,10 @@ export const IPC_CHANNELS = {
   appCommand: 'app:command',
   desktopSettingsGet: 'desktop-settings:get',
   desktopSettingsSet: 'desktop-settings:set',
+  piEngineProbe: 'pi-engine:probe',
+  piEngineStatus: 'pi-engine:status',
+  piEnginePickDirectory: 'pi-engine:pick-directory',
+  appRelaunch: 'app:relaunch',
   appearanceGet: 'appearance:get',
   appearanceSet: 'appearance:set',
   agentListSessionGroups: 'agent:list-session-groups',
@@ -798,6 +802,31 @@ export interface UiDesktopSettings {
   notificationsEnabled: boolean;
   closeBehavior: 'tray' | 'quit';
   conversationStorageDirectory: string;
+  /** Which Pi engine drives the agent host (restart to apply). */
+  piEngine: UiPiEngineSelection;
+}
+
+/** Which Pi engine the agent host should load: the bundled SDK or a user-managed install. */
+export type UiPiEngineSelection = { mode: 'builtin' } | { mode: 'custom'; path: string };
+
+/** Structural validation result for a user-selected engine directory. */
+export interface UiPiEngineProbe {
+  ok: boolean;
+  /** Normalized package directory (valid even when ok is false, when detectable). */
+  packageDir: string | null;
+  version: string | null;
+  problems: string[];
+  warnings: string[];
+}
+
+/** Engine selection plus what the running agent host actually loaded. */
+export interface UiPiEngineStatus {
+  builtinVersion: string | null;
+  /** Effective selection from desktop settings; version is probed when custom. */
+  selection: UiPiEngineSelection & { version: string | null };
+  /** Engine snapshot captured when the agent host process was forked; null before the first fork. */
+  active: (UiPiEngineSelection & { version: string | null }) | null;
+  pendingRestart: boolean;
 }
 
 /** Main → renderer commands (tray menu, notification clicks). */
@@ -839,6 +868,11 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   onUpdateStateChanged(listener: (state: UiUpdateState) => void): () => void;
   getDesktopSettings(): Promise<UiDesktopSettings>;
   setDesktopSettings(patch: Partial<UiDesktopSettings>): Promise<UiDesktopSettings>;
+  probePiEngine(path: string): Promise<UiPiEngineProbe>;
+  getPiEngineStatus(): Promise<UiPiEngineStatus>;
+  pickPiEngineDirectory(): Promise<string | null>;
+  /** Quit and start the app again so a changed Pi engine takes effect. */
+  relaunchApp(): Promise<void>;
   /** Shared appearance state; null when nothing has been saved yet. */
   getAppearance(): Promise<UiAppearanceState | null>;
   setAppearance(state: UiAppearanceState): Promise<void>;

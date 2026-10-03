@@ -110,6 +110,7 @@ export type MainToAgentHost =
 
 export type AgentHostToMain =
 	| { kind: 'ready' }
+	| { kind: 'fatal'; message: string }
 	| { kind: 'reply'; id: number; value: unknown }
 	| { kind: 'error'; id: number; message: string }
 	| { kind: 'event'; envelope: AgentEventEnvelope }

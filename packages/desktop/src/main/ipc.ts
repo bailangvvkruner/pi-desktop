@@ -35,6 +35,9 @@ import { appearanceStatePath, isValidAppearanceState, readAppearanceState, watch
 import { readWorkspaceContext, validateContextRequest } from './contextService';
 import { createAutomationService } from './automationService';
 import { createAutomationExecutor } from './automationExecutor';
+import { probePiEngine, readBuiltinEngineInfo, isValidPiEngineSelection } from './piEngine';
+import type { AgentHostEngineOptions } from './agentClient';
+import type { UiPiEngineSelection, UiPiEngineStatus } from '@pidesktop/shared';
 import { createPluginDiscovery } from './pluginDiscovery';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { registerWorkbenchFeatureIpc } from './workbenchFeatureIpc';
@@ -80,7 +83,18 @@ let automationService: ReturnType<typeof createAutomationService> | null = null;
 let pluginMutationActive = false;
 let currentWindowMode: 'full' | 'pai' = 'full';
 const discoverPlugins = createPluginDiscovery();
-const automationExecutor = createAutomationExecutor({ withSessionSetup: (action) => queueWorkspaceActivation(action), onSessionCreated: async (path, task) => { await managementFeatures?.rememberAutomation(path, task.id); } });
+/** Resolved each time an agent host process is forked; custom engines apply after an app restart. */
+const agentEngineOptions: AgentHostEngineOptions = {
+	resolveEngineDir: () => {
+		const selection = readCurrentDesktopSettings().piEngine;
+		return selection?.mode === 'custom' ? selection.path : undefined;
+	},
+};
+const automationExecutor = createAutomationExecutor({
+	createAgent: (ui) => createIsolatedAgentService(ui, agentEngineOptions),
+	withSessionSetup: (action) => queueWorkspaceActivation(action),
+	onSessionCreated: async (path, task) => { await managementFeatures?.rememberAutomation(path, task.id); },
+});
 
 function notificationsFor(owner: BrowserWindow): StartupNotifications {
 	const existing = startupNotifications.get(owner);
@@ -189,7 +203,7 @@ export const agentService = createIsolatedAgentService({ requestProjectTrust: as
 			console.error('Pi agent recovery failed:', error);
 		});
 	}, 250);
-} });
+} }, agentEngineOptions);
 
 interface WorkspaceSettings {
 	cwd?: string;
@@ -709,6 +723,17 @@ export function registerIpc(options: {
 		const win = invokingWindow(event);
 		if (event.senderFrame !== win.webContents.mainFrame) throw new Error('Invalid desktop-settings sender');
 		if (!isRecord(patch)) throw new Error('设置参数无效');
+		let piEngine: UiPiEngineSelection | undefined;
+		if (patch.piEngine !== undefined) {
+			if (!isValidPiEngineSelection(patch.piEngine)) throw new Error('Pi 引擎设置无效');
+			piEngine = patch.piEngine;
+			if (piEngine.mode === 'custom') {
+				// Refuse to persist a broken engine path: it would make every agent
+				// host fork fatal after the next restart.
+				const probe = probePiEngine(piEngine.path, readBuiltinEngineInfo()?.version ?? null);
+				if (!probe.ok) throw new Error(`自定义 Pi 引擎不可用：${probe.problems.join('；')}`);
+			}
+		}
 		const result = desktopSettingsQueue.then(async () => {
 			const directory = patch.conversationStorageDirectory === undefined ? undefined
 				: await prepareConversationStorageDirectory(patch.conversationStorageDirectory);
@@ -729,12 +754,41 @@ export function registerIpc(options: {
 				notificationsEnabled: typeof patch.notificationsEnabled === 'boolean' ? patch.notificationsEnabled : current.notificationsEnabled,
 				closeBehavior: patch.closeBehavior === 'tray' || patch.closeBehavior === 'quit' ? patch.closeBehavior : current.closeBehavior,
 				conversationStorageDirectory: directory ?? current.conversationStorageDirectory,
+				piEngine: piEngine ?? current.piEngine,
 			};
 			writeDesktopSettings(desktopSettingsPath(), next);
 			return next;
 		});
 		desktopSettingsQueue = result.then(() => undefined, () => undefined);
 		return result;
+	});
+	handleRendererInvoke(IPC_CHANNELS.piEngineProbe, (_event, path: unknown) => {
+		if (typeof path !== 'string' || !path.trim()) throw new Error('引擎目录无效');
+		return probePiEngine(path, readBuiltinEngineInfo()?.version ?? null);
+	});
+	handleRendererInvoke(IPC_CHANNELS.piEngineStatus, () => {
+		const builtinVersion = readBuiltinEngineInfo()?.version ?? null;
+		const selection = readCurrentDesktopSettings().piEngine ?? { mode: 'builtin' as const };
+		const active = agentService.getActiveEngine();
+		const selectionVersion = selection.mode === 'custom' ? probePiEngine(selection.path, builtinVersion).version : builtinVersion;
+		const sameEngine = active !== null && (
+			(selection.mode === 'builtin' && active.mode === 'builtin')
+			|| (selection.mode === 'custom' && active.mode === 'custom' && active.path.trim().toLowerCase() === selection.path.trim().toLowerCase())
+		);
+		const status: UiPiEngineStatus = { builtinVersion, selection: { ...selection, version: selectionVersion }, active, pendingRestart: active !== null && !sameEngine };
+		return status;
+	});
+	handleRendererInvoke(IPC_CHANNELS.piEnginePickDirectory, async (event) => {
+		const owner = invokingWindow(event);
+		const selected = await dialog.showOpenDialog(owner, {
+			properties: ['openDirectory'],
+			title: getAppLocale() === 'en-US' ? 'Choose a Pi engine directory' : '选择 Pi 引擎目录',
+		});
+		return selected.canceled ? null : (selected.filePaths[0] ?? null);
+	});
+	handleRendererInvoke(IPC_CHANNELS.appRelaunch, () => {
+		app.relaunch();
+		app.exit(0);
 	});
 	automationService = automations;
 	handleRendererInvoke(IPC_CHANNELS.pluginCatalog, (event, cwd: unknown) => {

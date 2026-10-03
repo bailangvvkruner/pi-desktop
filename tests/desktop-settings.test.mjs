@@ -34,11 +34,30 @@ test('desktop settings default, persist and survive corruption (4.1/4.2)', async
     assert.deepEqual(readDesktopSettings(path), DEFAULT_DESKTOP_SETTINGS);
   });
 
+  await t.test('pi engine selection persists and legacy files gain the default', () => {
+    const customEngine = join(temp, 'engine-root');
+    writeDesktopSettings(path, { ...DEFAULT_DESKTOP_SETTINGS, piEngine: { mode: 'custom', path: customEngine } });
+    assert.deepEqual(readDesktopSettings(path).piEngine, { mode: 'custom', path: customEngine });
+    writeFileSync(path, JSON.stringify({ notificationsEnabled: true, closeBehavior: 'tray' }), 'utf8');
+    assert.deepEqual(readDesktopSettings(path).piEngine, { mode: 'builtin' });
+  });
+
+  await t.test('invalid pi engine selections fail settings validation', async () => {
+    const { isValidDesktopSettings } = await import('../packages/desktop/src/main/desktopSettings.ts');
+    const base = { notificationsEnabled: true, closeBehavior: 'tray' };
+    assert.equal(isValidDesktopSettings({ ...base, piEngine: { mode: 'builtin' } }), true);
+    assert.equal(isValidDesktopSettings({ ...base, piEngine: { mode: 'custom', path: 'D:\\engine-root' } }), true);
+    assert.equal(isValidDesktopSettings({ ...base, piEngine: undefined }), true);
+    assert.equal(isValidDesktopSettings({ ...base, piEngine: { mode: 'custom' } }), false);
+    assert.equal(isValidDesktopSettings({ ...base, piEngine: { mode: 'custom', path: '   ' } }), false);
+    assert.equal(isValidDesktopSettings({ ...base, piEngine: { mode: 'other', path: 'D:\\engine' } }), false);
+  });
   await t.test('legacy preferences gain the default directory without losing existing choices', () => {
     const configuredDefault = join(temp, 'legacy-default');
     writeFileSync(path, JSON.stringify({ notificationsEnabled: false, closeBehavior: 'quit' }));
     assert.deepEqual(readDesktopSettings(path, configuredDefault), {
       notificationsEnabled: false, closeBehavior: 'quit', conversationStorageDirectory: configuredDefault,
+      piEngine: { mode: 'builtin' },
     });
     const custom = join(temp, 'custom');
     writeDesktopSettings(path, { ...DEFAULT_DESKTOP_SETTINGS, conversationStorageDirectory: custom });

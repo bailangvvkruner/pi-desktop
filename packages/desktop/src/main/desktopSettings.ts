@@ -3,6 +3,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isConversationStorageDirectory } from './conversationStorage';
 import { backupCorruptStateFile, CorruptStateFileError, readStateFile, writeStateFile, writeStateFileAsync } from './stateFiles';
+import { isValidPiEngineSelection } from './piEngine';
+import type { UiPiEngineSelection } from '@pidesktop/shared';
 
 export interface DesktopSettings {
 	/** OS notifications for background/automation completion while the window is unfocused or hidden (4.1). */
@@ -11,6 +13,8 @@ export interface DesktopSettings {
 	closeBehavior: 'tray' | 'quit';
 	/** Parent folder used only for newly created standalone conversations. */
 	conversationStorageDirectory: string;
+	/** Which Pi SDK drives the agent host: bundled or a user-managed install (restart to apply). */
+	piEngine: UiPiEngineSelection;
 }
 
 export function isValidDesktopSettings(value: unknown): value is DesktopSettings {
@@ -18,11 +22,13 @@ export function isValidDesktopSettings(value: unknown): value is DesktopSettings
 	const candidate = value as Partial<DesktopSettings>;
 	return typeof candidate.notificationsEnabled === 'boolean'
 		&& (candidate.closeBehavior === 'tray' || candidate.closeBehavior === 'quit')
-		&& (candidate.conversationStorageDirectory === undefined || isConversationStorageDirectory(candidate.conversationStorageDirectory));
+		&& (candidate.conversationStorageDirectory === undefined || isConversationStorageDirectory(candidate.conversationStorageDirectory))
+		&& (candidate.piEngine === undefined || isValidPiEngineSelection(candidate.piEngine));
 }
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
 	notificationsEnabled: true, closeBehavior: 'tray', conversationStorageDirectory: join(homedir(), 'PiDesktopWorkspace'),
+	piEngine: { mode: 'builtin' },
 };
 
 /** Reads desktop-level preferences; corrupt or missing files fall back to defaults (4.1/4.2). */

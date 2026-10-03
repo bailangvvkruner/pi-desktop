@@ -18,9 +18,10 @@ import { createSettingsLeaveGuard, type SettingsDraftState as DraftState, type S
 import { useBusyInputBehavior } from '../busyInputBehavior';
 import { ConversationMetricsSettings } from './ConversationMetricsSettings';
 import { ConversationStorageSettings } from './ConversationStorageSettings';
+import { EngineSettingsPanel } from './EngineSettingsPanel';
 
 export type ThemePreference = 'system' | 'dark' | 'light';
-type SettingsPage = 'general' | 'appearance' | 'personalization' | 'model' | 'shortcuts' | 'updates' | 'data' | 'mcp';
+type SettingsPage = 'general' | 'appearance' | 'personalization' | 'model' | 'engine' | 'shortcuts' | 'updates' | 'data' | 'mcp';
 type DraftFocus = { element: HTMLElement; selection?: { start: number; end: number; direction: 'forward' | 'backward' | 'none' } };
 type PendingLeave = SettingsLeaveRequest<SettingsPage, DraftFocus | null>;
 
@@ -322,6 +323,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 						<button type="button" className={page === 'appearance' ? 'is-active' : ''} aria-current={page === 'appearance' ? 'page' : undefined} onClick={() => selectPage('appearance')}>{t('settings.appearance')}</button>
 						<button type="button" className={page === 'personalization' ? 'is-active' : ''} aria-current={page === 'personalization' ? 'page' : undefined} onClick={() => selectPage('personalization')}>{t('settings.personalization')}</button>
 						<button type="button" className={page === 'model' ? 'is-active' : ''} aria-current={page === 'model' ? 'page' : undefined} onClick={() => selectPage('model')}>{t('settings.modelManagement')}</button>
+						<button type="button" className={page === 'engine' ? 'is-active' : ''} aria-current={page === 'engine' ? 'page' : undefined} onClick={() => selectPage('engine')}>{t('settings.engine')}</button>
 						<button type="button" className={page === 'shortcuts' ? 'is-active' : ''} aria-current={page === 'shortcuts' ? 'page' : undefined} onClick={() => selectPage('shortcuts')}>{t('settings.shortcuts')}</button>
 						{!paiMode && <button type="button" className={page === 'updates' ? 'is-active' : ''} aria-current={page === 'updates' ? 'page' : undefined} onClick={() => selectPage('updates')}>{t('settings.updates')}</button>}
 						<button type="button" className={page === 'mcp' ? 'is-active' : ''} aria-current={page === 'mcp' ? 'page' : undefined} onClick={() => selectPage('mcp')}>MCP</button>
@@ -391,6 +393,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 							<ColorThemeSettings themePreference={themePreference} preferences={colorPreferences} onChange={onColorPreferencesChange} saveFailed={colorSaveFailed} />
 						</>}
 						{page === 'model' && <><ModelSettingsPanel key={cwd} initialTarget={modelTarget} onDraftStateChange={reportDraftState} renderCredential={(provider: UiProviderAuthStatus, onDraftStateChange?: (state: DraftState) => void, onRemoveRequest?: (remove: () => void) => void) => <ProviderCredentialRow key={provider.provider} {...provider} onDraftStateChange={onDraftStateChange} onRemoveRequest={onRemoveRequest} />} /><ModelTestPanel /></>}
+						{page === 'engine' && <EngineSettingsPanel onDraftStateChange={reportDraftState} />}
 						{page === 'shortcuts' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.shortcuts')}</h2><p>{t('settings.shortcutsDescription')}</p></div>
 						<ShortcutSettings isMac={appInfo?.platform === 'darwin'} />

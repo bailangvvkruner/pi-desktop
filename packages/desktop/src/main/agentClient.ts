@@ -2,13 +2,19 @@ import { recordDiagnostic } from './diagnostics.ts';
 import { app, utilityProcess, type UtilityProcess } from 'electron';
 import { join } from 'node:path';
 import type { ProjectTrustDecision } from '@pidesktop/agent';
-import type { AgentEventEnvelope, AgentSnapshot, UiExtensionDialogRequest, UiExtensionDialogResponse } from '@pidesktop/shared';
+import type { AgentEventEnvelope, AgentSnapshot, UiExtensionDialogRequest, UiExtensionDialogResponse, UiPiEngineSelection } from '@pidesktop/shared';
 import { createAgentHostProxy, type AgentHostMethod, type AgentHostToMain, type MainToAgentHost } from './agentHostProtocol';
+import { probePiEngine, readBuiltinEngineInfo } from './piEngine';
 
 export interface AgentHostUiHandlers {
 	requestProjectTrust(cwd: string): Promise<ProjectTrustDecision>;
 	requestExtensionDialog(request: UiExtensionDialogRequest, signal: AbortSignal): Promise<UiExtensionDialogResponse>;
 	onHostCrash?(): void;
+}
+
+/** Supplies the custom engine directory (from desktop settings) each time the host process is forked. */
+export interface AgentHostEngineOptions {
+	resolveEngineDir(): string | undefined;
 }
 
 interface PendingCall {
@@ -49,13 +55,18 @@ export class AgentHostClient {
 	private closing = false;
 	private shutdown: Promise<void> | null = null;
 	private lastAutomaticRestart = 0;
+	private readonly engine?: AgentHostEngineOptions;
+	private activeEngine: (UiPiEngineSelection & { version: string | null }) | null = null;
+	private fatalMessage: string | null = null;
 
 	constructor(
 		ui: AgentHostUiHandlers,
 		callTimeout: (method: AgentHostMethod) => number = defaultCallTimeout,
+		engine?: AgentHostEngineOptions,
 	) {
 		this.ui = ui;
 		this.callTimeout = callTimeout;
+		this.engine = engine;
 	}
 
 	onEvent(listener: (event: AgentEventEnvelope) => void): void {
@@ -70,6 +81,11 @@ export class AgentHostClient {
 		return this.currentCwd;
 	}
 
+	/** Engine snapshot captured when the agent host process was last forked; null before the first fork. */
+	getActiveEngine(): (UiPiEngineSelection & { version: string | null }) | null {
+		return this.activeEngine;
+	}
+
 	private emit(event: AgentEventEnvelope): void {
 		this.lastSequence = Math.max(this.lastSequence, event.sequence);
 		if (event.event.type === 'reset' || event.event.type === 'ready') this.currentCwd = event.event.cwd;
@@ -80,7 +96,15 @@ export class AgentHostClient {
 		if (this.closing) return Promise.reject(new Error('Pi agent is shutting down'));
 		if (this.ready) return this.ready;
 		recordDiagnostic({ stage: 'host', action: 'spawn', outcome: 'start' });
-		const host = utilityProcess.fork(join(app.getAppPath(), 'out', 'main', 'agentHost.js'), [], { serviceName: 'Pi Agent' });
+		const engineDir = this.engine?.resolveEngineDir()?.trim() || undefined;
+		this.fatalMessage = null;
+		this.activeEngine = engineDir
+			? { mode: 'custom', path: engineDir, version: probePiEngine(engineDir).version }
+			: { mode: 'builtin', version: readBuiltinEngineInfo()?.version ?? null };
+		const host = utilityProcess.fork(join(app.getAppPath(), 'out', 'main', 'agentHost.js'), [], {
+			serviceName: 'Pi Agent',
+			...(engineDir ? { env: { ...process.env, PI_DESKTOP_ENGINE_DIR: engineDir } } : {}),
+		});
 		this.host = host;
 		let resolveExit!: () => void;
 		this.hostExit = new Promise<void>((resolve) => { resolveExit = resolve; });
@@ -103,7 +127,9 @@ export class AgentHostClient {
 			this.host = null;
 			this.hostExit = null;
 			this.ready = null;
-			const error = new Error(`Pi agent process exited (code ${code})`);
+			const fatal = this.fatalMessage;
+			const error = new Error(fatal ?? `Pi agent process exited (code ${code})`);
+			this.fatalMessage = null;
 			this.readyReject?.(error);
 			this.readyResolve = null;
 			this.readyReject = null;
@@ -133,6 +159,10 @@ export class AgentHostClient {
 	private handleMessage(host: UtilityProcess, message: AgentHostToMain): void {
 		if (this.host !== host) return;
 		switch (message.kind) {
+			case 'fatal':
+				// The bootstrap exits right after reporting; the exit handler surfaces this message.
+				this.fatalMessage = message.message;
+				return;
 			case 'ready':
 				if (this.startTimer) clearTimeout(this.startTimer);
 				this.startTimer = null;
@@ -295,13 +325,14 @@ export class AgentHostClient {
 }
 
 /** Method surface used by the Electron IPC handlers. Calls remain async. */
-export function createIsolatedAgentService(ui: AgentHostUiHandlers) {
-	const client = new AgentHostClient(ui);
+export function createIsolatedAgentService(ui: AgentHostUiHandlers, engine?: AgentHostEngineOptions) {
+	const client = new AgentHostClient(ui, undefined, engine);
 	return {
 		...createAgentHostProxy((method, ...args) => client.call(method, ...args)),
 		get cwd(): string { return client.cwd; },
 		onEvent: (listener: (event: AgentEventEnvelope) => void): void => client.onEvent(listener),
 		onBackgroundActivity: (listener: (cwd: string, path: string) => void): void => client.onBackgroundActivity(listener),
 		dispose: () => client.dispose(),
+		getActiveEngine: () => client.getActiveEngine(),
 	};
 }
