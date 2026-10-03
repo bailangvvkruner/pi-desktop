@@ -5,11 +5,14 @@ import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 
 export const PI_PACKAGE = '@earendil-works/pi-coding-agent';
+export const PI_AI_PACKAGE = '@earendil-works/pi-ai';
 export const PI_PACKAGES = [
   '@earendil-works/chord',
   '@earendil-works/pi-agent-core',
   '@earendil-works/pi-ai',
   PI_PACKAGE,
+  '@earendil-works/pi-codemode',
+  '@earendil-works/pi-mcp',
   '@earendil-works/pi-telemetry',
   '@earendil-works/pi-tui',
 ];
@@ -89,6 +92,10 @@ function verifyLockfile(text, version, desktopManifest) {
       throw new Error(`pnpm-lock.yaml importer ${label} does not resolve ${PI_PACKAGE}@${version}`);
     }
   }
+  const agentPiAiEntry = lock?.importers?.['packages/agent']?.dependencies?.[PI_AI_PACKAGE];
+  if (agentPiAiEntry?.specifier !== version || !resolvedVersionMatches(agentPiAiEntry.version, version)) {
+    throw new Error(`pnpm-lock.yaml importer agent does not resolve ${PI_AI_PACKAGE}@${version}`);
+  }
   const packageKey = `${PI_PACKAGE}@${version}`;
   if (!lock?.packages?.[packageKey]) {
     throw new Error(`pnpm-lock.yaml is missing package ${packageKey}`);
@@ -125,6 +132,10 @@ export function verifySources(sources) {
     }
     version = parsed.version;
   }
+  const agentPiAi = manifests.agent?.dependencies?.[PI_AI_PACKAGE];
+  if (agentPiAi !== version) {
+    throw new Error(`Pi version drift: agent must pin ${PI_AI_PACKAGE}@${version}, found ${JSON.stringify(agentPiAi)}`);
+  }
   verifyWorkspace(sources.workspace, version);
   const { esbuildVersion } = verifyLockfile(sources.lockfile, version, manifests.desktop);
   return { version, esbuildVersion };
@@ -134,14 +145,14 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function replaceManifestVersion(text, oldVersion, newVersion, label) {
-  const expression = new RegExp(`("${escapeRegExp(PI_PACKAGE)}"\\s*:\\s*")${escapeRegExp(oldVersion)}(")`, 'g');
+function replaceManifestVersion(text, oldVersion, newVersion, label, packageName = PI_PACKAGE) {
+  const expression = new RegExp(`("${escapeRegExp(packageName)}"\\s*:\\s*")${escapeRegExp(oldVersion)}(")`, 'g');
   let count = 0;
   const updated = text.replace(expression, (_match, start, end) => {
     count += 1;
     return `${start}${newVersion}${end}`;
   });
-  if (count !== 1) throw new Error(`${label} must contain exactly one ${PI_PACKAGE} version declaration`);
+  if (count !== 1) throw new Error(`${label} must contain exactly one ${packageName} version declaration`);
   return updated;
 }
 
@@ -166,8 +177,9 @@ export function updateSources(sources, targetVersion) {
   if (oldVersion === newVersion) return { changed: false, oldVersion, newVersion, sources };
   const manifests = {};
   for (const [label] of MANIFESTS) {
-    manifests[label] = replaceManifestVersion(sources.manifests[label], oldVersion, newVersion, label);
+    manifests[label] = replaceManifestVersion(sources.manifests[label], oldVersion, newVersion, label, PI_PACKAGE);
   }
+  manifests.agent = replaceManifestVersion(manifests.agent, oldVersion, newVersion, 'agent', PI_AI_PACKAGE);
   const workspace = replaceWorkspaceVersion(sources.workspace, oldVersion, newVersion);
   return {
     changed: true,

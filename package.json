@@ -17,13 +17,13 @@
     "dist:win": "pnpm --filter @pidesktop/desktop dist:win",
     "dist:mac": "pnpm --filter @pidesktop/desktop dist:mac",
     "dist:linux": "pnpm --filter @pidesktop/desktop dist:linux",
-    "test": "node --test --test-concurrency=4 tests/*.test.mjs",
+    "test": "node scripts/run-tests.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
     "clean": "pnpm -r --if-present clean",
     "test:model-settings-ui": "pnpm build && node tests/fixtures/model-settings/preflight.mjs && node tests/fixtures/model-settings/run.mjs --run"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@earendil-works/pi-coding-agent": "1.0.0",
     "yaml": "2.9.0"
   }
 }

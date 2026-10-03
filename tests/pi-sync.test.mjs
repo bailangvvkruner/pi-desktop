@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
   ESBUILD_PACKAGES,
+  PI_AI_PACKAGE,
   PI_PACKAGE,
   PI_PACKAGES,
   assertStableVersion,
@@ -12,20 +13,20 @@ import {
 } from '../scripts/sync-pi.mjs';
 
 function fixture(version = '0.87.1', esbuildVersion = '0.28.2') {
-  const manifest = (group, extra = {}) => JSON.stringify({
+  const manifest = (group, extra = {}, deps = {}) => JSON.stringify({
     name: 'unrelated-value',
-    [group]: { [PI_PACKAGE]: version, another: '1.2.3' },
+    [group]: { [PI_PACKAGE]: version, another: '1.2.3', ...deps },
     ...extra,
   }, null, 2) + '\n';
   const manifests = {
     root: manifest('devDependencies'),
-    agent: manifest('dependencies'),
+    agent: manifest('dependencies', {}, { [PI_AI_PACKAGE]: version }),
     desktop: manifest('dependencies', {
       optionalDependencies: Object.fromEntries(ESBUILD_PACKAGES.map((name) => [name, esbuildVersion])),
     }),
   };
   const workspace = `packages:\n  - 'packages/*'\nminimumReleaseAgeExclude:\n${PI_PACKAGES.map((name) => `  - '${name}@${version}'`).join('\n')}\n  - electron@44.4.5\n`;
-  const lockfile = `lockfileVersion: '9.0'\nimporters:\n  .:\n    devDependencies:\n      '${PI_PACKAGE}':\n        specifier: ${version}\n        version: ${version}(ws@8.21.3)\n  packages/agent:\n    dependencies:\n      '${PI_PACKAGE}':\n        specifier: ${version}\n        version: ${version}(ws@8.21.3)\n  packages/desktop:\n    dependencies:\n      '${PI_PACKAGE}':\n        specifier: ${version}\n        version: ${version}(ws@8.21.3)\npackages:\n  '${PI_PACKAGE}@${version}':\n    resolution: {integrity: sha512-placeholder}\nsnapshots:\n  '${PI_PACKAGE}@${version}(ws@8.21.3)':\n    dependencies:\n      '@earendil-works/chord': ${version}\n  '@earendil-works/chord@${version}':\n    dependencies:\n      esbuild: ${esbuildVersion}\n`;
+  const lockfile = `lockfileVersion: '9.0'\nimporters:\n  .:\n    devDependencies:\n      '${PI_PACKAGE}':\n        specifier: ${version}\n        version: ${version}(ws@8.21.3)\n  packages/agent:\n    dependencies:\n      '${PI_PACKAGE}':\n        specifier: ${version}\n        version: ${version}(ws@8.21.3)\n      '${PI_AI_PACKAGE}':\n        specifier: ${version}\n        version: ${version}(ws@8.21.3)\n  packages/desktop:\n    dependencies:\n      '${PI_PACKAGE}':\n        specifier: ${version}\n        version: ${version}(ws@8.21.3)\npackages:\n  '${PI_PACKAGE}@${version}':\n    resolution: {integrity: sha512-placeholder}\n  '${PI_AI_PACKAGE}@${version}':\n    resolution: {integrity: sha512-placeholder}\nsnapshots:\n  '${PI_PACKAGE}@${version}(ws@8.21.3)':\n    dependencies:\n      '@earendil-works/chord': ${version}\n  '${PI_AI_PACKAGE}@${version}(ws@8.21.3)':\n    dependencies: {}\n  '@earendil-works/chord@${version}':\n    dependencies:\n      esbuild: ${esbuildVersion}\n`;
   return { manifests, workspace, lockfile };
 }
 
@@ -50,6 +51,9 @@ test('verify rejects ranged or mismatched manifest declarations', () => {
   const drifted = fixture();
   drifted.manifests.agent = drifted.manifests.agent.replace('0.87.1', '0.87.2');
   assert.throws(() => verifySources(drifted), /Pi version drift/);
+  const piAiDrifted = fixture();
+  piAiDrifted.manifests.agent = piAiDrifted.manifests.agent.replace(`"${PI_AI_PACKAGE}": "0.87.1"`, `"${PI_AI_PACKAGE}": "0.86.0"`);
+  assert.throws(() => verifySources(piAiDrifted), new RegExp(`must pin ${PI_AI_PACKAGE.replace('/', '\\/')}`));
 });
 
 test('verify rejects missing, duplicated, or stale exclusions', () => {
