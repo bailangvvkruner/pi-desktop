@@ -4,21 +4,13 @@ import { useT } from '../i18n';
 import { useChatStore } from '../store';
 import { Icon, type IconName } from './Icons';
 import { SidebarPopover } from './SidebarPopover';
+import { readPreferredOpener, writePreferredOpener } from '../editorPreference';
 
 // zcode WorkspaceEditorButtonGroup: a segmented control whose main button opens
 // the workspace with the selected app and whose chevron offers an open-with
 // picker. Only explicit choices persist; otherwise the first opener is used.
-const STORAGE_KEY = 'pi-desktop.opener.v1';
-
-const OPENER_ICONS: Record<string, IconName> = { explorer: 'folder', vscode: 'code' };
-
-function readStoredOpener(): string | null {
-	try {
-		const value = window.localStorage.getItem(STORAGE_KEY);
-		return typeof value === 'string' && value ? value : null;
-	} catch {
-		return null;
-	}
+function fallbackIcon(opener: WorkspaceOpener): IconName {
+	return opener.kind === 'terminal' ? 'terminal' : opener.id === 'explorer' ? 'folder' : 'code';
 }
 
 function errorText(cause: unknown): string {
@@ -28,7 +20,7 @@ function errorText(cause: unknown): string {
 /** Renders the backend-provided editor icon, falling back to a lucide glyph. */
 function OpenerIcon({ opener }: { opener: WorkspaceOpener }) {
 	if (opener.icon) return <img src={opener.icon} alt='' className='pd-opener-icon' width='15' height='15' />;
-	return <Icon name={OPENER_ICONS[opener.id] ?? 'folder'} width='15' height='15' />;
+	return <Icon name={fallbackIcon(opener)} width='15' height='15' />;
 }
 
 export function WorkspaceOpenButton({ cwd }: { cwd: string | null }) {
@@ -37,7 +29,7 @@ export function WorkspaceOpenButton({ cwd }: { cwd: string | null }) {
 	const anchorRef = useRef<HTMLButtonElement>(null);
 	const [open, setOpen] = useState(false);
 	const [openers, setOpeners] = useState<WorkspaceOpener[]>([]);
-	const [selected, setSelected] = useState<string | null>(() => readStoredOpener());
+	const [selected, setSelected] = useState<string | null>(() => readPreferredOpener());
 	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -53,8 +45,9 @@ export function WorkspaceOpenButton({ cwd }: { cwd: string | null }) {
 	const launch = async (id: string) => {
 		setError(null);
 		try {
-			if (id === 'vscode') await bridge.openWorkspaceInVsCode(cwd);
-			else await bridge.openWorkspaceFolder(cwd);
+			if (id === 'explorer') await bridge.openWorkspaceFolder(cwd);
+			else if (bridge.openWorkspaceWith) await bridge.openWorkspaceWith(cwd, id);
+			else await bridge.openWorkspaceInVsCode(cwd);
 		} catch (cause) {
 			setError(errorText(cause));
 		}
@@ -62,13 +55,15 @@ export function WorkspaceOpenButton({ cwd }: { cwd: string | null }) {
 
 	const choose = (id: string) => {
 		setSelected(id);
-		try { window.localStorage.setItem(STORAGE_KEY, id); } catch { /* preferences are best-effort */ }
+		writePreferredOpener(id);
 		setOpen(false);
 		void launch(id);
 	};
 
 	const current = currentOpener.id;
-	const currentLabel = t(`chat.opener.${current}`);
+	// Detected apps carry their own product name; the file manager label is localized.
+	const labelOf = (opener: WorkspaceOpener) => opener.name ?? t(`chat.opener.${opener.id}`);
+	const currentLabel = labelOf(currentOpener);
 	const mainLabel = t('chat.openInOpener', { name: currentLabel });
 	return (
 		<div className="pd-workspace-open-wrap" onKeyDown={(event) => { if (event.key === 'Escape' && error) { event.stopPropagation(); setError(null); } }}>
@@ -79,7 +74,7 @@ export function WorkspaceOpenButton({ cwd }: { cwd: string | null }) {
 			{open && anchorRef.current && <SidebarPopover anchor={anchorRef.current} label={t('chat.selectOpener')} onClose={() => setOpen(false)}>
 				{openers.map((opener) => (
 					<button type="button" key={opener.id} role="menuitemradio" aria-checked={opener.id === current} className="pd-context-menu-row" onClick={() => choose(opener.id)}>
-						<span className="pd-context-menu-main"><OpenerIcon opener={opener} />{t(`chat.opener.${opener.id}`)}</span>
+						<span className="pd-context-menu-main"><OpenerIcon opener={opener} />{labelOf(opener)}</span>
 						{opener.id === current ? <Icon name="check" width="15" height="15" /> : null}
 					</button>
 				))}

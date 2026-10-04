@@ -135,16 +135,20 @@ export const IPC_CHANNELS = {
   workspaceGitDiscard: 'workspace:git-discard',
   workspaceGitLog: 'workspace:git-log',
   workspaceGitGraph: 'workspace:git-graph',
+  workspaceGitSync: 'workspace:git-sync',
   workspaceGitCreateBranch: 'workspace:git-create-branch',
   workspaceOpenPathInEditor: 'workspace:open-path-in-editor',
   workspaceRevealPath: 'workspace:reveal-path',
   workspaceOpenInVsCode: 'workspace:open-in-vscode',
+  workspaceOpenWith: 'workspace:open-with',
   workspaceOpeners: 'workspace:openers',
   workspaceCommitContext: 'workspace:commit-context',
   workspaceCommit: 'workspace:commit',
   workspaceCommandStart: 'workspace:command-start',
   workspaceCommandStop: 'workspace:command-stop',
   workspaceCommandEvent: 'workspace:command-event',
+  workspaceWatch: 'workspace:watch',
+  workspaceChanged: 'workspace:changed',
   windowChromeState: 'window:chrome-state',
   windowChromeStateChanged: 'window:chrome-state-changed',
   windowMinimize: 'window:minimize',
@@ -708,7 +712,18 @@ export interface WorkspaceGitStatus {
   entries: WorkspaceGitChange[];
   /** More changes exist beyond the bounded status preview. */
   truncated?: boolean;
+  /** Upstream tracking ref (e.g. origin/main); null when the branch has none. */
+  upstream?: string | null;
+  /** Local commits not on the upstream. */
+  ahead?: number;
+  /** Upstream commits not yet merged locally. */
+  behind?: number;
+  /** At least one remote is configured, so a first push can set the upstream. */
+  hasRemote?: boolean;
 }
+
+/** Network Git actions from the workbench (ZCode git action menu). */
+export type WorkspaceGitSyncAction = 'fetch' | 'pull' | 'push';
 
 /** One commit in the workbench git history (4.5). */
 export interface WorkspaceGitLogEntry {
@@ -718,6 +733,15 @@ export interface WorkspaceGitLogEntry {
   /** ISO-8601 author date. */
   date: string;
   subject: string;
+}
+
+/** Debounced signal that the watched workspace changed on disk (no paths or contents). */
+export interface WorkspaceChangeEvent {
+  cwd: string;
+  /** The file tree may differ. */
+  files: boolean;
+  /** Git status, refs or HEAD may differ. */
+  git: boolean;
 }
 
 /** One commit in the git graph, with topology and local refs (4.5 graph). */
@@ -737,6 +761,9 @@ export interface WorkspaceGitGraphCommit {
 
 export interface WorkspaceOpener {
   id: 'explorer' | 'vscode' | (string & {});
+  /** Display name for detected apps (the file manager uses a localized label). */
+  name?: string;
+  kind?: 'file-manager' | 'editor' | 'terminal';
   /** Extracted editor icon as a data URL, when the executable was found. */
   icon?: string;
 }
@@ -936,14 +963,19 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   getWorkspaceGitLog(limit?: number): Promise<WorkspaceGitLogEntry[]>;
   /** Commit history with parents and refs for the git graph (4.5). */
   getWorkspaceGitGraph(limit?: number): Promise<WorkspaceGitGraphCommit[]>;
+  /** Fetch, fast-forward pull or push the current branch (sets the upstream on a first push). */
+  syncWorkspaceGit(action: WorkspaceGitSyncAction): Promise<void>;
   /** Creates a local branch, optionally switching to it (4.5). */
   createWorkspaceGitBranch(name: string, checkout: boolean): Promise<void>;
   /** Opens a workspace file in VS Code, optionally at a line (4.7). */
-  openWorkspacePathInEditor(path: string, line?: number, column?: number): Promise<void>;
+  /** Opens a workspace file at an optional line in `editorId` (an opener id), falling back to VS Code. */
+  openWorkspacePathInEditor(path: string, line?: number, column?: number, editorId?: string): Promise<void>;
   /** Reveals a workspace file in the OS file manager (4.7). */
   revealWorkspacePath(path: string): Promise<void>;
   /** Opens the workspace folder in VS Code (zcode-style editor launch). */
   openWorkspaceInVsCode(cwd: string): Promise<void>;
+  /** Opens the workspace root with a detected editor or terminal from listWorkspaceOpeners. */
+  openWorkspaceWith(cwd: string, openerId: string): Promise<void>;
   /** Lists apps able to open the workspace for the open-with picker. */
   listWorkspaceOpeners(): Promise<WorkspaceOpener[]>;
   /** Assembles the diff/status context used to generate a commit message. */
@@ -955,6 +987,9 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   startWorkspaceCommand(command: string): Promise<string>;
   stopWorkspaceCommand(id: string): Promise<void>;
   onWorkspaceCommandEvent(listener: (event: WorkspaceCommandEvent) => void): () => void;
+  /** Watches the active workspace for file/Git changes (null stops); events arrive via onWorkspaceChanged. */
+  watchWorkspace(cwd: string | null): Promise<void>;
+  onWorkspaceChanged(listener: (event: WorkspaceChangeEvent) => void): () => void;
   /** (Re-)creates the agent session bound to a working directory. */
   initAgent(cwd: string): Promise<void>;
   listWorkspaces(): Promise<string[]>;

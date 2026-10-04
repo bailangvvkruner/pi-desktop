@@ -1,10 +1,13 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import type { ResultFilePreview, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitGraphCommit, WorkspaceGitStatus } from '@pidesktop/shared';
+import type { ResultFilePreview, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitGraphCommit, WorkspaceGitStatus, WorkspaceGitSyncAction } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { Icon } from './Icons';
 import { FileDisplayIcon } from './FileDisplayIcon';
+import { preferredEditorId } from '../editorPreference';
+import { requestCodeQuote } from '../codeQuote';
+import { requestAddContext, writeWorkspaceEntryDrag } from '../workspaceContextTransfer';
 import { ConversationMarkdown } from './ConversationMarkdown';
 import { GitHistoryGraph } from './GitHistoryGraph';
 import { HoverTooltip } from './HoverTooltip';
@@ -99,6 +102,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 	const [branchCreateOpen, setBranchCreateOpen] = useState(false);
 	const [branchName, setBranchName] = useState('');
 	const [branchCreating, setBranchCreating] = useState(false);
+	const [gitSyncing, setGitSyncing] = useState<WorkspaceGitSyncAction | null>(null);
 	const [entryForm, setEntryForm] = useState<{ mode: 'create-file' | 'create-folder' | 'rename'; parentPath: string; originalPath: string | null; originalName: string; value: string } | null>(null);
 	const [entryOpBusy, setEntryOpBusy] = useState(false);
 	const [entryOpError, setEntryOpError] = useState<string | null>(null);
@@ -118,6 +122,8 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 	const handledOpenRequest = useRef<number | null>(null);
 	currentCwdRef.current = cwd;
 	const listingRequest = useRef(0);
+	const quietListingRef = useRef(false);
+	const quietGitRef = useRef(false);
 	const searchRequest = useRef(0);
 	const fileRequest = useRef(0);
 	const gitRequest = useRef(0);
@@ -295,8 +301,10 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 	useEffect(() => {
 		if (!bridge || !cwd || !open || tab !== 'files' || searching) return;
 		const request = ++listingRequest.current;
-		setListingLoading(true);
-		setEntries([]);
+		// Auto-refresh re-reads in place: no loading flash, current rows stay until replaced.
+		const quiet = quietListingRef.current;
+		quietListingRef.current = false;
+		if (!quiet) { setListingLoading(true); setEntries([]); }
 		setListingError(null);
 		void bridge.listWorkspaceEntries(directory).then((items) => {
 			if (request === listingRequest.current) setEntries([...items].sort((a, b) => Number(a.kind === 'file') - Number(b.kind === 'file') || a.name.localeCompare(b.name)));
@@ -333,7 +341,9 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 	useEffect(() => {
 		if (!bridge || !cwd || !open || tab !== 'git') return;
 		const request = ++gitRequest.current;
-		setGitLoading(true);
+		const quiet = quietGitRef.current;
+		quietGitRef.current = false;
+		if (!quiet) setGitLoading(true);
 		setGitError(null);
 		void bridge.getWorkspaceGitStatus().then((status) => {
 			if (request === gitRequest.current) setGitStatus(status);
@@ -345,6 +355,37 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 		}).catch(() => { /* history stays empty when unavailable */ });
 		return () => { gitRequest.current += 1; };
 	}, [bridge, cwd, open, tab, gitRevision]);
+
+	// Auto-refresh (ZCode gitAutoRefresh): the visible tree and Git status follow
+	// disk changes from the agent, the terminal or other apps without a manual
+	// refresh. Triggers: the main-process workspace watcher, a finished run, and
+	// the window regaining focus. Refreshes are quiet and skip hidden tabs.
+	const agentStatus = useChatStore((state) => state.status);
+	const autoRefreshState = useRef({ open, tab, searching, cwd });
+	autoRefreshState.current = { open, tab, searching, cwd };
+	const autoRefresh = useRef((change: { files: boolean; git: boolean }) => {
+		const current = autoRefreshState.current;
+		if (!current.open) return;
+		if (change.files && current.tab === 'files' && !current.searching) { quietListingRef.current = true; setListingRevision((value) => value + 1); }
+		if (change.git && current.tab === 'git') { quietGitRef.current = true; setGitRevision((value) => value + 1); }
+	});
+	useEffect(() => {
+		if (!bridge?.watchWorkspace || !cwd || !open) return;
+		void bridge.watchWorkspace(cwd).catch(() => { /* manual refresh still works */ });
+		const unsubscribe = bridge.onWorkspaceChanged((event) => { if (event.cwd === autoRefreshState.current.cwd) autoRefresh.current(event); });
+		return () => { unsubscribe(); void bridge.watchWorkspace(null).catch(() => {}); };
+	}, [bridge, cwd, open]);
+	const previousAgentStatus = useRef(agentStatus);
+	useEffect(() => {
+		const previous = previousAgentStatus.current;
+		previousAgentStatus.current = agentStatus;
+		if (previous === 'busy' && agentStatus !== 'busy') autoRefresh.current({ files: true, git: true });
+	}, [agentStatus]);
+	useEffect(() => {
+		const onFocus = () => autoRefresh.current({ files: true, git: true });
+		window.addEventListener('focus', onFocus);
+		return () => window.removeEventListener('focus', onFocus);
+	}, []);
 
 	function openFile(entry: WorkspaceEntry) {
 		if (!bridge) return;
@@ -477,11 +518,30 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 		}
 	}
 
+	/** Fetch / fast-forward pull / push for the current branch (ZCode git action menu). */
+	async function syncGit(action: WorkspaceGitSyncAction) {
+		if (!bridge?.syncWorkspaceGit) return;
+		const token = beginGitOperation();
+		if (!token) return;
+		setGitSyncing(action);
+		setGitActionBusy(true);
+		setGitActionError(null);
+		try {
+			await bridge.syncWorkspaceGit(action);
+			if (!currentGitOperation(token)) return;
+			setGitRevision((value) => value + 1);
+		} catch (cause) {
+			if (currentGitOperation(token)) setGitActionError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			if (currentGitOperation(token)) { gitOperation.current = null; setGitSyncing(null); setGitActionBusy(false); }
+		}
+	}
+
 	/** Opens a workspace file in VS Code / reveals it in the file manager (4.7). */
 	async function openInEditor(path: string) {
 		if (!bridge) return;
 		const workspace = cwd;
-		await runWithFeedback({ id: `editor:${workspace}:${path}`, title: t('workbench.openInEditor'), run: () => bridge.openWorkspacePathInEditor(path), canRetry: () => currentCwdRef.current === workspace });
+		await runWithFeedback({ id: `editor:${workspace}:${path}`, title: t('workbench.openInEditor'), run: () => bridge.openWorkspacePathInEditor(path, undefined, undefined, preferredEditorId()), canRetry: () => currentCwdRef.current === workspace });
 	}
 
 	async function revealPath(path: string) {
@@ -630,14 +690,15 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 						</div>
 					</div>)}
 					<div ref={fileList} className="pd-workbench-file-list" role="group" tabIndex={visibleFileEntries.length ? -1 : 0} aria-label={t('workbench.fileList')} onKeyDown={fileKeyDown}>
-						{visibleFileEntries.map((entry) => <div key={entry.path} className="pd-workbench-file-row"><HoverTooltip title={entry.path}><button type="button" data-file-path={entry.path} tabIndex={entry.path === activePath ? 0 : -1} className={`pd-workbench-entry${selectedFile === entry.path ? ' is-selected' : ''}`} onFocus={() => setFocusedPath(entry.path)} onClick={() => void openFile(entry)} onContextMenu={event => { event.preventDefault(); openMenu(entry, event.currentTarget, event.button === 2 ? { x: event.clientX, y: event.clientY } : null); }}>{entry.kind === 'directory' ? <Icon name="folder" width="15" height="15" /> : <FileDisplayIcon name={entry.name} />}<span>{entry.name}</span>{entry.kind === 'file' && <small>{readableSize(entry.size)}</small>}</button></HoverTooltip><button className="pd-workbench-file-menu-trigger" type="button" tabIndex={-1} aria-label={`${label('操作', 'Actions')}: ${entry.path}`} onClick={event => openMenu(entry, event.currentTarget)}>…</button></div>)}
+						{visibleFileEntries.map((entry) => <div key={entry.path} className="pd-workbench-file-row"><HoverTooltip title={entry.path}><button type="button" data-file-path={entry.path} tabIndex={entry.path === activePath ? 0 : -1} className={`pd-workbench-entry${selectedFile === entry.path ? ' is-selected' : ''}`} onFocus={() => setFocusedPath(entry.path)} onClick={() => void openFile(entry)} draggable={entry.name !== '..' && Boolean(cwd)} onDragStart={(event) => { if (entry.name === '..' || !cwd) { event.preventDefault(); return; } writeWorkspaceEntryDrag(event.dataTransfer, { kind: entry.kind, workspace: cwd, path: entry.path }); }} onContextMenu={event => { event.preventDefault(); openMenu(entry, event.currentTarget, event.button === 2 ? { x: event.clientX, y: event.clientY } : null); }}>{entry.kind === 'directory' ? <Icon name="folder" width="15" height="15" /> : <FileDisplayIcon name={entry.name} />}<span>{entry.name}</span>{entry.kind === 'file' && <small>{readableSize(entry.size)}</small>}</button></HoverTooltip><button className="pd-workbench-file-menu-trigger" type="button" tabIndex={-1} aria-label={`${label('操作', 'Actions')}: ${entry.path}`} onClick={event => openMenu(entry, event.currentTarget)}>…</button></div>)}
 						{menuTarget && open && !suspended && createPortal(<div ref={menu} className="pd-workbench-file-menu" role="menu" aria-label={menuTarget.path} style={{ ...menuPosition, visibility: menuPositioned ? 'visible' : 'hidden' }} onKeyDown={event => { event.stopPropagation(); const buttons = [...(menu.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])]; const index = buttons.indexOf(document.activeElement as HTMLButtonElement); if (event.key === 'Escape' || event.key === 'Tab') { if (event.key === 'Escape') event.preventDefault(); closeMenu(); } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus(); } }}>
 							<strong>{menuTarget.path || cwd}</strong>
 							{menuTarget.kind === 'directory' && <>
 								<button type="button" role="menuitem" onClick={() => { const target = menuTarget; closeMenu(); setEntryOpError(null); setEntryForm({ mode: 'create-file', parentPath: target.path, originalPath: null, originalName: '', value: '' }); }}>{t('workbench.newFile')}</button>
 								<button type="button" role="menuitem" onClick={() => { const target = menuTarget; closeMenu(); setEntryOpError(null); setEntryForm({ mode: 'create-folder', parentPath: target.path, originalPath: null, originalName: '', value: '' }); }}>{t('workbench.newFolder')}</button>
 							</>}
-							{menuEditable && <button type="button" role="menuitem" onClick={() => { const target = menuTarget; closeMenu(); setEntryOpError(null); setEntryForm({ mode: 'rename', parentPath: parentDirectory(target.path), originalPath: target.path, originalName: target.name, value: target.name }); }}>{t('workbench.rename')}</button>}
+							{menuTarget.name !== '..' && menuTarget.path !== '' && cwd && <button type="button" role="menuitem" onClick={() => { const target = menuTarget; closeMenu(); requestAddContext({ kind: target.kind, workspace: cwd, path: target.path }); }}>{t('workbench.addToChat')}</button>}
+								{menuEditable && <button type="button" role="menuitem" onClick={() => { const target = menuTarget; closeMenu(); setEntryOpError(null); setEntryForm({ mode: 'rename', parentPath: parentDirectory(target.path), originalPath: target.path, originalName: target.name, value: target.name }); }}>{t('workbench.rename')}</button>}
 							{menuEditable && <button type="button" role="menuitem" className="pd-workbench-file-menu-danger" onClick={() => { const target = menuTarget; closeMenu(); setEntryOpError(null); setDeleteEntryTarget(target); }}>{t('workbench.deleteEntry')}</button>}
 							<button type="button" role="menuitem" onClick={() => { const path = `${cwd.replace(/[\\/]$/, '')}/${menuTarget.path}`; closeMenu(); void runWithFeedback({ id: `copy-path:${path}`, title: label('复制路径', 'Copy path'), run: () => navigator.clipboard.writeText(path), success: label('已复制路径', 'Path copied') }); }}>{label('复制路径', 'Copy path')}</button>
 							<button type="button" role="menuitem" onClick={() => { const path = menuTarget.path; closeMenu(); void openInEditor(path); }}>{t('workbench.openInEditor')}</button>
@@ -658,7 +719,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 					{selectedFile && <section className="pd-workbench-preview" aria-label={t('workbench.preview')}>
 						{previewControls}
 						<div className="pd-workbench-preview-head"><strong title={selectedFile}>{selectedFile}</strong><button type="button" className="pd-icon-button" onClick={() => { setSelectedFile(null); setFileText(''); }} aria-label={t('workbench.closePreview')}><Icon name="close" width="14" height="14" /></button></div>
-						{fileLoading ? <div className="pd-workbench-empty">{t('workbench.loadingFile')}</div> : fileError ? <div className="pd-workbench-error" role="alert">{fileError}</div> : <ScopedErrorBoundary scope="preview" resetKeys={[cwd, selectedFile]}>{officePreview?.kind === 'office' && officePreview.officeFormat && officePreview.bytesBase64 ? <Suspense fallback={<div className="pd-workbench-empty">{t('workbench.loadingFile')}</div>}><OfficeFilePreview bytesBase64={officePreview.bytesBase64} format={officePreview.officeFormat} /></Suspense> : officePreview?.kind === 'image' && officePreview.dataUrl ? <div className="pd-workbench-preview-image"><img src={officePreview.dataUrl} alt={selectedFile} /></div> : officePreview?.kind === 'pdf' && officePreview.dataUrl ? <iframe className="pd-workbench-preview-pdf" title={`${t('workbench.preview')}: ${selectedFile}`} src={officePreview.dataUrl} /> : officePreview ? <div className="pd-workbench-empty">{officePreview.reason === 'too-large' ? label('文件较大，无法在这里预览。', 'This file is too large to preview here.') : label('无法预览此文件。', 'This file cannot be previewed.')}<button type="button" onClick={() => { if (bridge) void runWithFeedback({ id: `open:${cwd}:${selectedFile}`, title: label('打开文件', 'Open file'), run: () => bridge.openResultFile({ cwd, path: selectedFile }) }); }}>{label('使用默认应用打开', 'Open in default app')}</button></div> : /\.(?:md|markdown)$/i.test(selectedFile) ? <div className="pd-workbench-preview-markdown" tabIndex={0}><ConversationMarkdown>{fileText}</ConversationMarkdown></div> : <WorkbenchTextView key={selectedFile} text={fileText} path={selectedFile} />}</ScopedErrorBoundary>}
+						{fileLoading ? <div className="pd-workbench-empty">{t('workbench.loadingFile')}</div> : fileError ? <div className="pd-workbench-error" role="alert">{fileError}</div> : <ScopedErrorBoundary scope="preview" resetKeys={[cwd, selectedFile]}>{officePreview?.kind === 'office' && officePreview.officeFormat && officePreview.bytesBase64 ? <Suspense fallback={<div className="pd-workbench-empty">{t('workbench.loadingFile')}</div>}><OfficeFilePreview bytesBase64={officePreview.bytesBase64} format={officePreview.officeFormat} /></Suspense> : officePreview?.kind === 'image' && officePreview.dataUrl ? <div className="pd-workbench-preview-image"><img src={officePreview.dataUrl} alt={selectedFile} /></div> : officePreview?.kind === 'pdf' && officePreview.dataUrl ? <iframe className="pd-workbench-preview-pdf" title={`${t('workbench.preview')}: ${selectedFile}`} src={officePreview.dataUrl} /> : officePreview ? <div className="pd-workbench-empty">{officePreview.reason === 'too-large' ? label('文件较大，无法在这里预览。', 'This file is too large to preview here.') : label('无法预览此文件。', 'This file cannot be previewed.')}<button type="button" onClick={() => { if (bridge) void runWithFeedback({ id: `open:${cwd}:${selectedFile}`, title: label('打开文件', 'Open file'), run: () => bridge.openResultFile({ cwd, path: selectedFile }) }); }}>{label('使用默认应用打开', 'Open in default app')}</button></div> : /\.(?:md|markdown)$/i.test(selectedFile) ? <div className="pd-workbench-preview-markdown" tabIndex={0}><ConversationMarkdown>{fileText}</ConversationMarkdown></div> : <WorkbenchTextView key={selectedFile} text={fileText} path={selectedFile} onQuote={cwd ? (quote) => requestCodeQuote({ cwd, path: selectedFile, ...quote }) : undefined} />}</ScopedErrorBoundary>}
 					</section>}
 				</>}
 
@@ -669,6 +730,12 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 					{gitError && <div className="pd-workbench-error" role="alert">{gitError}</div>}
 					{!gitLoading && !gitError && gitStatus && (gitStatus.isRepository ? <>
 						<div className="pd-workbench-branch"><Icon name="gitBranch" width="15" height="15" /><span>{gitStatus.branch || 'HEAD'}</span><small>{t('workbench.changes', { count: gitStatus.entries.length })}</small>
+							{gitStatus.upstream && (gitStatus.ahead || gitStatus.behind) ? <HoverTooltip title={t('workbench.trackingTitle', { upstream: gitStatus.upstream, ahead: gitStatus.ahead ?? 0, behind: gitStatus.behind ?? 0 })}><span className="pd-workbench-tracking" aria-label={t('workbench.trackingTitle', { upstream: gitStatus.upstream, ahead: gitStatus.ahead ?? 0, behind: gitStatus.behind ?? 0 })}>{gitStatus.ahead ? <span><Icon name="arrowUp" width="11" height="11" />{gitStatus.ahead}</span> : null}{gitStatus.behind ? <span><Icon name="arrowDown" width="11" height="11" />{gitStatus.behind}</span> : null}</span></HoverTooltip> : null}
+							{bridge?.syncWorkspaceGit && (gitStatus.upstream || gitStatus.hasRemote) && <span className="pd-workbench-sync-actions">
+								<HoverTooltip title={t('workbench.gitFetch')}><button type="button" className="pd-icon-button" disabled={gitActionBusy || navigationPending} onClick={() => void syncGit('fetch')} aria-label={t('workbench.gitFetch')}><Icon name={gitSyncing === 'fetch' ? 'loader' : 'refresh'} width="14" height="14" /></button></HoverTooltip>
+								{gitStatus.upstream && <HoverTooltip title={t('workbench.gitPull')}><button type="button" className="pd-icon-button" disabled={gitActionBusy || navigationPending} onClick={() => void syncGit('pull')} aria-label={t('workbench.gitPull')}><Icon name={gitSyncing === 'pull' ? 'loader' : 'arrowDown'} width="14" height="14" /></button></HoverTooltip>}
+								{gitStatus.branch && <HoverTooltip title={t(gitStatus.upstream ? 'workbench.gitPush' : 'workbench.gitPublish')}><button type="button" className="pd-icon-button" disabled={gitActionBusy || navigationPending} onClick={() => void syncGit('push')} aria-label={t(gitStatus.upstream ? 'workbench.gitPush' : 'workbench.gitPublish')}><Icon name={gitSyncing === 'push' ? 'loader' : 'arrowUp'} width="14" height="14" /></button></HoverTooltip>}
+							</span>}
 							<HoverTooltip title={t('workbench.newBranch')}><button type="button" className="pd-icon-button" disabled={gitActionBusy || navigationPending} onClick={() => setBranchCreateOpen((open) => !open)} aria-label={t('workbench.newBranch')} aria-expanded={branchCreateOpen}><Icon name="plus" width="14" height="14" /></button></HoverTooltip></div>
 						{branchCreateOpen && <form className="pd-workbench-branch-form" onSubmit={(event) => void createBranch(event)}>
 							<input value={branchName} onChange={(event) => setBranchName(event.target.value)} placeholder={t('workbench.branchNamePlaceholder')} spellCheck={false} autoComplete="off" aria-label={t('workbench.branchNamePlaceholder')} />
@@ -707,7 +774,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 							{previewControls}
 							<div className="pd-workbench-diff-source">{diffSource === 'staged' ? label('已暂存差异', 'Staged changes') : label('未暂存差异', 'Unstaged changes')}</div>
 							<div className="pd-workbench-preview-head"><strong title={diffPath}>{diffPath}</strong><span className="pd-workbench-preview-actions"><HoverTooltip title={t('workbench.openInEditor')}><button type="button" className="pd-icon-button" onClick={() => void openInEditor(diffPath)} aria-label={t('workbench.openInEditor')}><Icon name="code" width="14" height="14" /></button></HoverTooltip><HoverTooltip title={t('workbench.revealInFolder')}><button type="button" className="pd-icon-button" onClick={() => void revealPath(diffPath)} aria-label={t('workbench.revealInFolder')}><Icon name="folder" width="14" height="14" /></button></HoverTooltip><button type="button" className="pd-icon-button" onClick={() => setDiffPath(null)} aria-label={t('workbench.closeDiff')}><Icon name="close" width="14" height="14" /></button></span></div>
-							{diffLoading ? <div className="pd-workbench-empty">{t('workbench.loadingDiff')}</div> : diffError ? <div className="pd-workbench-error" role="alert">{diffError}</div> : <ScopedErrorBoundary scope="preview" resetKeys={[cwd, diffPath, diffSource]}><WorkbenchTextView key={`${diffSource}:${diffPath}`} diff text={diffText || t('workbench.noDiff')} path={diffPath} /></ScopedErrorBoundary>}
+							{diffLoading ? <div className="pd-workbench-empty">{t('workbench.loadingDiff')}</div> : diffError ? <div className="pd-workbench-error" role="alert">{diffError}</div> : <ScopedErrorBoundary scope="preview" resetKeys={[cwd, diffPath, diffSource]}><WorkbenchTextView key={`${diffSource}:${diffPath}`} diff text={diffText || t('workbench.noDiff')} path={diffPath} onQuote={cwd && diffText ? (quote) => requestCodeQuote({ cwd, path: diffPath, diff: true, ...quote }) : undefined} /></ScopedErrorBoundary>}
 						</section>}
 						<details className="pd-workbench-history">
 							<summary><Icon name="gitCommit" width="13" height="13" />{t('workbench.history')}</summary>

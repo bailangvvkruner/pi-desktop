@@ -5,6 +5,7 @@ import { useT } from '../i18n';
 import { useChatStore } from '../store';
 import { Icon } from './Icons';
 import { WorkbenchTextView } from './WorkbenchTextView';
+import { requestCodeQuote } from '../codeQuote';
 import { ScopedErrorBoundary } from './ScopedErrorBoundary';
 const OfficeFilePreview = lazy(() => import('./OfficeFilePreview'));
 import './workbenchReading.css';
@@ -150,7 +151,7 @@ export function ResultFilePreviewDialog({ target, onClose }: { target: ResultFil
 		<ScopedErrorBoundary scope="preview" resetKeys={[targetKey, retry]}><div className={`pd-result-file-preview-body${preview ? ` is-${preview.kind}` : ''}`} aria-busy={loading}>
 			{loadError ? <div className="pd-result-file-preview-state" role="alert"><Icon name="file" width="32" height="32" /><strong>{label('无法预览文件', 'Unable to preview this file')}</strong><p>{loadError}</p><button type="button" onClick={retryPreview}>{label('重试', 'Retry')}</button></div> : loading ?
 				<div className="pd-result-file-preview-state" role="status"><p>{label('正在加载预览…', 'Loading preview…')}</p></div> : preview?.kind === 'text' ?
-				<WorkbenchTextView key={`${targetKey}:${retry}`} path={preview.path} text={preview.text ?? ''} omitted={preview.truncated} /> : preview?.kind === 'image' ? <>
+				<WorkbenchTextView key={`${targetKey}:${retry}`} path={preview.path} text={preview.text ?? ''} omitted={preview.truncated} onQuote={(quote) => requestCodeQuote({ cwd: target.cwd, path: target.path, ...quote })} /> : preview?.kind === 'image' ? <>
 					<div className="pd-result-file-preview-zoom"><button type="button" aria-pressed={zoom === null} onClick={() => setZoom(null)}>{label('适应窗口', 'Fit to window')}</button><button type="button" aria-pressed={zoom === 1} onClick={() => setZoom(1)}>100%</button><button type="button" aria-label={label('缩小', 'Zoom out')} disabled={zoom === .25} onClick={() => changeZoom(-.25)}>−</button><output>{zoom === null ? label('适应', 'Fit') : `${Math.round(zoom * 100)}%`}</output><button type="button" aria-label={label('放大', 'Zoom in')} disabled={zoom === 4} onClick={() => changeZoom(.25)}>+</button></div>
 					{mediaError || !imageSource ? <div className="pd-result-file-preview-state" role="alert"><p>{label('无法显示此图片。', 'This image could not be displayed.')}</p><button type="button" onClick={retryPreview}>{label('重试', 'Retry')}</button></div> : <div className={`pd-result-file-preview-image${zoom === null ? ' is-fit' : ''}`}><img key={`${targetKey}:${retry}`} src={imageSource} alt={name} style={zoom === null ? undefined : { zoom }} onError={() => setMediaError(true)} /></div>}
 				</> : preview?.kind === 'office' && preview.bytesBase64 && preview.officeFormat ?

@@ -62,6 +62,7 @@ function mountSearch(bridge) {
       if (specifier === './Icons') return { Icon: 'Icon' };
       if (specifier === './FileDisplayIcon') return { FileDisplayIcon: 'FileDisplayIcon' };
       if (specifier === '../searchHistory') return searchHistory;
+      if (specifier === '../editorPreference') return { preferredEditorId: () => 'cursor' };
       return {};
     },
   };
@@ -137,7 +138,7 @@ test('content matches open the editor at their exact line and column', async () 
   });
   search.query('@needle'); search.runTimers(); await new Promise(resolve => setImmediate(resolve)); search.render(); search.key('Enter');
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(opened, [['src/a.ts', 7, 4]]); assert.deepEqual(search.opened, []);
+  assert.deepEqual(opened, [['src/a.ts', 7, 4, 'cursor']], 'jumps use the editor chosen in Open with'); assert.deepEqual(search.opened, []);
 });
 
 test('search shows skipped files separately from budget truncation and discloses ignored folders', async () => {

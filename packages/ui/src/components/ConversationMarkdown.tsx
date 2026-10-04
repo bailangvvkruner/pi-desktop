@@ -2,10 +2,12 @@ import { memo } from 'react';
 import Markdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { parseResultFileReference, remarkResultFiles } from '../resultFileReferences';
+import { remarkWindowsPathEscapes } from '../windowsPathEscapes';
 import { renderMarkdownPre } from './CodeBlock';
 import { ResultFileLink } from './ResultFileLink';
 
-const plugins = [remarkGfm, remarkResultFiles];
+// Windows path recovery must run before linkification reads the parsed paths.
+const plugins = [remarkGfm, remarkWindowsPathEscapes, remarkResultFiles];
 const components = { pre: renderMarkdownPre, a: ResultFileLink };
 
 /** Streaming and highlight re-renders are frequent; identical text must not re-run remark. */

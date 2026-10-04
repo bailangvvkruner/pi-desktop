@@ -6,6 +6,14 @@ import type { CommitScope, WorkspaceCommitPreview } from '@pidesktop/shared/work
 import { runFeatureProcess, safeGitEnv, type ProcessRunner } from './gitFeatureProcess.ts';
 type Snapshot = { preview: WorkspaceCommitPreview; root: string; repository: string; directory: string; index: string; indexBytes: Buffer | null; tree: string; fingerprint: string; prefix: string };
 const digest = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
+/** Missing user.name / user.email becomes an actionable message instead of raw Git stderr. */
+export function identityError(error: unknown): never {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/Please tell me who you are|empty ident|unable to auto-detect email|Author identity unknown|Committer identity unknown|no name was given/i.test(message)) {
+    throw new Error('尚未配置 Git 提交身份。请在终端运行：git config --global user.name "你的名字" 与 git config --global user.email "you@example.com"，然后重试。');
+  }
+  throw error;
+}
 export class WorkspaceCommitService {
   private previews = new Map<string, Snapshot>(); private busy = false;
   private currentCwd: () => string; private run: ProcessRunner;
@@ -61,6 +69,9 @@ export class WorkspaceCommitService {
     this.busy = true; let current: Snapshot | undefined; let indexLock: Awaited<ReturnType<typeof open>> | undefined; let newHead: string | undefined; let moved = false;
     try {
       current = await this.snapshot(saved.preview.cwd, saved.preview.scope);
+      // Fail before touching the index when Git cannot name the author (ZCode hasGitCommitIdentity).
+      await this.git(current.repository, ['var', 'GIT_AUTHOR_IDENT']).catch(identityError);
+      await this.git(current.repository, ['var', 'GIT_COMMITTER_IDENT']).catch(identityError);
       if (current.fingerprint !== saved.fingerprint) throw new Error('工作区或暂存区已改变，请刷新预览后重新确认');
       if (!saved.preview.files.length) throw new Error('所选范围没有可提交的更改');
       const finalIndex = join(current.directory, 'final-index');
@@ -74,7 +85,7 @@ export class WorkspaceCommitService {
       const actualIndex = await this.readIndex(current.index);
       if (digest(actualIndex ?? '') !== digest(current.indexBytes ?? '') || this.currentCwd() !== saved.preview.cwd) throw new Error('工作区或暂存区已改变，请重新预览');
       await indexLock.writeFile(await readFile(finalIndex)); await indexLock.sync(); await indexLock.close();
-      newHead = (await this.git(current.repository, ['commit-tree', current.tree, ...(saved.preview.head ? ['-p', saved.preview.head] : []), '-m', request.message.trim()])).stdout.trim();
+      newHead = (await this.git(current.repository, ['commit-tree', current.tree, ...(saved.preview.head ? ['-p', saved.preview.head] : []), '-m', request.message.trim()]).catch(identityError)).stdout.trim();
       await this.git(current.repository, ['update-ref', '-m', 'pi-desktop commit', 'HEAD', newHead, saved.preview.head ?? '0000000000000000000000000000000000000000']); moved = true;
       await rename(`${current.index}.lock`, current.index); indexLock = undefined;
       this.previews.delete(request.id); await rm(saved.directory, { recursive: true, force: true }).catch(() => {});

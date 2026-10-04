@@ -11,11 +11,13 @@ import type { ModelManagementTarget } from '../modelManagement';
 import { HoverTooltip } from './HoverTooltip';
 import { ComposerContextPicker, type ComposerContextPickerHandle } from './ComposerContextPicker';
 import { consumeContextMention, contextMentionAt, hasContextSource, type ContextMention } from '../composerContext';
+import { ADD_CONTEXT_EVENT, hasWorkspaceEntryDrag, isWorkspaceEntryContext, readWorkspaceEntryDrag } from '../workspaceContextTransfer';
 import { completeSlashCommand, slashTriggerAt, type SlashTrigger } from '../composerSlash';
 import { ComposerSlashPicker, type ComposerSlashPickerHandle } from './ComposerSlashPicker';
 import { ComposerQueue } from './ComposerQueue';
 import './composerLayout.css';
 import { appendQuote } from '../conversationState';
+import { appendCodeQuote, CODE_QUOTE_EVENT, isCodeQuote } from '../codeQuote';
 import { useConversationCopy } from '../conversationCopy';
 import { ImagePreviewDialog } from './ImagePreviewDialog';
 import type { InputFeatureBridge, UiInputScope, UiStoredAttachment } from '../../../shared/src/inputFeatures';
@@ -298,8 +300,31 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 		window.addEventListener('pd:quote-selection', quote);
 		return () => window.removeEventListener('pd:quote-selection', quote);
 	}, [cwd, sessionPath, c('quoteSource')]);
+	useEffect(() => {
+		// Code selected in a file preview or diff arrives with its location (ZCode code comments).
+		const quote = (event: Event) => {
+			const detail = (event as CustomEvent<unknown>).detail;
+			if (!isCodeQuote(detail) || detail.cwd !== cwd) return;
+			const next = appendCodeQuote(textRef.current, detail);
+			changeText(next.text); setQuotes((items) => [...items, { key: currentKeyRef.current, block: next.block, source: next.source }].slice(-100));
+			textareaRef.current?.focus();
+		};
+		window.addEventListener(CODE_QUOTE_EVENT, quote);
+		return () => window.removeEventListener(CODE_QUOTE_EVENT, quote);
+	}, [cwd]);
 
 	useEffect(() => { if (contextUnavailable) { setContextPicker(null); setSlashTrigger(null); } }, [contextUnavailable]);
+	const selectContextRef = useRef<(request: UiContextRequest, fromPicker?: boolean) => Promise<void>>(async () => {});
+	useEffect(() => {
+		// File tree "Add to chat" (ZCode workspaceFileComposer); other workspaces' files never attach here.
+		const add = (event: Event) => {
+			const detail = (event as CustomEvent<unknown>).detail;
+			if (!isWorkspaceEntryContext(detail) || detail.workspace !== cwd) return;
+			void selectContextRef.current(detail, false);
+		};
+		window.addEventListener(ADD_CONTEXT_EVENT, add);
+		return () => window.removeEventListener(ADD_CONTEXT_EVENT, add);
+	}, [cwd]);
 
 	useLayoutEffect(() => {
 		const shell = shellRef.current;
@@ -405,12 +430,14 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 		} else { draftsRef.current.set(key, { ...draft, text: consumed.text }); writeDraft(key, consumed.text); persistTransferredDraft(key); }
 	}
 
-	async function selectContext(request: UiContextRequest) {
+	selectContextRef.current = selectContext;
+	/** `fromPicker` false: added from the file tree (menu or drag), never consumes an @mention. */
+	async function selectContext(request: UiContextRequest, fromPicker = true) {
 		if (!bridge || contextUnavailable) return;
 		const key = currentKeyRef.current;
 		const original = textRef.current;
-		const mention = contextPicker?.mode === 'mention' ? contextPicker.mention : null;
-		setContextPicker(null);
+		const mention = fromPicker && contextPicker?.mode === 'mention' ? contextPicker.mention : null;
+		if (fromPicker) setContextPicker(null);
 		dismissedMention.current = mention ? { start: mention.start, prefix: original.slice(0, mention.start + 1) } : null;
 		requestAnimationFrame(() => {
 			if (key !== currentKeyRef.current) return;
@@ -475,6 +502,12 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 
 	function onDrop(event: DragEvent<HTMLDivElement>) {
 		if (queueEditing) { event.preventDefault(); return; }
+		if (hasWorkspaceEntryDrag(event.dataTransfer)) {
+			event.preventDefault();
+			const request = readWorkspaceEntryDrag(event.dataTransfer);
+			if (request && request.workspace === cwd) void selectContext(request, false);
+			return;
+		}
 		if (!event.dataTransfer.files.length) return;
 		event.preventDefault();
 		void addFiles(Array.from(event.dataTransfer.files));
@@ -612,7 +645,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 				{missingAttachments.map((attachment) => <div className="pd-composer-error" role="alert" key={attachment.id}>{zh ? '草稿附件缺失，请重新添加或移除：' : 'Draft attachment missing. Add it again or remove it: '}{attachment.name}<button type="button" onClick={() => { const next = missingAttachments.filter((item) => item.id !== attachment.id); missingByKey.current.set(draftKey, next); setMissingAttachments(next); }}>{zh ? '移除' : 'Remove'}</button></div>)}
 				<div ref={changesSlotRef} className="pd-composer-changes-slot" />
 				<ComposerQueue key={`queue:${cwd}\0${sessionPath}\0${sessionId}`} scopeKey={`${cwd}\0${sessionPath}\0${sessionId}`} items={queuedMessages} editorTarget={queueEditorTarget} onEditingChange={onQueueEditingChange} defaultBehavior={defaultBusyBehavior} onToggleDefault={() => { const next = defaultBusyBehavior === 'followUp' ? 'steer' : 'followUp'; if (!setDefaultBusyBehavior(next)) setSubmissionError(zh ? '发送偏好未能保存，下次启动将使用默认设置。' : 'Could not save the send preference for the next launch.'); }} />
-				<div ref={shellRef} className={`pd-composer-shell${queuedMessages.length ? ' has-queue' : ''}`} data-composer-layout="multiline" onDragOver={(event) => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={onDrop}>
+				<div ref={shellRef} className={`pd-composer-shell${queuedMessages.length ? ' has-queue' : ''}`} data-composer-layout="multiline" onDragOver={(event) => { if (event.dataTransfer.types.includes('Files') || hasWorkspaceEntryDrag(event.dataTransfer)) event.preventDefault(); }} onDrop={onDrop}>
 					<div ref={setQueueEditorTarget} className="pd-queue-editor-slot" />
 					{header ? <div className="pd-composer-header">{header}</div> : null}
 					{attachments.length > 0 && <div className="pd-composer-attachments" aria-label={t('composer.pendingAttachments')}>{attachments.map((attachment, index) => <div className={`pd-composer-attachment${attachment.kind === 'text' && attachment.source ? ' is-context' : ''}`} key={`${attachment.name}-${index}`}>

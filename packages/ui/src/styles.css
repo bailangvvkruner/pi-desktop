@@ -951,6 +951,10 @@ html.pd-popover-open :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading,
 .pd-workbench-branch { display: flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 14px; border-bottom: 1px solid var(--pd-border-soft); color: var(--pd-text-subtle); font-size: var(--pd-font-sm); }
 .pd-workbench-branch span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-workbench-branch small { color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
+.pd-workbench-branch .pd-workbench-tracking, .pd-workbench-branch .pd-workbench-tracking span, .pd-workbench-branch .pd-workbench-sync-actions { flex: none; overflow: visible; }
+.pd-workbench-tracking { display: inline-flex; gap: 6px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); font-variant-numeric: tabular-nums; }
+.pd-workbench-tracking span { display: inline-flex; align-items: center; gap: 1px; }
+.pd-workbench-sync-actions { display: inline-flex; align-items: center; gap: 2px; }
 .pd-workbench-git-status { display: grid; flex: 0 0 24px; place-items: center; min-height: 18px; border-radius: 4px; background: var(--pd-selected); color: var(--pd-brand); font: 10px var(--pd-font-mono); }
 .pd-workbench-command-note { margin: 0; padding: 12px 14px; color: var(--pd-text-weak); font-size: var(--pd-font-sm); line-height: 1.6; }
 .pd-workbench-command-form { padding: 0 12px 12px; border-bottom: 1px solid var(--pd-border-soft); }

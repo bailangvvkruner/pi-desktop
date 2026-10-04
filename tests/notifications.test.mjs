@@ -80,3 +80,26 @@ test('switching from a running conversation to an idle one is not a task complet
   notifier.handleAgentEvent({ event: { type: 'status', status: 'idle' } }, '/sessions/idle.jsonl');
   assert.equal(notifications.length, 1);
 });
+
+test('approvals and questions notify once while unfocused; notices and focused windows stay silent', () => {
+  const revealed = [];
+  let focused = false;
+  const win = { isDestroyed: () => false, isVisible: () => true, isFocused: () => focused, show() {}, focus() {} };
+  const notifier = createDesktopNotifier({ settingsPath: () => '', getMainWindow: () => win,
+    revealSession: (...args) => revealed.push(args) });
+  notifications.length = 0;
+  const approval = { id: 'a1', kind: 'confirm', title: 'Run npm test?', message: 'bash', approval: { kind: 'command' } };
+  notifier.handleInputRequest(approval, '/sessions/s.jsonl', '/work/p');
+  notifier.handleInputRequest(approval, '/sessions/s.jsonl', '/work/p');
+  notifier.handleInputRequest({ id: 'n1', kind: 'notify', title: 'FYI' }, '/sessions/s.jsonl', '/work/p');
+  assert.equal(notifications.length, 1);
+  assert.match(notifications[0].options.title, /Approval needed/);
+  assert.equal(notifications[0].options.body, 'Run npm test? — bash');
+  notifications[0].emit('click');
+  assert.deepEqual(revealed, [['/sessions/s.jsonl', '/work/p']]);
+  notifier.handleInputRequest({ id: 'q1', kind: 'select', title: 'Pick a branch', options: ['a'] }, null);
+  assert.match(notifications[1].options.title, /Input needed/);
+  focused = true;
+  notifier.handleInputRequest({ id: 'q2', kind: 'input', title: 'Name?' }, null);
+  assert.equal(notifications.length, 2);
+});

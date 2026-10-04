@@ -92,3 +92,17 @@ test('draft PR preserves exact multiline body, persists URL and rejects remote c
   const restarted = new WorktreeDeliveryService(() => root, data, run); assert.equal((await restarted.deliveryPreview(root)).savedPr, result.url);
   await git('remote', 'set-url', 'origin', 'https://github.com/other/review.git'); await assert.rejects(service.push({ id: preview.id, remote: 'origin' }), /远端已变化/); assert.equal(pushes, 1); assert.equal((await restarted.deliveryPreview(root)).savedPr, undefined);
 });
+test('commits without a Git identity fail early with setup instructions and leave the index untouched', async t => {
+  const { root, git } = await repository(t);
+  await git('config', '--unset', 'user.name'); await git('config', '--unset', 'user.email'); await git('config', 'user.useConfigOnly', 'true');
+  const saved = { GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL, GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL, GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME, GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL, EMAIL: process.env.EMAIL };
+  process.env.GIT_CONFIG_GLOBAL = join(root, 'no-global-config');
+  for (const key of ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'EMAIL']) delete process.env[key];
+  t.after(() => { for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
+  await writeFile(join(root, 'a.txt'), 'a\n');
+  const service = new WorkspaceCommitService(() => root); t.after(() => service.dispose());
+  const preview = await service.preview({ cwd: root, scope: 'all' });
+  await assert.rejects(service.commit({ id: preview.id, message: 'no identity' }), /尚未配置 Git 提交身份/);
+  await assert.rejects(git('rev-parse', '--verify', 'HEAD'));
+  assert.equal((await git('status', '--porcelain')).stdout, '?? a.txt\n');
+});

@@ -626,3 +626,57 @@ test('git stage/unstage/discard stay consistent with git status, log and branch 
     removeSafeTemp(tempRoot);
   }
 });
+
+test('git sync pushes with an upstream on first push, reports ahead/behind and fast-forward pulls', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-desktop-git-sync-'));
+  const remote = join(root, 'remote.git'), work = join(root, 'work'), other = join(root, 'other');
+  const { WorkbenchService } = await import('../packages/desktop/src/main/workbenchService.ts');
+  const service = new WorkbenchService(() => work, () => {});
+  const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...args], { encoding: 'utf8' });
+  try {
+    execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote]);
+    mkdirSync(work);
+    git(work, 'init', '-q', '-b', 'main');
+    writeFileSync(join(work, 'a.txt'), 'one\n');
+    git(work, 'add', '.'); git(work, 'commit', '-qm', 'one');
+    let status = await service.gitStatus();
+    assert.equal(status.upstream, null);
+    assert.equal(status.hasRemote, false);
+    await assert.rejects(service.gitSync('push'), /没有配置远程仓库/);
+    git(work, 'remote', 'add', 'origin', remote);
+    await assert.rejects(service.gitSync('pull'), /没有上游分支/);
+    await service.gitSync('push');
+    status = await service.gitStatus();
+    assert.equal(status.upstream, 'origin/main');
+    assert.deepEqual([status.ahead, status.behind], [0, 0]);
+    writeFileSync(join(work, 'a.txt'), 'two\n');
+    git(work, 'commit', '-qam', 'two');
+    assert.equal((await service.gitStatus()).ahead, 1);
+    await service.gitSync('push');
+    // Another clone advances the remote; fetch reveals "behind", pull fast-forwards.
+    execFileSync('git', ['clone', '-q', remote, other]);
+    writeFileSync(join(other, 'b.txt'), 'b\n');
+    git(other, 'add', '.'); git(other, 'commit', '-qm', 'three'); git(other, 'push', '-q');
+    await service.gitSync('fetch');
+    assert.equal((await service.gitStatus()).behind, 1);
+    await service.gitSync('pull');
+    // core.autocrlf may rewrite line endings on checkout.
+    assert.equal(readFileSync(join(work, 'b.txt'), 'utf8').replace(/\r\n/g, '\n'), 'b\n');
+    assert.deepEqual([(await service.gitStatus()).ahead, (await service.gitStatus()).behind], [0, 0]);
+    // Diverged history is refused instead of merging.
+    writeFileSync(join(other, 'c.txt'), 'c\n'); git(other, 'add', '.'); git(other, 'commit', '-qm', 'remote side'); git(other, 'push', '-q');
+    writeFileSync(join(work, 'd.txt'), 'd\n'); git(work, 'add', '.'); git(work, 'commit', '-qm', 'local side');
+    await service.gitSync('fetch');
+    await assert.rejects(service.gitSync('pull'), /已分叉/);
+    await assert.rejects(service.gitSync('push'), /请先拉取/);
+  } finally { await service.dispose(); removeSafeTemp(root); }
+});
+
+test('checkout failures caused by local edits name the files and the way forward', async () => {
+  const { describeCheckoutFailure } = await import('../packages/desktop/src/main/workbenchService.ts');
+  const stderr = 'error: Your local changes to the following files would be overwritten by checkout:\n\tsrc/a.ts\n\tREADME.md\nPlease commit your changes or stash them before you switch branches.\nAborting';
+  const message = describeCheckoutFailure(stderr);
+  assert.match(message, /src\/a\.ts、README\.md/);
+  assert.match(message, /git stash/);
+  assert.equal(describeCheckoutFailure('fatal: invalid reference: x'), '切换分支失败：fatal: invalid reference: x');
+});

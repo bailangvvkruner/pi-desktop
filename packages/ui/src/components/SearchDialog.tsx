@@ -7,6 +7,7 @@ import { useT } from '../i18n';
 import { isConversationWorkspace, sidebarProjectPaths } from '../sidebarOrganization';
 import { Icon } from './Icons';
 import { FileDisplayIcon } from './FileDisplayIcon';
+import { preferredEditorId } from '../editorPreference';
 import { SegmentedIndicator } from './SegmentedIndicator';
 import { clearSearchHistory, readSearchHistory, removeSearchTerm, saveSearchTerm } from '../searchHistory';
 import './searchDialog.css';
@@ -280,7 +281,7 @@ export function SearchDialog({ commands, onClose, onSelectSession, onSelectFile 
 		try {
 			if (row.kind === 'command') await row.command.run();
 			else if (row.kind === 'session') await onSelectSession(row.session);
-			else if (row.file.line) await bridge?.openWorkspacePathInEditor(row.file.path, row.file.line, row.file.column);
+			else if (row.file.line) await bridge?.openWorkspacePathInEditor(row.file.path, row.file.line, row.file.column, preferredEditorId());
 			else onSelectFile(row.file);
 			if (mountedRef.current) onClose();
 		} catch (error) {

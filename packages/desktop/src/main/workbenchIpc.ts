@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
 import { WorkbenchService } from './workbenchService';
 import { ResultFileService } from './resultFileService';
+import { createWorkspaceWatcher } from './workspaceWatcher.ts';
 import { broadcastToRenderers, handleRendererInvoke, requireRendererSender } from './rendererIpc';
 
 export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchService {
@@ -22,18 +23,31 @@ export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchServi
 	const service = new WorkbenchService(getWorkspace, (event) => {
 		broadcastToRenderers(IPC_CHANNELS.workspaceCommandEvent, event);
 	});
+	const watcher = createWorkspaceWatcher((event) => broadcastToRenderers(IPC_CHANNELS.workspaceChanged, event));
+	handleRendererInvoke(IPC_CHANNELS.workspaceWatch, (_event, cwd: unknown) => {
+		if (cwd === null) { watcher.watch(null); return; }
+		// Only the active workspace may be watched; a stale request after a switch is ignored.
+		if (typeof cwd !== 'string' || !cwd || cwd !== getWorkspace()) return;
+		watcher.watch(cwd);
+	});
+	const disposeService = service.dispose.bind(service);
+	service.dispose = async () => { watcher.stop(); await disposeService(); };
 	handleRendererInvoke(IPC_CHANNELS.workspaceOpenFolder, async (event, cwd: string) => {
 		await service.openWorkspaceFolder(cwd, (path) => {
 			requireRendererSender(event);
 			return shell.openPath(path);
 		});
 	});
+	handleRendererInvoke(IPC_CHANNELS.workspaceOpenWith, async (_event, cwd: unknown, openerId: unknown) => {
+		if (typeof cwd !== 'string' || typeof openerId !== 'string') throw new Error('打开方式无效');
+		await service.openWorkspaceWith(cwd, openerId);
+	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceOpenInVsCode, async (_event, cwd: string) => {
 		await service.openWorkspaceInVsCode(cwd);
 	});
-	handleRendererInvoke(IPC_CHANNELS.workspaceOpenPathInEditor, async (_event, relativePath: unknown, line: unknown, column: unknown) => {
+	handleRendererInvoke(IPC_CHANNELS.workspaceOpenPathInEditor, async (_event, relativePath: unknown, line: unknown, column: unknown, editorId: unknown) => {
 		if (typeof relativePath !== 'string') throw new Error('文件路径无效');
-		await service.openPathInEditor(relativePath, typeof line === 'number' ? line : undefined, typeof column === 'number' ? column : undefined);
+		await service.openPathInEditor(relativePath, typeof line === 'number' ? line : undefined, typeof column === 'number' ? column : undefined, typeof editorId === 'string' && editorId ? editorId : undefined);
 	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceRevealPath, async (_event, relativePath: unknown) => {
 		if (typeof relativePath !== 'string') throw new Error('文件路径无效');
@@ -72,6 +86,10 @@ export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchServi
 	handleRendererInvoke(IPC_CHANNELS.workspaceGitLog, (_event, limit: unknown) => {
 		const count = typeof limit === 'number' ? limit : 30;
 		return service.gitLog(count);
+	});
+	handleRendererInvoke(IPC_CHANNELS.workspaceGitSync, (_event, action: unknown) => {
+		if (action !== 'fetch' && action !== 'pull' && action !== 'push') throw new Error('Git 同步操作无效');
+		return service.gitSync(action);
 	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceGitGraph, (_event, limit: unknown) => {
 		const count = typeof limit === 'number' ? limit : 60;

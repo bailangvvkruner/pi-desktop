@@ -7,6 +7,7 @@ import { lstat, mkdir, open, readFile, readdir, realpath, rename, stat } from 'n
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
+import { detectEditors, launchEditor, type DetectedEditor } from './editorCatalog.ts';
 import type { WorkspaceBranches, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitGraphCommit, WorkspaceGitLogEntry, WorkspaceGitStatus, WorkspaceOpener } from '@pidesktop/shared';
 
 const execFileAsync = promisify(execFile);
@@ -43,6 +44,18 @@ function runVsCodeCli(args: string[]): Promise<unknown> {
 	if (args.some((arg) => arg.includes('"'))) return Promise.reject(new Error('路径包含无效字符'));
 	const commandLine = ['code.cmd', ...args].map((arg) => `"${arg}"`).join(' ');
 	return execFileAsync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"${commandLine}"`], { timeout: 15000, windowsHide: true, windowsVerbatimArguments: true });
+}
+
+/**
+ * Branch-switch assist (ZCode git-branch-switcher): local edits that block a
+ * checkout become an actionable message naming the files, instead of raw stderr.
+ */
+export function describeCheckoutFailure(stderr: string): string {
+	const blocked = /would be overwritten by (?:checkout|switch)|untracked working tree files would be (?:overwritten|removed)/i.test(stderr);
+	if (!blocked) return `切换分支失败：${stderr}`;
+	const files = stderr.split(/\r?\n/).filter((line) => /^\s+\S/.test(line) && !/^\s*(?:Please|Aborting)/i.test(line)).map((line) => line.trim());
+	const shown = files.slice(0, 8).join('、');
+	return `切换分支失败：${files.length ? `以下文件有未提交的修改，切换会覆盖它们：${shown}${files.length > 8 ? ` 等 ${files.length} 个文件` : ''}。` : '有未提交的修改会被覆盖。'}请先提交，或在终端中用 git stash 暂存后再切换。`;
 }
 
 function isWithin(root: string, candidate: string): boolean {
@@ -83,27 +96,31 @@ export class WorkbenchService {
 		if (error) throw new Error(`无法打开工作区文件夹：${error}`);
 	}
 
-	/**
-	 * List the apps that can open the workspace (zcode-style open-with picker).
-	 * Explorer is always available; VS Code only when an install is detected.
-	 */
-	async listWorkspaceOpeners(): Promise<WorkspaceOpener[]> {
-		const openers: WorkspaceOpener[] = [{ id: 'explorer' }];
-		const executable = await this.vsCodeExecutable();
-		if (executable) openers.push({ id: 'vscode', icon: await editorIcon(executable) });
-		else if (await this.vsCodeOnPath()) openers.push({ id: 'vscode' });
-		return openers;
+	/** Detection walks install roots and PATH; cache it briefly so menus open instantly. */
+	private openerCache: { at: number; editors: Promise<DetectedEditor[]>; openers?: Promise<WorkspaceOpener[]> } | null = null;
+	private detectedEditors(): Promise<DetectedEditor[]> {
+		if (!this.openerCache || Date.now() - this.openerCache.at > 60_000) this.openerCache = { at: Date.now(), editors: detectEditors() };
+		return this.openerCache.editors;
 	}
 
-	/** Resolves the installed VS Code executable, or null when only the CLI exists. */
-	private async vsCodeExecutable(): Promise<string | null> {
-		const candidates: string[] = [];
-		if (process.env.LOCALAPPDATA) candidates.push(join(process.env.LOCALAPPDATA, 'Programs', 'Microsoft VS Code', 'Code.exe'));
-		candidates.push('C:\\Program Files\\Microsoft VS Code\\Code.exe', 'C:\\Program Files (x86)\\Microsoft VS Code\\Code.exe');
-		for (const candidate of candidates) {
-			try { if ((await stat(candidate)).isFile()) return candidate; } catch { /* keep probing */ }
-		}
-		return null;
+	/**
+	 * Apps that can open the workspace (ZCode open-with picker): the file manager
+	 * first, then every detected editor and terminal.
+	 */
+	async listWorkspaceOpeners(): Promise<WorkspaceOpener[]> {
+		const editors = this.detectedEditors();
+		const cache = this.openerCache!;
+		cache.openers ??= (async () => {
+			const detected = await editors;
+			const openers: WorkspaceOpener[] = [{ id: 'explorer', kind: 'file-manager' }];
+			for (const editor of detected) {
+				openers.push({ id: editor.definition.id, name: editor.definition.name, kind: editor.definition.kind, icon: editor.iconPath ? await editorIcon(editor.iconPath) : undefined });
+			}
+			// VS Code reachable only through its CLI shim keeps its entry.
+			if (!detected.some((editor) => editor.definition.id === 'vscode') && await this.vsCodeOnPath()) openers.splice(1, 0, { id: 'vscode', name: 'VS Code', kind: 'editor' });
+			return openers;
+		})();
+		return cache.openers;
 	}
 
 	private async vsCodeOnPath(): Promise<boolean> {
@@ -115,28 +132,17 @@ export class WorkbenchService {
 		}
 	}
 
-
-	/**
-	 * Open the workspace root in VS Code (zcode-style editor launch).
-	 * Probes common Code.exe install locations first, then falls back to the
-	 * `code` CLI on PATH.
-	 */
-	async openWorkspaceInVsCode(cwd: string): Promise<void> {
+	/** Opens the workspace root with a detected editor or terminal (ZCode editor launch). */
+	async openWorkspaceWith(cwd: string, openerId: string): Promise<void> {
 		if (typeof cwd !== 'string' || !cwd || cwd.includes('\0') || !isAbsolute(cwd)) throw new Error('工作区路径无效');
+		if (typeof openerId !== 'string' || !openerId || openerId === 'explorer') throw new Error('打开方式无效');
 		if (cwd !== this.getWorkspace()) throw new Error('工作区已切换，请重试');
 		const generation = this.commandGeneration;
 		const root = await this.workspaceRoot(cwd);
 		if (generation !== this.commandGeneration || cwd !== this.getWorkspace()) throw new Error('工作区已切换，请重试');
-		let executable = await this.vsCodeExecutable();
-		// Detached spawn so closing pi never kills the editor window. windowsHide
-		// must stay OFF: Electron-based editors (VS Code) honor the hidden start
-		// state and would open with an invisible window.
-		if (executable) {
-			const child = spawn(executable, [root], { detached: true, stdio: 'ignore' });
-			child.on('error', () => { /* launch errors surface below via exit check */ });
-			await new Promise<void>((resolve) => { child.once('spawn', () => resolve()); child.once('error', () => { executable = null; resolve(); }); });
-			if (executable) return;
-		}
+		const editor = (await this.detectedEditors()).find((item) => item.definition.id === openerId);
+		if (editor) { await launchEditor(editor, root); return; }
+		if (openerId !== 'vscode') throw new Error('未找到该应用，可能已被卸载，请刷新后重试');
 		// Fallback: the `code` CLI must live on PATH.
 		try {
 			await runVsCodeCli([root]);
@@ -145,24 +151,27 @@ export class WorkbenchService {
 		}
 	}
 
+	async openWorkspaceInVsCode(cwd: string): Promise<void> {
+		await this.openWorkspaceWith(cwd, 'vscode');
+	}
+
 	/**
-	 * Opens a specific file in VS Code, optionally at a line (4.7 file:line jumps
-	 * from diffs and tool activity).
+	 * Opens a file at an optional line (4.7 file:line jumps) in the preferred
+	 * editor, falling back to VS Code. Terminals and the file manager never
+	 * receive file jumps.
 	 */
-	async openPathInEditor(relativePath: string, line?: number, column?: number): Promise<void> {
+	async openPathInEditor(relativePath: string, line?: number, column?: number, editorId = 'vscode'): Promise<void> {
 		const { path } = await this.resolveEntry(relativePath);
-		const target = typeof line === 'number' && Number.isSafeInteger(line) && line > 0 ? `${path}:${line}${column && Number.isSafeInteger(column) && column > 0 ? `:${column}` : ''}` : path;
-		let executable = await this.vsCodeExecutable();
-		if (executable) {
-			const child = spawn(executable, ['-g', target], { detached: true, stdio: 'ignore' });
-			child.on('error', () => { /* fall through to the CLI below */ });
-			await new Promise<void>((resolve) => { child.once('spawn', () => resolve()); child.once('error', () => { executable = null; resolve(); }); });
-			if (executable) return;
-		}
+		const validLine = typeof line === 'number' && Number.isSafeInteger(line) && line > 0 ? line : undefined;
+		const validColumn = validLine && typeof column === 'number' && Number.isSafeInteger(column) && column > 0 ? column : undefined;
+		const editors = (await this.detectedEditors()).filter((item) => item.definition.kind === 'editor');
+		const editor = editors.find((item) => item.definition.id === editorId) ?? editors.find((item) => item.definition.id === 'vscode');
+		if (editor) { await launchEditor(editor, path, validLine, validColumn); return; }
+		const target = validLine ? `${path}:${validLine}${validColumn ? `:${validColumn}` : ''}` : path;
 		try {
 			await runVsCodeCli(['-g', target]);
 		} catch (error) {
-			throw new Error(`未找到 VS Code，请安装后重试：${error instanceof Error ? error.message : String(error)}`);
+			throw new Error(`未找到可用的代码编辑器，请安装 VS Code 等编辑器后重试：${error instanceof Error ? error.message : String(error)}`);
 		}
 	}
 
@@ -319,12 +328,66 @@ export class WorkbenchService {
 		} catch {
 			return { isRepository: false, branch: null, entries: [] };
 		}
-		const [branchResult, statusResult] = await Promise.all([
+		const [branchResult, statusResult, tracking] = await Promise.all([
 			execFileAsync('git', [...prefix, 'branch', '--show-current'], { timeout: 8000, maxBuffer: 1024 * 1024, env: SAFE_GIT_ENV }),
 			this.gitReadOutput([...prefix, 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.'], MAX_GIT_STATUS_BYTES),
+			this.gitTracking(prefix),
 		]);
 		const entries = this.parseGitStatus(statusResult.stdout, root, repositoryRoot);
-		return { isRepository: true, branch: branchResult.stdout.trim() || null, entries, ...(statusResult.truncated ? { truncated: true } : {}) };
+		return { isRepository: true, branch: branchResult.stdout.trim() || null, entries, ...tracking, ...(statusResult.truncated ? { truncated: true } : {}) };
+	}
+
+	/** Upstream and ahead/behind from local refs only (no network); failures degrade to "no upstream". */
+	private async gitTracking(prefix: string[]): Promise<Pick<WorkspaceGitStatus, 'upstream' | 'ahead' | 'behind' | 'hasRemote'>> {
+		const options = { timeout: 8000, maxBuffer: 64 * 1024, env: SAFE_GIT_ENV };
+		const [upstream, remotes] = await Promise.all([
+			execFileAsync('git', [...prefix, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], options).then((result) => result.stdout.trim() || null, () => null),
+			execFileAsync('git', [...prefix, 'remote'], options).then((result) => result.stdout.split('\n').map((line) => line.trim()).filter(Boolean), () => [] as string[]),
+		]);
+		if (!upstream) return { upstream: null, ahead: 0, behind: 0, hasRemote: remotes.length > 0 };
+		const counts = await execFileAsync('git', [...prefix, 'rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], options).then((result) => result.stdout.trim().split(/\s+/).map(Number), () => [0, 0]);
+		return { upstream, ahead: Number.isFinite(counts[0]) ? counts[0]! : 0, behind: Number.isFinite(counts[1]) ? counts[1]! : 0, hasRemote: true };
+	}
+
+	/**
+	 * Network sync for the current branch (ZCode git action menu). Pull is
+	 * fast-forward only so it never creates merge commits or conflicts; the first
+	 * push of a branch without an upstream sets it on origin (or the only remote).
+	 * Credential prompts cannot block: the terminal prompt is disabled, while
+	 * GUI credential helpers (Git Credential Manager) still work.
+	 */
+	async gitSync(action: 'fetch' | 'pull' | 'push'): Promise<void> {
+		if (action !== 'fetch' && action !== 'pull' && action !== 'push') throw new Error('Git 同步操作无效');
+		const generation = this.commandGeneration;
+		const approvedCwd = this.getWorkspace();
+		const root = await this.workspaceRoot();
+		const prefix = this.gitPrefix(root);
+		const tracking = await this.gitTracking(prefix);
+		let args: string[];
+		if (action === 'fetch') args = ['fetch', '--prune'];
+		else if (action === 'pull') {
+			if (!tracking.upstream) throw new Error('当前分支没有上游分支，无法拉取');
+			args = ['pull', '--ff-only', '--no-rebase'];
+		} else if (tracking.upstream) args = ['push'];
+		else {
+			const branch = (await execFileAsync('git', [...prefix, 'branch', '--show-current'], { timeout: 8000, env: SAFE_GIT_ENV })).stdout.trim();
+			if (!branch) throw new Error('分离 HEAD 状态无法推送，请先切换到分支');
+			const remotes = (await execFileAsync('git', [...prefix, 'remote'], { timeout: 8000, env: SAFE_GIT_ENV })).stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+			const remote = remotes.includes('origin') ? 'origin' : remotes.length === 1 ? remotes[0]! : null;
+			if (!remote) throw new Error(remotes.length ? '有多个远程仓库，请在终端中指定推送目标' : '没有配置远程仓库，无法推送');
+			args = ['push', '--set-upstream', remote, 'HEAD'];
+		}
+		if (generation !== this.commandGeneration || approvedCwd !== this.getWorkspace()) throw new Error('工作区已切换，请重试');
+		try {
+			await execFileAsync('git', [...prefix, ...args], { timeout: 120_000, maxBuffer: 1024 * 1024, windowsHide: true, env: { ...SAFE_GIT_ENV, GIT_TERMINAL_PROMPT: '0' } });
+		} catch (error) {
+			const detail = WorkbenchService.execDetail(error);
+			const label = action === 'fetch' ? '获取' : action === 'pull' ? '拉取' : '推送';
+			if (/Not possible to fast-forward|diverging branches|not possible because you have unmerged/i.test(detail)) throw new Error(`${label}失败：本地与远程分支已分叉，无法快进合并。请在终端中合并或变基后再试。`);
+			if (/rejected|non-fast-forward|fetch first/i.test(detail)) throw new Error(`${label}失败：远程有本地没有的提交，请先拉取。\n${detail}`);
+			if (/terminal prompts disabled|could not read Username|Authentication failed|Permission denied \(publickey\)/i.test(detail)) throw new Error(`${label}失败：需要身份验证。请先在终端中完成一次 Git 登录或配置凭据管理器。\n${detail}`);
+			throw new Error(`${label}失败：${detail}`);
+		}
 	}
 
 	/** Parse only complete NUL-delimited entries, including the source record of renames. */
@@ -383,7 +446,7 @@ export class WorkbenchService {
 		} catch (error) {
 			const raw = error instanceof Error ? (error as ExecFileException).stderr : undefined;
 			const detail = (typeof raw === 'string' ? raw : undefined)?.trim() || (error instanceof Error ? error.message : String(error));
-			throw new Error(`切换分支失败：${detail}`);
+			throw new Error(describeCheckoutFailure(detail));
 		}
 	}
 

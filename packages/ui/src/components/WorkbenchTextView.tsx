@@ -1,12 +1,16 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
 import { literalMatches, readingRows } from '../workbenchReading';
 
 import { useReadingAnalysis } from '../useReadingAnalysis';
 import { WordDiffText } from './WordDiffText';
 
+/** Whole selected lines with their numbers, for "add to chat" (ZCode code comments). */
+export interface TextViewQuote { text: string; startLine?: number; endLine?: number }
+
 /** The copy action always uses the original text; line numbers and marks are presentation only. */
-export function WorkbenchTextView({ text, path = '', diff = false, command = false, omitted = false, errorRanges = [], onClear }: { text: string; path?: string; diff?: boolean; command?: boolean; omitted?: boolean; errorRanges?: Array<{ start: number; end: number }>; onClear?(): void }) {
+export function WorkbenchTextView({ text, path = '', diff = false, command = false, omitted = false, errorRanges = [], onClear, onQuote }: { text: string; path?: string; diff?: boolean; command?: boolean; omitted?: boolean; errorRanges?: Array<{ start: number; end: number }>; onClear?(): void; onQuote?(quote: TextViewQuote): void }) {
   const { locale } = useT();
   const label = (zh: string, en: string) => locale === 'zh-CN' ? zh : en;
   const [query, setQuery] = useState('');
@@ -41,6 +45,45 @@ export function WorkbenchTextView({ text, path = '', diff = false, command = fal
   useLayoutEffect(() => {
     if (command && following && !query && body.current) body.current.scrollTop = body.current.scrollHeight;
   }, [text, following, command, query]);
+  // Selecting code offers "Add to chat" with the selected rows (always whole lines).
+  const [selectedRows, setSelectedRows] = useState<{ start: number; end: number; left: number; top: number } | null>(null);
+  const inspectSelection = () => {
+    const element = body.current;
+    const selection = window.getSelection();
+    if (!onQuote || !element || !selection || selection.isCollapsed || !selection.rangeCount) { setSelectedRows(null); return; }
+    const range = selection.getRangeAt(0);
+    if (!element.contains(range.startContainer) || !element.contains(range.endContainer)) { setSelectedRows(null); return; }
+    const rowOf = (node: Node) => (node instanceof Element ? node : node.parentElement)?.closest<HTMLElement>('[data-row]');
+    const first = rowOf(range.startContainer), last = rowOf(range.endContainer);
+    if (!first || !last) { setSelectedRows(null); return; }
+    let start = Number(first.dataset.row), end = Number(last.dataset.row);
+    // A triple-click selection ends at offset 0 of the following row.
+    if (end > start) {
+      const probe = document.createRange();
+      probe.setStart(last, 0);
+      probe.setEnd(range.endContainer, range.endOffset);
+      if (!probe.toString()) end -= 1;
+    }
+    if (!Number.isInteger(start) || !Number.isInteger(end)) { setSelectedRows(null); return; }
+    if (start > end) [start, end] = [end, start];
+    const box = range.getBoundingClientRect();
+    setSelectedRows({ start, end, left: Math.max(8, Math.min(box.left, window.innerWidth - 160)), top: Math.max(8, Math.min(box.bottom + 6, window.innerHeight - 44)) });
+  };
+  useEffect(() => {
+    if (!onQuote) return;
+    const clear = () => setSelectedRows(null);
+    document.addEventListener('selectionchange', inspectSelection);
+    window.addEventListener('scroll', clear, true);
+    return () => { document.removeEventListener('selectionchange', inspectSelection); window.removeEventListener('scroll', clear, true); };
+  });
+  const quoteSelection = () => {
+    if (!onQuote || !selectedRows) return;
+    const picked = rows.slice(selectedRows.start, selectedRows.end + 1);
+    const numbers = picked.map(row => row.newLine ?? row.oldLine).filter((line): line is number => typeof line === 'number');
+    onQuote({ text: picked.map(row => row.text).join('\n'), startLine: numbers[0], endLine: numbers.at(-1) });
+    window.getSelection()?.removeAllRanges();
+    setSelectedRows(null);
+  };
   const move = (delta: number) => { setFollowing(false); setMatch((index + delta + matches.length) % Math.max(1, matches.length)); };
   const copy = async () => { try { await navigator.clipboard.writeText(text); setNotice(label('已复制', 'Copied')); } catch { setNotice(label('复制失败，请选择文本复制', 'Copy failed; select the text to copy')); } };
   function content(row: typeof rows[number], index: number): ReactNode {
@@ -72,9 +115,10 @@ export function WorkbenchTextView({ text, path = '', diff = false, command = fal
     {(omitted || diff && /… (?:仅显示|输出已截断)|Diff preview limited|Output truncated/.test(text)) && <p className="pd-workbench-reader-notice" role="status">{label('较早输出或超限内容已省略；当前预览并非完整内容。', 'Earlier output or content beyond the limit was omitted; this preview is incomplete.')}</p>}
     {notice && <p className="pd-workbench-reader-notice" role="status">{notice}</p>}
     <div ref={body} className="pd-workbench-reader-body" tabIndex={0} aria-label={label('文本内容', 'Text content')} onScroll={() => { const element = body.current; if (command && element) setFollowing(element.scrollHeight - element.scrollTop - element.clientHeight < 24); }}>
-      <div className="pd-workbench-reader-lines">{rows.slice(0, command ? rows.length : shown).map((row, i) => <div key={i} className={`pd-workbench-code-line is-${row.kind}${errorRanges.some(range => range.start < row.offset + row.text.length && range.end > row.offset) ? ' is-stderr' : ''}`}>
+      <div className="pd-workbench-reader-lines">{rows.slice(0, command ? rows.length : shown).map((row, i) => <div key={i} data-row={i} className={`pd-workbench-code-line is-${row.kind}${errorRanges.some(range => range.start < row.offset + row.text.length && range.end > row.offset) ? ' is-stderr' : ''}`}>
         {diff && <span className="pd-workbench-line-number" aria-hidden="true">{row.oldLine}</span>}<span className="pd-workbench-line-number" aria-hidden="true">{row.newLine}</span><code>{content(row, i)}</code>
       </div>)}</div>
+      {selectedRows && onQuote && createPortal(<button type="button" className="pd-quote-selection" style={{ position: 'fixed', zIndex: 60, left: selectedRows.left, top: selectedRows.top }} onMouseDown={event => event.preventDefault()} onClick={quoteSelection}>{label('添加到对话', 'Add to chat')}</button>, document.body)}
       {!command && shown < rows.length && <button type="button" className="pd-workbench-show-lines" onClick={() => setLimit(value => value + 400)}>{label('继续显示后续行', 'Show more lines')} ({Math.min(shown, rows.length)}/{rows.length})</button>}
     </div>
   </div>;

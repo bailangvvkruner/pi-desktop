@@ -5,7 +5,7 @@ import { WORKBENCH_FEATURE_CHANNELS } from '@pidesktop/shared/workbenchFeatures'
 import { DATA_FEATURE_CHANNELS } from '@pidesktop/shared/dataFeatures';
 import { INPUT_FEATURE_CHANNELS } from '@pidesktop/shared/inputFeatures';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import { IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiAppCommand, type UiAutomationSnapshot, type UiExtensionDialogRequest, type UiUpdateState, type WindowChromeState, type WorkspaceCommandEvent } from '@pidesktop/shared';
+import { IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiAppCommand, type UiAutomationSnapshot, type UiExtensionDialogRequest, type UiUpdateState, type WindowChromeState, type WorkspaceChangeEvent, type WorkspaceCommandEvent } from '@pidesktop/shared';
 import { unwrapIpcError } from './ipcErrors';
 
 /**
@@ -53,6 +53,12 @@ const onWorkspaceCommandEvent: AgentBridge['onWorkspaceCommandEvent'] = (listene
 	const wrapped = (_e: Electron.IpcRendererEvent, event: WorkspaceCommandEvent): void => listener(event);
 	ipcRenderer.on(IPC_CHANNELS.workspaceCommandEvent, wrapped);
 	return () => ipcRenderer.removeListener(IPC_CHANNELS.workspaceCommandEvent, wrapped);
+};
+
+const onWorkspaceChanged: AgentBridge['onWorkspaceChanged'] = (listener) => {
+	const wrapped = (_e: Electron.IpcRendererEvent, event: WorkspaceChangeEvent): void => listener(event);
+	ipcRenderer.on(IPC_CHANNELS.workspaceChanged, wrapped);
+	return () => ipcRenderer.removeListener(IPC_CHANNELS.workspaceChanged, wrapped);
 };
 
 const onAppCommand: AgentBridge['onAppCommand'] = (listener) => {
@@ -192,16 +198,20 @@ const bridge: AgentBridge = {
 		discardWorkspaceGitChanges: (paths) => invoke(IPC_CHANNELS.workspaceGitDiscard, paths),
 		getWorkspaceGitLog: (limit) => invoke(IPC_CHANNELS.workspaceGitLog, limit),
 		getWorkspaceGitGraph: (limit) => invoke(IPC_CHANNELS.workspaceGitGraph, limit),
+		syncWorkspaceGit: (action) => invoke(IPC_CHANNELS.workspaceGitSync, action),
 		createWorkspaceGitBranch: (name, checkout) => invoke(IPC_CHANNELS.workspaceGitCreateBranch, name, checkout),
-		openWorkspacePathInEditor: (path, line, column) => invoke(IPC_CHANNELS.workspaceOpenPathInEditor, path, line, column),
+		openWorkspacePathInEditor: (path, line, column, editorId) => invoke(IPC_CHANNELS.workspaceOpenPathInEditor, path, line, column, editorId),
 		revealWorkspacePath: (path) => invoke(IPC_CHANNELS.workspaceRevealPath, path),
 		openWorkspaceInVsCode: (cwd) => invoke(IPC_CHANNELS.workspaceOpenInVsCode, cwd),
+		openWorkspaceWith: (cwd, openerId) => invoke(IPC_CHANNELS.workspaceOpenWith, cwd, openerId),
 		listWorkspaceOpeners: () => invoke(IPC_CHANNELS.workspaceOpeners),
 		getWorkspaceCommitContext: () => invoke(IPC_CHANNELS.workspaceCommitContext),
 		commitWorkspace: (message) => invoke(IPC_CHANNELS.workspaceCommit, message),
 	startWorkspaceCommand: (command) => invoke(IPC_CHANNELS.workspaceCommandStart, command),
 	stopWorkspaceCommand: (id) => invoke(IPC_CHANNELS.workspaceCommandStop, id),
 	onWorkspaceCommandEvent,
+	watchWorkspace: (cwd) => invoke(IPC_CHANNELS.workspaceWatch, cwd),
+	onWorkspaceChanged,
 	initAgent: (cwd) => invoke(IPC_CHANNELS.agentInit, cwd),
 	listWorkspaces: () => invoke(IPC_CHANNELS.agentListWorkspaces),
 	listConversationWorkspaces: () => invoke(IPC_CHANNELS.workspaceListConversations),

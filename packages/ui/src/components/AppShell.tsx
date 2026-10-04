@@ -109,6 +109,8 @@ export function AppShell() {
 		// Only the rising edge switches: browsing plugins while a question waits
 		// must not yank the user back on every render.
 		if (!previous && extensionRequestPending && !paiMode) setMainView('chat');
+		// A run waiting on approval stalls silently in the background; chime like a finished task.
+		if (!previous && extensionRequestPending && !document.hasFocus()) void playTaskNotificationSound();
 	}, [extensionRequestPending, paiMode]);
 	useEffect(() => { if (!paiMode) writeStoredPreference('pi-desktop.workbench-width', String(workbenchWidth)); }, [paiMode, workbenchWidth]);
 	useEffect(() => { if (workbenchOpen && narrow) setSidebarOpen(false); }, [workbenchOpen, narrow]);

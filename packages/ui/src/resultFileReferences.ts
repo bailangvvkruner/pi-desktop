@@ -16,7 +16,8 @@ export function parseResultFileReference(value: string, mode: 'link' | 'auto' = 
       if (/^\/[a-z]:[\/\\]/i.test(path)) path = path.slice(1);
     } catch { return null; }
   } else if (path.startsWith('sandbox:/')) path = path.slice('sandbox:'.length);
-  else if (/^[a-z][a-z\d+.-]*:/i.test(path) && !/^[a-z]:[\\/]/i.test(path)) return null;
+  // Markdown-to-HTML percent-encodes "\" as %5C, so "E:%5Cproj" is still a drive path.
+  else if (/^[a-z][a-z\d+.-]*:/i.test(path) && !/^[a-z]:(?:[\\/]|%5c|%2f)/i.test(path)) return null;
   try { path = decodeURIComponent(path); } catch { /* A native filename may contain a literal percent sign. */ }
   if (/[\u0000-\u001f\u007f]/.test(path) || /^[\\/]{2}/.test(path)) return null;
   // Line suffixes are navigation metadata, never part of the file system path.

@@ -66,6 +66,8 @@ const startupNotifications = new Map<BrowserWindow, StartupNotifications>();
 const notificationReadyWindows = new WeakSet<BrowserWindow>();
 const MAX_STARTUP_NOTIFICATIONS = 100;
 let getDialogWindow: () => BrowserWindow | undefined = () => undefined;
+/** Set by registerIpc: OS notification for approvals/questions while unfocused. */
+let notifyInputRequest: ((request: UiExtensionDialogRequest) => void) | null = null;
 let workbenchService: WorkbenchService | null = null;
 let workbenchFeatures: ReturnType<typeof registerWorkbenchFeatureIpc> | null = null;
 let managementFeatures: ReturnType<typeof registerManagementIpc> | null = null;
@@ -160,6 +162,9 @@ function requestExtensionDialog(request: UiExtensionDialogRequest, signal?: Abor
 		owner.once('closed', onClosed);
 		if (request.timeout && request.timeout > 0) timer = setTimeout(() => finish(null), request.timeout);
 		owner.webContents.send(IPC_CHANNELS.agentExtensionDialog, request);
+		// A window that was never revealed is still behind the splash; startup
+		// requests reveal it themselves instead of notifying.
+		if (notificationReadyWindows.has(owner)) notifyInputRequest?.(request);
 	});
 }
 
@@ -669,6 +674,7 @@ export function registerIpc(options: {
 		getMainWindow: () => getDialogWindow() ?? null,
 		revealSession: (path, cwd) => sendAppCommand({ type: 'switch-session', path, cwd }),
 	});
+	notifyInputRequest = (request) => notifier.handleInputRequest(request, activeSessionPath, agentService.cwd || activeWorkspace);
 	appearancePath = appearanceStatePath(options.baseUserData ?? app.getPath('userData'));
 		handleRendererInvoke(MCP_FEATURE_CHANNELS.getMcpSnapshot, () => agentService.getMcpSnapshot());
 	handleRendererInvoke(MCP_FEATURE_CHANNELS.saveMcpServer, (_event, request: Parameters<typeof agentService.saveMcpServer>[0]) => agentService.saveMcpServer(request));

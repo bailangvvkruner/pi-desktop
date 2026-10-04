@@ -37,5 +37,21 @@ test('conversation Markdown renders local references as file actions while prese
     assert.doesNotMatch(html, /data-result-file="src\/fenced.ts"/);
     assert.match(render('[encoded](C%3A%2Foutput%2Ffile.txt)'), /data-result-file="C:\/output\/file.txt"/);
     assert.doesNotMatch(render('[bad](javascript%3Aalert)'), /pd-result-file-link|href="javascript:/);
+    // CommonMark eats "\." and "\_" inside Windows paths; the raw source is restored.
+    const windows = render([
+      '[ci](E:\\proj\\.github\\workflows\\ci.yml)',
+      '[draft](C:\\work\\_draft\\a.md)',
+      '打开 E:\\proj\\.vscode\\settings.json 查看，\\*字面星号\\* 保持转义。',
+      '[ref][r]\n\n[r]: D:\\repo\\.claude\\notes.md',
+    ].join('\n\n'));
+    assert.match(windows, /data-result-file="E:\\proj\\.github\\workflows\\ci.yml"/);
+    assert.match(windows, /data-result-file="C:\\work\\_draft\\a.md"/);
+    assert.match(windows, /data-result-file="E:\\proj\\.vscode\\settings.json"/);
+    assert.match(windows, /data-result-file="D:\\repo\\.claude\\notes.md"/);
+    assert.match(windows, /\*字面星号\*/);
+    assert.doesNotMatch(windows, /\\\*字面星号/);
+    assert.doesNotMatch(windows, /proj\.github|work_draft/);
+    // Ordinary escapes outside Windows paths are untouched.
+    assert.match(render('价格 \\$5 与 a\\_b'), /价格 \$5 与 a_b/);
   } finally { await server.close(); }
 });

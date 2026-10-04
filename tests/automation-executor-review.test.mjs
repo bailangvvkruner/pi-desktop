@@ -210,7 +210,7 @@ test('automation IPC accepts only its current main renderer and starts schedulin
     './workbenchIpc': `export const registerWorkbenchIpc=()=>({async reset(){},async dispose(){}});`,
     './updateService': `export const updateService={stop(){}};`,
     './tray': `export const createAppTray=()=>null;export const destroyAppTray=()=>{};export const updateAppTrayMenu=()=>{};export const invalidateAppTrayData=()=>{};`,
-    './notifications': `export const createDesktopNotifier=()=>({handleAgentEvent(){},handleAutomationRun(){}});`,
+    './notifications': `export const createDesktopNotifier=()=>({handleAgentEvent(){},handleAutomationRun(){},handleInputRequest(){}});`,
   };
   const hook = registerHooks({ resolve(specifier, context, nextResolve) {
     if (context.parentURL?.includes('/main/') && stubSources[specifier]) {

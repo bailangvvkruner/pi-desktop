@@ -6,6 +6,7 @@ import { useDisclosureChoice } from '../conversationDisclosure';
 import { ActivityDisclosure, ActivityLabel } from './ActivityDisclosure';
 import { Icon } from './Icons';
 import { ToolDiffView } from './toolRenderers/ToolDiffView';
+import { countToolGroup, isExplorationGroup, toolGroupSummaryParts } from '../toolGroupSummary';
 
 function formatDuration(ms: number): string {
 	if (ms < 0) ms = 0;
@@ -152,7 +153,7 @@ export function ToolActivityItem({ activity, onInteract }: { activity: UiToolAct
 }
 
 export const ToolActivityPanel = memo(function ToolActivityPanel({ sourceActivities, indices, inline = false }: { sourceActivities: UiToolActivity[]; indices: number[]; inline?: boolean }) {
-	const { t } = useT();
+	const { t, locale } = useT();
 	const detailId = useId();
 	const activities = indices.map((index) => sourceActivities[index]).filter((activity): activity is UiToolActivity => Boolean(activity));
 	const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
@@ -160,8 +161,12 @@ export const ToolActivityPanel = memo(function ToolActivityPanel({ sourceActivit
 	const failedCount = activities.filter((activity) => activity.status === 'error').length;
 	const interruptedCount = activities.filter((activity) => activity.status === 'interrupted').length;
 	const expanded = userExpanded ?? runningCount > 0;
+	// "Read 3 files · 2 searches" reads better than "5 tools" (ZCode explore grouping).
+	const counts = countToolGroup(activities);
+	const semantic = toolGroupSummaryParts(counts, locale);
+	const exploring = isExplorationGroup(counts);
 	const summary = [
-		t('chat.tool.count', { count: activities.length }),
+		...(semantic.length ? semantic : [t('chat.tool.count', { count: activities.length })]),
 		runningCount > 0 ? t('chat.tool.runningCount', { count: runningCount }) : null,
 		failedCount > 0 ? t('chat.tool.failedCount', { count: failedCount }) : null,
 		interruptedCount > 0 ? t('chat.tool.interruptedCount', { count: interruptedCount }) : null,
@@ -172,7 +177,7 @@ export const ToolActivityPanel = memo(function ToolActivityPanel({ sourceActivit
 		<section className="pd-activity-group" aria-label={t('chat.tool.activity')}>
 			<button type="button" className="pd-activity-summary" onClick={() => setUserExpanded(!expanded)} aria-expanded={expanded} aria-controls={detailId}>
 				<Icon name={runningCount ? 'terminal' : failedCount ? 'close' : interruptedCount ? 'square' : 'check'} width="15" height="15" />
-				<ActivityLabel active={runningCount > 0}>{t(runningCount ? 'chat.tool.working' : 'chat.tool.activity')}</ActivityLabel>
+				<ActivityLabel active={runningCount > 0}>{t(runningCount ? (exploring ? 'chat.tool.exploring' : 'chat.tool.working') : exploring ? 'chat.tool.explored' : 'chat.tool.activity')}</ActivityLabel>
 				<span className={'pd-activity-summary-count' + (failedCount ? ' is-error' : interruptedCount ? ' is-interrupted' : '')}>{summary}</span>
 				<Icon name="chevronDown" className={'pd-chevron' + (expanded ? ' is-open' : '')} width="14" height="14" />
 			</button>

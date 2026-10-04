@@ -1,5 +1,5 @@
 import { BrowserWindow, Notification } from 'electron';
-import type { AgentEventEnvelope } from '@pidesktop/shared';
+import type { AgentEventEnvelope, UiExtensionDialogRequest } from '@pidesktop/shared';
 import { getAppLocale } from './appLocale';
 import { readDesktopSettings } from './desktopSettings';
 
@@ -12,13 +12,15 @@ export interface DesktopNotifierOptions {
 
 /**
  * OS notifications (4.1): fire only while the window is unfocused or hidden,
- * covering foreground turn completion/failure and finished automation runs.
+ * covering foreground turn completion/failure, approvals or questions the run
+ * waits on, and finished automation runs.
  * Windows Focus Assist / system do-not-disturb suppress toasts natively.
  */
 export function createDesktopNotifier(options: DesktopNotifierOptions) {
 	let turnActive = false;
 	let turnError: string | null = null;
 	let turnSessionPath: string | null = null;
+	const notifiedRequests = new Set<string>();
 
 	const english = (): boolean => getAppLocale() === 'en-US';
 
@@ -72,6 +74,22 @@ export function createDesktopNotifier(options: DesktopNotifierOptions) {
 			} else if (event.type === 'assistant-end' && event.errorMessage && turnActive) {
 				turnError = event.errorMessage;
 			}
+		},
+		/**
+		 * A run blocked on an approval or question stalls silently while the
+		 * window is in the background (ZCode taskNotificationOrchestrator). Each
+		 * request notifies at most once; plain notices never notify.
+		 */
+		handleInputRequest(request: UiExtensionDialogRequest, sessionPath: string | null, cwd?: string): void {
+			if (request.kind === 'notify' || notifiedRequests.has(request.id) || windowActive()) return;
+			notifiedRequests.add(request.id);
+			if (notifiedRequests.size > 200) notifiedRequests.delete(notifiedRequests.values().next().value!);
+			const approval = request.kind === 'confirm' && request.approval;
+			const title = approval
+				? (english() ? 'Approval needed · Pi Desktop' : '需要你的确认 · Pi Desktop')
+				: (english() ? 'Input needed · Pi Desktop' : '需要你的回答 · Pi Desktop');
+			const body = [request.title, request.message].filter((part): part is string => Boolean(part?.trim())).join(' — ');
+			notify(title, body || (english() ? 'The task is waiting for you.' : '任务正在等待你的操作。'), sessionPath, cwd);
 		},
 		/** Notifies about finished automation runs (cancelled runs stay silent). */
 		handleAutomationRun(entry: { status: string; summary: string; error: string | null; sessionPath: string | null }, taskName: string, cwd?: string): void {
