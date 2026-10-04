@@ -73,6 +73,11 @@ test('desktop slash commands use current SDK resources, enforce session ownershi
     const { AgentService } = await import('../packages/agent/src/index.ts');
     const notices = [];
     service = new AgentService(async () => ({ trusted: true, remember: false }), async (request) => { notices.push(request); return null; });
+    // Plugin ui.notify now rides on session custom entries shown inline; dialog
+    // requests only appear for the no-session fallback.
+    const noticeEntries = () => service.active.runtime.session.sessionManager.getBranch()
+      .filter((entry) => entry.type === 'custom' && entry.customType === 'extension-notice')
+      .map((entry) => entry.data);
     await service.init({ cwd: workspace });
     const target = () => ({ cwd: service.getSnapshot().cwd, sessionId: service.getSnapshot().sessionId });
     const run = (name, args, options = {}) => service.executeSlashCommand({ ...target(), name, args, ...options });
@@ -100,7 +105,7 @@ test('desktop slash commands use current SDK resources, enforce session ownershi
         assert.equal(session.pendingMessageCount, 0, 'extension command must execute, not enter the model queue');
         for (const name of ['new', 'compact', 'name', 'reload']) await assert.rejects(run(name, name === 'name' ? 'Name' : undefined), /仍在运行/);
       } finally { session._isAgentRunActive = false; }
-      assert.equal(notices.filter((item) => item.title === 'Desktop command completed').length, 2);
+      assert.equal(noticeEntries().filter((data) => data?.message === 'Desktop command completed').length, 2);
     });
 
     await t.test('prompt templates and skills queue with full context even without argument placeholders', async () => {
@@ -181,7 +186,7 @@ test('desktop slash commands use current SDK resources, enforce session ownershi
       await run('desktop-probe', 'after reload');
       await settle();
       assert.equal(JSON.parse(readFileSync(marker, 'utf8')).args, 'after reload');
-      assert.equal(notices.filter((item) => item.title === 'Desktop command completed').length, 3);
+      assert.equal(noticeEntries().filter((data) => data?.message === 'Desktop command completed').length, 3);
     });
 
     await t.test('extension new/switch/reload rebind the runtime, snapshot and desktop UI; loaded targets cannot be duplicated', async () => {
@@ -192,7 +197,7 @@ test('desktop slash commands use current SDK resources, enforce session ownershi
       assert.deepEqual(JSON.parse(readFileSync(lifecycleMarker, 'utf8')), { success: true });
       assert.notEqual(target().sessionId, firstId);
       assert.equal(service.getSnapshot().sessionId, service.active.runtime.session.sessionId);
-      assert.ok(notices.some((item) => item.title === 'Fresh command context'));
+      assert.ok(noticeEntries().some((data) => data?.message === 'Fresh command context'));
       const manager = SessionManager.create(workspace);
       manager.appendMessage({ role: 'user', content: 'Target history', timestamp: Date.now() });
       manager.appendMessage({ role: 'assistant', content: [{ type: 'text', text: 'Target reply' }], api: 'anthropic-messages', provider: 'anthropic', model: 'claude-sonnet-4',

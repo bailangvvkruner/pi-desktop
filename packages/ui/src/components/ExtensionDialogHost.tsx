@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { UiExtensionDialogRequest, UiExtensionDialogResponse } from '@pidesktop/shared';
 import { useChatStore } from '../store';
@@ -10,11 +10,25 @@ import { ErrorDetails } from './ErrorDetails';
 import './extensionRequests.css';
 
 const ExtensionDialogContext = createContext<ReactNode>(null);
-const ExtensionRequestPendingContext = createContext(false);
 
-/** True while a plugin/extension question renders in the chat composer slot. */
+// Pending signal as a module-level store: AppShell sits ABOVE the context
+// provider, so a context-only signal could never reach its own hook call.
+// One host per window keeps the module state unambiguous.
+let pendingRequest = false;
+const pendingListeners = new Set<() => void>();
+function publishPendingRequest(value: boolean): void {
+	if (pendingRequest === value) return;
+	pendingRequest = value;
+	for (const notify of pendingListeners) notify();
+}
+function subscribePendingRequest(listener: () => void): () => void {
+	pendingListeners.add(listener);
+	return () => { pendingListeners.delete(listener); };
+}
+
+/** True while a plugin/extension question waits for an answer. */
 export function useExtensionRequestPending(): boolean {
-	return useContext(ExtensionRequestPendingContext);
+	return useSyncExternalStore(subscribePendingRequest, () => pendingRequest, () => false);
 }
 
 function getActiveModal(): HTMLElement | null {
@@ -70,8 +84,8 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 	}, []);
 
 	useLayoutEffect(() => {
-		// An installation/settings dialog may wait for extension input. Reuse
-		// that dialog rather than opening another modal or leaving the card inert.
+		// An open modal (settings, plugin install) makes the chat composer inert
+		// and may itself be waiting for this answer. Render the card inside it.
 		const updateTarget = () => setModalTarget(getActiveModal());
 		updateTarget();
 		const observer = new MutationObserver(updateTarget);
@@ -196,8 +210,8 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 
 	function onCardKeyDown(event: KeyboardEvent<HTMLElement>) {
 		if (!active || event.nativeEvent.isComposing) return;
-		// Portals bypass the destination's React handlers. Preserve an existing
-		// custom modal's focus boundary without trapping the ordinary chat card.
+		// Portals bypass the destination's React handlers. Preserve a custom
+		// (non-<dialog>) modal's focus boundary while the card lives inside it.
 		if (event.key === 'Tab' && modalTarget && !modalTarget.matches('dialog:modal')) {
 			const elements = [...modalTarget.querySelectorAll<HTMLElement>('button, input, textarea, select, a[href], summary, [tabindex]')]
 				.filter((element) => element.tabIndex >= 0 && !element.matches(':disabled') && element.getClientRects().length > 0
@@ -233,13 +247,15 @@ export function ExtensionDialogHost({ children, chatVisible, notificationTarget 
 		</div>
 	</section> : null;
 
-	const cardInChat = Boolean(active) && chatVisible && !modalTarget;
-	return <ExtensionDialogContext.Provider value={cardInChat ? card : null}>
-		<ExtensionRequestPendingContext.Provider value={cardInChat}>
-			{children}
-			{notices.length > 0 && notificationTarget && createPortal(<ExtensionNotifications requests={notices} onDismiss={dismissNotice} />, notificationTarget)}
-			{card && modalTarget && createPortal(<div className="pd-extension-modal-slot">{card}</div>, modalTarget)}
-			{card && !modalTarget && !chatVisible && createPortal(<div className="pd-extension-fallback-slot">{card}</div>, document.body)}
-		</ExtensionRequestPendingContext.Provider>
+	// The option card renders in the chat composer slot, or inside an open modal
+	// that would otherwise leave the composer inert. Other main views never show
+	// it; the pending signal stays independent of chatVisible so AppShell can
+	// return to the conversation even while the card is hidden.
+	const hasActiveRequest = Boolean(active);
+	useEffect(() => { publishPendingRequest(hasActiveRequest); return () => publishPendingRequest(false); }, [hasActiveRequest]);
+	return <ExtensionDialogContext.Provider value={hasActiveRequest && chatVisible && !modalTarget ? card : null}>
+		{children}
+		{notices.length > 0 && notificationTarget && createPortal(<ExtensionNotifications requests={notices} onDismiss={dismissNotice} />, notificationTarget)}
+		{card && modalTarget && createPortal(<div className="pd-extension-modal-slot">{card}</div>, modalTarget)}
 	</ExtensionDialogContext.Provider>;
 }

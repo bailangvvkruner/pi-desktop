@@ -1,9 +1,12 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import type { ResultFilePreview, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitLogEntry, WorkspaceGitStatus } from '@pidesktop/shared';
+import type { ResultFilePreview, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitGraphCommit, WorkspaceGitStatus } from '@pidesktop/shared';
 import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { Icon } from './Icons';
+import { FileDisplayIcon } from './FileDisplayIcon';
+import { ConversationMarkdown } from './ConversationMarkdown';
+import { GitHistoryGraph } from './GitHistoryGraph';
 import { HoverTooltip } from './HoverTooltip';
 import { SegmentedIndicator } from './SegmentedIndicator';
 import { WorkbenchTextView } from './WorkbenchTextView';
@@ -45,6 +48,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 	const [previewRatio, setPreviewRatio] = useState(() => { try { const ratio = Number(localStorage.getItem('pi-desktop.workbench-preview-ratio')); return ratio >= 25 && ratio <= 80 ? ratio : 54; } catch { return 54; } });
 	const [focusedPath, setFocusedPath] = useState<string | null>(null);
 	const [menuTarget, setMenuTarget] = useState<WorkspaceEntry | null>(null);
+	const [menuEditable, setMenuEditable] = useState(true);
 	const [menuAnchor, setMenuAnchor] = useState<{ trigger: HTMLElement; point: ContextMenuPoint | null } | null>(null);
 	const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null);
 	const menuTrigger = useRef<HTMLElement | null>(null);
@@ -68,6 +72,11 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 	useEffect(() => { if (terminalRequest && terminalRequest !== handledTerminalRequest.current) { handledTerminalRequest.current = terminalRequest; setTerminalVisited(true); setTab('terminal'); } }, [terminalRequest]);
 	useEffect(() => { if (tab === 'terminal') setTerminalVisited(true); }, [tab]);
 	const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
+	const [fileSearch, setFileSearch] = useState('');
+	const [searchEntries, setSearchEntries] = useState<WorkspaceEntry[]>([]);
+	const [searchLoading, setSearchLoading] = useState(false);
+	const [searchError, setSearchError] = useState<string | null>(null);
+	const [searchTruncated, setSearchTruncated] = useState(false);
 	const [fileText, setFileText] = useState('');
 	const [officePreview, setOfficePreview] = useState<ResultFilePreview | null>(null);
 	const [fileLoading, setFileLoading] = useState(false);
@@ -82,7 +91,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 	const [diffText, setDiffText] = useState('');
 	const [diffLoading, setDiffLoading] = useState(false);
 	const [diffError, setDiffError] = useState<string | null>(null);
-	const [gitLog, setGitLog] = useState<WorkspaceGitLogEntry[]>([]);
+	const [gitLog, setGitLog] = useState<WorkspaceGitGraphCommit[]>([]);
 	const [gitActionError, setGitActionError] = useState<string | null>(null);
 	const [gitActionBusy, setGitActionBusy] = useState(false);
 	const [discardTarget, setDiscardTarget] = useState<{ cwd: string; path: string } | null>(null);
@@ -90,6 +99,10 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 	const [branchCreateOpen, setBranchCreateOpen] = useState(false);
 	const [branchName, setBranchName] = useState('');
 	const [branchCreating, setBranchCreating] = useState(false);
+	const [entryForm, setEntryForm] = useState<{ mode: 'create-file' | 'create-folder' | 'rename'; parentPath: string; originalPath: string | null; originalName: string; value: string } | null>(null);
+	const [entryOpBusy, setEntryOpBusy] = useState(false);
+	const [entryOpError, setEntryOpError] = useState<string | null>(null);
+	const [deleteEntryTarget, setDeleteEntryTarget] = useState<WorkspaceEntry | null>(null);
 	const [command, setCommand] = useState('');
 	const [commandRun, setCommandRun] = useState<CommandRun | null>(null);
 	const [commandStarting, setCommandStarting] = useState(false);
@@ -105,6 +118,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 	const handledOpenRequest = useRef<number | null>(null);
 	currentCwdRef.current = cwd;
 	const listingRequest = useRef(0);
+	const searchRequest = useRef(0);
 	const fileRequest = useRef(0);
 	const gitRequest = useRef(0);
 	const diffRequest = useRef(0);
@@ -116,7 +130,8 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 	const commandRunning = Boolean(commandRun && !finalEvent);
 	const breadcrumb = useMemo(() => directory.split('/').filter(Boolean), [directory]);
 	const gitGroups = useMemo(() => groupGitEntries(gitStatus?.entries ?? []), [gitStatus]);
-	const visibleFileEntries: WorkspaceEntry[] = directory ? [{ path: parentDirectory(directory), name: '..', kind: 'directory' }, ...entries] : entries;
+	const searching = fileSearch.trim().length > 0;
+	const visibleFileEntries: WorkspaceEntry[] = searching ? searchEntries : directory ? [{ path: parentDirectory(directory), name: '..', kind: 'directory' }, ...entries] : entries;
 	const activePath = visibleFileEntries.some(entry => entry.path === focusedPath) ? focusedPath : visibleFileEntries[0]?.path;
 
 	useEffect(() => {
@@ -132,6 +147,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 		return () => { observer.disconnect(); document.removeEventListener('focusin', contain); };
 	}, [open, modal, suspended]);
 	useEffect(() => { setMenuTarget(null); setFocusedPath(null); setPreviewExpanded(false); }, [cwd, directory, tab]);
+	useEffect(() => { setFileSearch(''); }, [cwd, tab]);
 	useEffect(() => { if (!open || suspended) setMenuTarget(null); }, [open, suspended]);
 	useLayoutEffect(() => {
 		if (!menuTarget || !menuAnchor || !open || suspended || !menu.current) return;
@@ -167,10 +183,14 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 		}
 	}
 	function closeMenu() { setMenuTarget(null); menuTrigger.current?.focus(); }
-	function openMenu(entry: WorkspaceEntry, trigger: HTMLElement, point: ContextMenuPoint | null = null) {
+	/** `editable` false hides rename/delete (the "new" button targets the folder being browsed). */
+	function openMenu(entry: WorkspaceEntry, trigger: HTMLElement, point: ContextMenuPoint | null = null, editable = true) {
 		menuTrigger.current = trigger;
 		setMenuPosition(null);
 		setMenuAnchor({ trigger, point });
+		// The synthetic ".." row points at the parent folder; renaming or trashing
+		// it would act on the folder that contains the current one.
+		setMenuEditable(editable && entry.name !== '..' && entry.path !== '');
 		setMenuTarget(entry);
 	}
 	function fileKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -182,7 +202,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 		else if (event.key === 'Home') next = 0;
 		else if (event.key === 'End') next = visibleFileEntries.length - 1;
 		else if (event.key === 'Enter' || event.key === 'ArrowRight') { const entry = visibleFileEntries[index]; if (entry) { event.preventDefault(); void openFile(entry); } return; }
-		else if (event.key === 'ArrowLeft' || event.key === 'Backspace') { if (directory) { event.preventDefault(); restoreListFocus.current = true; setDirectory(parentDirectory(directory)); setSelectedFile(null); } return; }
+		else if (event.key === 'ArrowLeft' || event.key === 'Backspace') { if (searching) { event.preventDefault(); setFileSearch(''); fileList.current?.focus(); } else if (directory) { event.preventDefault(); restoreListFocus.current = true; setDirectory(parentDirectory(directory)); setSelectedFile(null); } return; }
 		else if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') { event.preventDefault(); const entry = visibleFileEntries[index]; if (entry && document.activeElement instanceof HTMLElement) openMenu(entry, document.activeElement); return; }
 		else return;
 		event.preventDefault(); const entry = visibleFileEntries[next]; if (entry) { setFocusedPath(entry.path); fileList.current?.querySelectorAll<HTMLButtonElement>('[data-file-path]')[next]?.focus(); }
@@ -223,6 +243,10 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 		setBranchCreateOpen(false);
 		setBranchName('');
 		setBranchCreating(false);
+		setEntryForm(null);
+		setEntryOpBusy(false);
+		setEntryOpError(null);
+		setDeleteEntryTarget(null);
 		gitOperation.current = null;
 		setDiffText('');
 		setDiffError(null);
@@ -269,7 +293,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 	}, [bridge]);
 
 	useEffect(() => {
-		if (!bridge || !cwd || !open || tab !== 'files') return;
+		if (!bridge || !cwd || !open || tab !== 'files' || searching) return;
 		const request = ++listingRequest.current;
 		setListingLoading(true);
 		setEntries([]);
@@ -280,7 +304,31 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 			if (request === listingRequest.current) setListingError(cause instanceof Error ? cause.message : String(cause));
 		}).finally(() => { if (request === listingRequest.current) setListingLoading(false); });
 		return () => { listingRequest.current += 1; };
-	}, [bridge, cwd, open, tab, directory, listingRevision]);
+	}, [bridge, cwd, open, tab, directory, listingRevision, searching]);
+
+	// Workspace-wide file search (zcode workspace-file-search): debounce, then
+	// reuse the bridge's bounded searchWorkspaceFiles service.
+	useEffect(() => {
+		if (!bridge || !cwd || !open || tab !== 'files') return;
+		const query = fileSearch.trim();
+		if (!query) { searchRequest.current += 1; setSearchEntries([]); setSearchError(null); setSearchLoading(false); setSearchTruncated(false); return; }
+		const request = ++searchRequest.current;
+		const timer = setTimeout(() => {
+			setSearchLoading(true);
+			void bridge.searchWorkspaceFiles(query, { includeDirectories: true }).then((result) => {
+				if (request !== searchRequest.current) return;
+				setSearchEntries([...result.files].sort((a, b) => Number(a.kind === 'file') - Number(b.kind === 'file') || a.name.localeCompare(b.name)));
+				setSearchTruncated(result.truncated);
+				setSearchError(null);
+			}).catch((cause: unknown) => {
+				if (request !== searchRequest.current) return;
+				setSearchEntries([]);
+				setSearchTruncated(false);
+				setSearchError(cause instanceof Error ? cause.message : String(cause));
+			}).finally(() => { if (request === searchRequest.current) setSearchLoading(false); });
+		}, 150);
+		return () => { clearTimeout(timer); searchRequest.current += 1; };
+	}, [bridge, cwd, open, tab, fileSearch]);
 
 	useEffect(() => {
 		if (!bridge || !cwd || !open || tab !== 'git') return;
@@ -292,8 +340,8 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 		}).catch((cause: unknown) => {
 			if (request === gitRequest.current) setGitError(cause instanceof Error ? cause.message : String(cause));
 		}).finally(() => { if (request === gitRequest.current) setGitLoading(false); });
-		void bridge.getWorkspaceGitLog(20).then((entries) => {
-			if (request === gitRequest.current) setGitLog(entries);
+		void bridge.getWorkspaceGitGraph(60).then((commits) => {
+			if (request === gitRequest.current) setGitLog(commits);
 		}).catch(() => { /* history stays empty when unavailable */ });
 		return () => { gitRequest.current += 1; };
 	}, [bridge, cwd, open, tab, gitRevision]);
@@ -302,6 +350,8 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 		if (!bridge) return;
 		if (entry.kind === 'directory') {
 			restoreListFocus.current = true;
+			// Entering a folder from search results returns to directory browsing.
+			setFileSearch('');
 			setDirectory(entry.path);
 			setSelectedFile(null);
 			return;
@@ -323,7 +373,9 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 		const request = ++fileRequest.current;
 		const current = () => request === fileRequest.current && currentCwdRef.current === cwd;
 		setFileLoading(true); setFileError(null); setFileText(''); setOfficePreview(null);
-		const load = /\.(?:docx|xlsx)$/i.test(selectedFile)
+		// Images, PDFs and Office documents preview through the bounded binary reader;
+		// markdown renders as conversation markdown; everything else stays text.
+		const load = /\.(?:docx|xlsx|pptx|png|jpe?g|gif|webp|bmp|ico|avif|pdf)$/i.test(selectedFile)
 			? bridge.previewResultFile({ cwd, path: selectedFile }).then(preview => { if (current()) setOfficePreview(preview); })
 			: bridge.readWorkspaceFile(selectedFile).then(text => { if (current()) setFileText(text); });
 		void load
@@ -438,6 +490,59 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 		await runWithFeedback({ id: `reveal:${workspace}:${path}`, title: t('workbench.revealInFolder'), run: () => bridge.revealWorkspacePath(path), canRetry: () => currentCwdRef.current === workspace });
 	}
 
+	/** Applies create/rename from the inline entry form (4.6 file-tree menu). */
+	async function submitEntryForm(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		if (!bridge || !entryForm || entryOpBusy) return;
+		const name = entryForm.value.trim();
+		if (!name) return;
+		setEntryOpBusy(true);
+		setEntryOpError(null);
+		const workspace = cwd;
+		try {
+			if (entryForm.mode === 'rename' && entryForm.originalPath) await bridge.renameWorkspaceEntry(entryForm.originalPath, name);
+			else await bridge.createWorkspaceEntry(entryForm.parentPath, name, entryForm.mode === 'create-folder' ? 'directory' : 'file');
+			if (currentCwdRef.current !== workspace) return;
+			// Keep selection coherent when the renamed path was being previewed.
+			if (entryForm.mode === 'rename' && entryForm.originalPath) {
+				const nextPath = `${entryForm.originalPath.includes('/') ? entryForm.originalPath.slice(0, entryForm.originalPath.lastIndexOf('/') + 1) : ''}${name}`;
+				// Renaming a folder also moves everything browsed or previewed beneath it.
+				const originalPath = entryForm.originalPath;
+				const remap = (path: string) => path === originalPath ? nextPath : path.startsWith(`${originalPath}/`) ? nextPath + path.slice(originalPath.length) : path;
+				if (selectedFile) setSelectedFile(remap(selectedFile));
+				setDirectory(remap(directory));
+			}
+			setEntryForm(null);
+			setListingRevision((value) => value + 1);
+		} catch (cause) {
+			if (currentCwdRef.current === workspace) setEntryOpError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			if (currentCwdRef.current === workspace) setEntryOpBusy(false);
+		}
+	}
+
+	/** Moves a tree entry to the OS trash after an inline confirmation (4.6). */
+	async function confirmDeleteEntry() {
+		if (!bridge || !deleteEntryTarget || entryOpBusy) return;
+		const target = deleteEntryTarget;
+		const workspace = cwd;
+		setEntryOpBusy(true);
+		setEntryOpError(null);
+		try {
+			await bridge.deleteWorkspaceEntry(target.path);
+			if (currentCwdRef.current !== workspace) return;
+			setDeleteEntryTarget(null);
+			// Leaving a deleted directory or preview open would show ghosts.
+			if (selectedFile === target.path || selectedFile?.startsWith(`${target.path}/`)) setSelectedFile(null);
+			if (directory === target.path || directory.startsWith(`${target.path}/`)) { setDirectory(parentDirectory(target.path)); setSelectedFile(null); }
+			setListingRevision((value) => value + 1);
+		} catch (cause) {
+			if (currentCwdRef.current === workspace) setEntryOpError(cause instanceof Error ? cause.message : String(cause));
+		} finally {
+			if (currentCwdRef.current === workspace) setEntryOpBusy(false);
+		}
+	}
+
 	async function startCommand(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
 		const text = command.trim();
@@ -504,25 +609,56 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 							<HoverTooltip title={cwd}><button type="button" onClick={() => { setDirectory(''); setSelectedFile(null); }}>{cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? cwd}</button></HoverTooltip>
 							{breadcrumb.map((part, index) => <span key={`${index}:${part}`}><Icon name="chevronRight" width="12" height="12" /><button type="button" onClick={() => { setDirectory(breadcrumb.slice(0, index + 1).join('/')); setSelectedFile(null); }}>{part}</button></span>)}
 						</div>
+						<div className="pd-workbench-file-search">
+							<Icon name="search" width="13" height="13" />
+							<input value={fileSearch} placeholder={t('workbench.fileSearchPlaceholder')} aria-label={t('workbench.fileSearchLabel')} spellCheck={false} autoComplete="off" onChange={(event) => setFileSearch(event.target.value)} onKeyDown={(event) => { event.stopPropagation(); if (event.nativeEvent.isComposing) return; if (event.key === 'Escape') { event.preventDefault(); setFileSearch(''); } else if (event.key === 'Enter') { event.preventDefault(); const entry = visibleFileEntries[0]; if (entry) void openFile(entry); } }} />
+							{fileSearch && <button type="button" className="pd-icon-button" aria-label={t('workbench.fileSearchClear')} onClick={() => { setFileSearch(''); fileList.current?.focus(); }}><Icon name="close" width="13" height="13" /></button>}
+						</div>
+						<HoverTooltip title={t('workbench.newEntry')}><button type="button" className="pd-icon-button" onClick={(event) => openMenu({ path: directory, name: directory.split('/').filter(Boolean).at(-1) ?? cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? '', kind: 'directory' }, event.currentTarget, null, false)} aria-label={t('workbench.newEntry')} aria-haspopup="menu"><Icon name="plus" width="15" height="15" /></button></HoverTooltip>
 						<HoverTooltip title={t('workbench.refresh')}><button type="button" className="pd-icon-button" onClick={() => setListingRevision((value) => value + 1)} aria-label={t('workbench.refreshFiles')}><Icon name="refresh" width="15" height="15" /></button></HoverTooltip>
 					</div>
+					{entryForm && <form className="pd-workbench-branch-form" onSubmit={(event) => void submitEntryForm(event)}>
+						<input autoFocus value={entryForm.value} onChange={(event) => setEntryForm({ ...entryForm, value: event.target.value })} placeholder={t(entryForm.mode === 'rename' ? 'workbench.renamePlaceholder' : entryForm.mode === 'create-folder' ? 'workbench.newFolderPlaceholder' : 'workbench.newFilePlaceholder')} spellCheck={false} autoComplete="off" aria-label={t(entryForm.mode === 'rename' ? 'workbench.rename' : entryForm.mode === 'create-folder' ? 'workbench.newFolder' : 'workbench.newFile')} onKeyDown={(event) => { event.stopPropagation(); if (event.nativeEvent.isComposing) return; if (event.key === 'Escape') { event.preventDefault(); setEntryForm(null); setEntryOpError(null); } }} />
+						<button type="submit" disabled={!entryForm.value.trim() || entryOpBusy}>{t(entryOpBusy ? 'workbench.entryOpBusy' : entryForm.mode === 'rename' ? 'workbench.renameConfirm' : 'workbench.createConfirm')}</button>
+					</form>}
+					{entryOpError && <div className="pd-workbench-error" role="alert">{entryOpError}</div>}
+					{deleteEntryTarget && (<div className="pd-workbench-discard-confirm" role="alertdialog" aria-label={t('workbench.deleteEntryTitle')}>
+						<p><strong>{t('workbench.deleteEntryTitle')}</strong><span>{t('workbench.deleteEntryHint', { name: deleteEntryTarget.name })}</span></p>
+						<div className="pd-workbench-discard-actions">
+							<button type="button" className="pd-workbench-discard-confirm-button" disabled={entryOpBusy} onClick={() => void confirmDeleteEntry()}>{t('workbench.deleteEntryConfirm')}</button>
+							<button type="button" disabled={entryOpBusy} onClick={() => setDeleteEntryTarget(null)}>{t('workbench.cancel')}</button>
+						</div>
+					</div>)}
 					<div ref={fileList} className="pd-workbench-file-list" role="group" tabIndex={visibleFileEntries.length ? -1 : 0} aria-label={t('workbench.fileList')} onKeyDown={fileKeyDown}>
-						{visibleFileEntries.map((entry) => <div key={entry.path} className="pd-workbench-file-row"><HoverTooltip title={entry.path}><button type="button" data-file-path={entry.path} tabIndex={entry.path === activePath ? 0 : -1} className={`pd-workbench-entry${selectedFile === entry.path ? ' is-selected' : ''}`} onFocus={() => setFocusedPath(entry.path)} onClick={() => void openFile(entry)} onContextMenu={event => { event.preventDefault(); openMenu(entry, event.currentTarget, event.button === 2 ? { x: event.clientX, y: event.clientY } : null); }}><Icon name={entry.kind === 'directory' ? 'folder' : 'file'} width="15" height="15" /><span>{entry.name}</span>{entry.kind === 'file' && <small>{readableSize(entry.size)}</small>}</button></HoverTooltip><button className="pd-workbench-file-menu-trigger" type="button" tabIndex={-1} aria-label={`${label('操作', 'Actions')}: ${entry.path}`} onClick={event => openMenu(entry, event.currentTarget)}>…</button></div>)}
+						{visibleFileEntries.map((entry) => <div key={entry.path} className="pd-workbench-file-row"><HoverTooltip title={entry.path}><button type="button" data-file-path={entry.path} tabIndex={entry.path === activePath ? 0 : -1} className={`pd-workbench-entry${selectedFile === entry.path ? ' is-selected' : ''}`} onFocus={() => setFocusedPath(entry.path)} onClick={() => void openFile(entry)} onContextMenu={event => { event.preventDefault(); openMenu(entry, event.currentTarget, event.button === 2 ? { x: event.clientX, y: event.clientY } : null); }}>{entry.kind === 'directory' ? <Icon name="folder" width="15" height="15" /> : <FileDisplayIcon name={entry.name} />}<span>{entry.name}</span>{entry.kind === 'file' && <small>{readableSize(entry.size)}</small>}</button></HoverTooltip><button className="pd-workbench-file-menu-trigger" type="button" tabIndex={-1} aria-label={`${label('操作', 'Actions')}: ${entry.path}`} onClick={event => openMenu(entry, event.currentTarget)}>…</button></div>)}
 						{menuTarget && open && !suspended && createPortal(<div ref={menu} className="pd-workbench-file-menu" role="menu" aria-label={menuTarget.path} style={{ ...menuPosition, visibility: menuPositioned ? 'visible' : 'hidden' }} onKeyDown={event => { event.stopPropagation(); const buttons = [...(menu.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])]; const index = buttons.indexOf(document.activeElement as HTMLButtonElement); if (event.key === 'Escape' || event.key === 'Tab') { if (event.key === 'Escape') event.preventDefault(); closeMenu(); } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); buttons[(index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus(); } }}>
 							<strong>{menuTarget.path || cwd}</strong>
+							{menuTarget.kind === 'directory' && <>
+								<button type="button" role="menuitem" onClick={() => { const target = menuTarget; closeMenu(); setEntryOpError(null); setEntryForm({ mode: 'create-file', parentPath: target.path, originalPath: null, originalName: '', value: '' }); }}>{t('workbench.newFile')}</button>
+								<button type="button" role="menuitem" onClick={() => { const target = menuTarget; closeMenu(); setEntryOpError(null); setEntryForm({ mode: 'create-folder', parentPath: target.path, originalPath: null, originalName: '', value: '' }); }}>{t('workbench.newFolder')}</button>
+							</>}
+							{menuEditable && <button type="button" role="menuitem" onClick={() => { const target = menuTarget; closeMenu(); setEntryOpError(null); setEntryForm({ mode: 'rename', parentPath: parentDirectory(target.path), originalPath: target.path, originalName: target.name, value: target.name }); }}>{t('workbench.rename')}</button>}
+							{menuEditable && <button type="button" role="menuitem" className="pd-workbench-file-menu-danger" onClick={() => { const target = menuTarget; closeMenu(); setEntryOpError(null); setDeleteEntryTarget(target); }}>{t('workbench.deleteEntry')}</button>}
 							<button type="button" role="menuitem" onClick={() => { const path = `${cwd.replace(/[\\/]$/, '')}/${menuTarget.path}`; closeMenu(); void runWithFeedback({ id: `copy-path:${path}`, title: label('复制路径', 'Copy path'), run: () => navigator.clipboard.writeText(path), success: label('已复制路径', 'Path copied') }); }}>{label('复制路径', 'Copy path')}</button>
 							<button type="button" role="menuitem" onClick={() => { const path = menuTarget.path; closeMenu(); void openInEditor(path); }}>{t('workbench.openInEditor')}</button>
 							<button type="button" role="menuitem" onClick={() => { const path = menuTarget.path; closeMenu(); void revealPath(path); }}>{t('workbench.revealInFolder')}</button>
 						</div>, document.body)}
-						{listingLoading && <div className="pd-workbench-empty">{t('workbench.loadingFolder')}</div>}
-						{listingError && <div className="pd-workbench-error" role="alert">{listingError}</div>}
-						{!listingLoading && !listingError && entries.length === 0 && <div className="pd-workbench-empty">{t('workbench.folderEmpty')}</div>}
-						{!listingLoading && entries.length >= 400 && <div className="pd-workbench-empty">{t('workbench.entryLimit')}</div>}
+						{searching ? <>
+							{searchLoading && <div className="pd-workbench-empty">{t('workbench.fileSearching')}</div>}
+							{searchError && <div className="pd-workbench-error" role="alert">{searchError}</div>}
+							{!searchLoading && !searchError && searchEntries.length === 0 && <div className="pd-workbench-empty">{t('workbench.fileSearchEmpty')}</div>}
+							{!searchLoading && searchTruncated && <div className="pd-workbench-empty">{t('workbench.entryLimit')}</div>}
+						</> : <>
+							{listingLoading && <div className="pd-workbench-empty">{t('workbench.loadingFolder')}</div>}
+							{listingError && <div className="pd-workbench-error" role="alert">{listingError}</div>}
+							{!listingLoading && !listingError && entries.length === 0 && <div className="pd-workbench-empty">{t('workbench.folderEmpty')}</div>}
+							{!listingLoading && entries.length >= 400 && <div className="pd-workbench-empty">{t('workbench.entryLimit')}</div>}
+						</>}
 					</div>
 					{selectedFile && <section className="pd-workbench-preview" aria-label={t('workbench.preview')}>
 						{previewControls}
 						<div className="pd-workbench-preview-head"><strong title={selectedFile}>{selectedFile}</strong><button type="button" className="pd-icon-button" onClick={() => { setSelectedFile(null); setFileText(''); }} aria-label={t('workbench.closePreview')}><Icon name="close" width="14" height="14" /></button></div>
-						{fileLoading ? <div className="pd-workbench-empty">{t('workbench.loadingFile')}</div> : fileError ? <div className="pd-workbench-error" role="alert">{fileError}</div> : <ScopedErrorBoundary scope="preview" resetKeys={[cwd, selectedFile]}>{officePreview?.kind === 'office' && officePreview.officeFormat && officePreview.bytesBase64 ? <Suspense fallback={<div className="pd-workbench-empty">{t('workbench.loadingFile')}</div>}><OfficeFilePreview bytesBase64={officePreview.bytesBase64} format={officePreview.officeFormat} /></Suspense> : officePreview ? <div className="pd-workbench-empty">{officePreview.reason === 'too-large' ? label('文件较大，无法在这里预览。', 'This file is too large to preview here.') : label('无法预览此文件。', 'This file cannot be previewed.')}<button type="button" onClick={() => { if (bridge) void runWithFeedback({ id: `open:${cwd}:${selectedFile}`, title: label('打开文件', 'Open file'), run: () => bridge.openResultFile({ cwd, path: selectedFile }) }); }}>{label('使用默认应用打开', 'Open in default app')}</button></div> : <WorkbenchTextView key={selectedFile} text={fileText} path={selectedFile} />}</ScopedErrorBoundary>}
+						{fileLoading ? <div className="pd-workbench-empty">{t('workbench.loadingFile')}</div> : fileError ? <div className="pd-workbench-error" role="alert">{fileError}</div> : <ScopedErrorBoundary scope="preview" resetKeys={[cwd, selectedFile]}>{officePreview?.kind === 'office' && officePreview.officeFormat && officePreview.bytesBase64 ? <Suspense fallback={<div className="pd-workbench-empty">{t('workbench.loadingFile')}</div>}><OfficeFilePreview bytesBase64={officePreview.bytesBase64} format={officePreview.officeFormat} /></Suspense> : officePreview?.kind === 'image' && officePreview.dataUrl ? <div className="pd-workbench-preview-image"><img src={officePreview.dataUrl} alt={selectedFile} /></div> : officePreview?.kind === 'pdf' && officePreview.dataUrl ? <iframe className="pd-workbench-preview-pdf" title={`${t('workbench.preview')}: ${selectedFile}`} src={officePreview.dataUrl} /> : officePreview ? <div className="pd-workbench-empty">{officePreview.reason === 'too-large' ? label('文件较大，无法在这里预览。', 'This file is too large to preview here.') : label('无法预览此文件。', 'This file cannot be previewed.')}<button type="button" onClick={() => { if (bridge) void runWithFeedback({ id: `open:${cwd}:${selectedFile}`, title: label('打开文件', 'Open file'), run: () => bridge.openResultFile({ cwd, path: selectedFile }) }); }}>{label('使用默认应用打开', 'Open in default app')}</button></div> : /\.(?:md|markdown)$/i.test(selectedFile) ? <div className="pd-workbench-preview-markdown" tabIndex={0}><ConversationMarkdown>{fileText}</ConversationMarkdown></div> : <WorkbenchTextView key={selectedFile} text={fileText} path={selectedFile} />}</ScopedErrorBoundary>}
 					</section>}
 				</>}
 
@@ -575,10 +711,7 @@ export function WorkbenchSidePane({ open, onClose, openRequest, terminalRequest,
 						</section>}
 						<details className="pd-workbench-history">
 							<summary><Icon name="gitCommit" width="13" height="13" />{t('workbench.history')}</summary>
-							<ul>
-								{gitLog.map((commit) => <li key={commit.hash}><code>{commit.shortHash}</code><span title={commit.subject}>{commit.subject}</span><small>{commit.author} · {new Date(commit.date).toLocaleDateString()}</small></li>)}
-								{gitLog.length === 0 && <li className="pd-workbench-empty">{t('workbench.historyEmpty')}</li>}
-							</ul>
+							<GitHistoryGraph commits={gitLog} />
 						</details>
 					</> : <div className="pd-workbench-empty">{t('workbench.notRepo')}</div>)}
 				</>}

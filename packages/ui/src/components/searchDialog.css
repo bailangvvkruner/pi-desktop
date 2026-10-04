@@ -55,3 +55,11 @@
 .pd-search-load-more { margin: 8px 14px 12px; }
 @media (max-width: 480px) { .pd-search-overlay { padding: 60px 8px 8px; } .pd-search-dialog { border-radius: 13px; } .pd-search-input-row { padding-left: 14px; } .pd-search-scopes { gap: 3px; padding-left: 12px; padding-right: 12px; } .pd-search-scope { gap: 4px; padding: 0 8px; } }
 @media (max-height: 440px) { .pd-search-overlay { padding-top: 56px; } .pd-search-input-row { padding-top: 8px; padding-bottom: 5px; } .pd-search-scopes { padding-bottom: 8px; } .pd-search-results { max-height: none; } .pd-search-empty { padding-top: 20px; padding-bottom: 20px; } }
+
+/* Recent search terms (empty-query view) */
+.pd-search-group { display: flow-root; }
+.pd-search-group-title .pd-search-history-clear { margin-left: auto; border: none; background: none; color: var(--pd-text-soft, #999); font-size: var(--pd-font-xs, 11px); cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.pd-search-group-title .pd-search-history-clear:hover { color: var(--pd-text); }
+.pd-search-result.is-history { cursor: pointer; display: flex; align-items: center; gap: 10px; }
+.pd-search-result.is-history .pd-search-history-remove { margin-left: auto; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: none; border-radius: 4px; background: none; color: var(--pd-text-soft, #999); cursor: pointer; }
+.pd-search-result.is-history .pd-search-history-remove:hover { color: var(--pd-text); background: var(--pd-surface-hover, rgba(128, 128, 128, 0.15)); }

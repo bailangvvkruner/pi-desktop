@@ -1065,3 +1065,32 @@ html.pd-popover-open :is(.pd-sidebar-toolbar, .pd-chat-header, .pd-chat-heading,
 .pd-workbench-history li code { color: var(--pd-brand); font-family: var(--pd-font-mono); font-size: var(--pd-font-xs); }
 .pd-workbench-history li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pd-workbench-history li small { color: var(--pd-text-weak); }
+
+/* ------------------------------------------------------------------ */
+/* File-type badges (zcode-style fileDisplay descriptors)              */
+/* ------------------------------------------------------------------ */
+.pd-file-badge {
+	display: inline-flex; align-items: center; justify-content: center;
+	flex: none; border-radius: 3px; font-weight: 600; line-height: 1;
+	letter-spacing: -0.02em; font-family: var(--pd-font-mono, ui-monospace, monospace);
+	background: color-mix(in srgb, var(--pd-file-accent, var(--pd-accent)) 16%, transparent);
+	color: var(--pd-file-accent, var(--pd-accent));
+	vertical-align: -2px;
+}
+.pd-file-badge.is-code { --pd-file-accent: #3b82f6; }
+.pd-file-badge.is-markup { --pd-file-accent: #e9713a; }
+.pd-file-badge.is-style { --pd-file-badge-accent: #a855f7; --pd-file-accent: #a855f7; }
+.pd-file-badge.is-data { --pd-file-accent: #d97706; }
+.pd-file-badge.is-config { --pd-file-accent: #64748b; }
+.pd-file-badge.is-doc { --pd-file-accent: #0d9488; }
+.pd-file-badge.is-image { --pd-file-accent: #16a34a; }
+.pd-file-badge.is-office-doc { --pd-file-accent: #2563eb; }
+.pd-file-badge.is-office-sheet { --pd-file-accent: #15803d; }
+.pd-file-badge.is-office-slides { --pd-file-accent: #d97706; }
+.pd-file-badge.is-pdf { --pd-file-accent: #dc2626; }
+.pd-file-badge.is-archive { --pd-file-accent: #92400e; }
+.pd-file-badge.is-audio { --pd-file-accent: #db2777; }
+.pd-file-badge.is-video { --pd-file-accent: #be185d; }
+.pd-file-badge.is-shell { --pd-file-accent: #65a30d; }
+.pd-file-badge.is-text { --pd-file-accent: #6b7280; }
+.pd-file-badge.is-other { --pd-file-accent: var(--pd-text-soft, #999); }

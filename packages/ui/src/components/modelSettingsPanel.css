@@ -54,9 +54,14 @@
 .pd-model-provider-badge { display: inline-flex; padding: 2px 5px; border-radius: 4px; background: var(--pd-selected); color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
 .pd-model-provider-subtitle { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--pd-text-weak); font-size: var(--pd-font-sm); overflow-wrap: anywhere; }
 .pd-model-provider-subtitle code { font-size: inherit; }
-.pd-model-connection-card { display: flex; flex-direction: column; gap: 14px; padding: 18px 0; border-block: 1px solid var(--pd-border-soft); }
-.pd-model-connection-card > h4 { margin: 0; font-size: var(--pd-font-caption); font-weight: 600; }
-.pd-model-connection-card .pd-model-provider-connection { margin: 0; }
+.pd-model-provider-connection-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; padding: 11px 0; border-block: 1px solid var(--pd-border-soft); }
+.pd-model-provider-url { display: flex; flex: 1 1 240px; align-items: baseline; gap: 8px; min-width: 0; }
+.pd-model-provider-url-label { flex: 0 0 auto; color: var(--pd-text-weak); font-size: var(--pd-font-sm); }
+.pd-model-provider-url code { overflow-wrap: anywhere; color: var(--pd-text-subtle); font-family: ui-monospace, Consolas, monospace; font-size: var(--pd-font-sm); line-height: 1.5; }
+.pd-model-provider-protocol { flex: 0 0 auto; }
+.pd-model-provider-detail-head .pd-model-page-actions .pd-model-settings-button { min-height: 29px; }
+.pd-model-provider-edit { display: flex; flex-direction: column; gap: 14px; }
+.pd-model-provider-edit .pd-model-provider-connection { margin: 0; }
 .pd-model-count { margin-left: 5px; color: var(--pd-text-weak); font-size: var(--pd-font-sm); font-weight: 400; }
 .pd-model-catalog { padding-top: 3px; }
 .pd-model-detail-feedback { position: sticky; bottom: 0; margin: 12px 0 0; background: var(--pd-surface); box-shadow: var(--pd-shadow-popover); }
@@ -97,6 +102,12 @@
 .pd-model-settings-model-copy > strong { overflow-wrap: anywhere; font-size: var(--pd-font-caption); font-weight: 600; }
 .pd-model-settings-model-copy > code { overflow-wrap: anywhere; color: var(--pd-text-weak); font-family: ui-monospace, Consolas, monospace; font-size: var(--pd-font-sm); line-height: 1.4; }
 .pd-model-settings-model-meta { display: flex; flex-wrap: wrap; gap: 5px 8px; color: var(--pd-text-weak); font-size: var(--pd-font-xs); line-height: 1.4; }
+.pd-model-settings-model-test { color: var(--pd-text-weak); font-size: var(--pd-font-xs); line-height: 1.4; overflow-wrap: anywhere; }
+.pd-model-settings-model-test.is-ok { color: var(--pd-success); }
+.pd-model-settings-model-test.is-error { color: var(--pd-danger); }
+.pd-model-settings-model-actions [data-action="test-model"][aria-busy="true"] svg { animation: pd-model-test-spin 1s linear infinite; }
+@keyframes pd-model-test-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .pd-model-settings-model-actions [data-action="test-model"][aria-busy="true"] svg { animation: none; } }
 .pd-model-settings-model-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 .pd-model-settings-current-badge { margin-right: auto; color: var(--pd-brand); font-size: var(--pd-font-sm); }
 .pd-model-settings-form { display: flex; flex-direction: column; gap: 12px; min-width: 0; }

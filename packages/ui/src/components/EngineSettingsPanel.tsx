@@ -120,7 +120,10 @@ export function EngineSettingsPanel({ onDraftStateChange }: { onDraftStateChange
 		if (!bridge?.relaunchApp || restarting) return;
 		setRestarting(true);
 		setPending('restart');
-		try { await bridge.relaunchApp(); } catch (cause) { if (mounted.current) setError(errorText(cause)); setRestarting(false); setPending(null); }
+		try {
+			// The user may cancel the running-task confirmation; the app keeps running.
+			if (!await bridge.relaunchApp() && mounted.current) { setRestarting(false); setPending(null); }
+		} catch (cause) { if (mounted.current) setError(errorText(cause)); setRestarting(false); setPending(null); }
 	}
 
 	const builtinVersion = status?.builtinVersion ?? null;

@@ -10,10 +10,10 @@ export interface ResultFilePreview {
   path: string;
   name: string;
   size: number;
-  kind: 'text' | 'image' | 'pdf' | 'office' | 'unsupported' | 'directory';
+  kind: 'text' | 'html' | 'image' | 'pdf' | 'office' | 'unsupported' | 'directory';
   text?: string;
   dataUrl?: string;
-  officeFormat?: 'docx' | 'xlsx';
+  officeFormat?: 'docx' | 'xlsx' | 'pptx';
   bytesBase64?: string;
   truncated?: boolean;
   reason?: 'too-large' | 'unsupported';

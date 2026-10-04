@@ -1,6 +1,8 @@
 export default async function settingsReview(review) {
   await review.waitFor('window.__modelReview?.ready === true');
-  const connection = '.pd-model-provider-detail [data-field="provider.baseUrl"]';
+  const editDialog = 'dialog[open][data-model-dialog="edit"]';
+  const connection = `${editDialog} [data-field="provider.baseUrl"]`;
+  const credentialInput = `${editDialog} .pd-model-settings-credentials input[type=password]`;
   const savedCalls = 'window.__modelReview.calls.filter(c=>c.name==="saveCustomProvider")';
   const setRange = async (selector, value) => {
     await review.evaluate(`(() => {const e=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(String(value))});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
@@ -9,28 +11,33 @@ export default async function settingsReview(review) {
   await review.click('.pd-settings-entry');
   await review.clickText('.pd-settings-nav button', '模型管理');
   await review.click('[data-provider="review-gateway"]');
+  await review.click('[data-action="edit-provider"]');
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(connection)}))`);
   await review.fill(connection, 'https://draft.example.invalid/v1');
-  await review.fill('.pd-model-settings-credentials input[type=password]', 'public-test-draft-key');
-  await review.clickText('.pd-settings-nav button', '外观');
-  await review.waitFor('Boolean(document.querySelector(".pd-settings-discard"))');
-  await review.assert('Boolean(document.querySelector("[data-action=save-settings-and-leave]"))', 'Settings navigation offers save, discard, and continue editing');
+  await review.fill(credentialInput, 'public-test-draft-key');
+  await review.click(`${editDialog} .pd-model-dialog-header button`);
+  await review.waitFor('Boolean(document.querySelector("dialog[open][data-model-dialog=confirm]"))');
+  await review.assert('Boolean(document.querySelector("[data-action=save-model-draft-and-leave]"))', 'Closing the provider settings dialog offers save, discard, and continue editing');
   await review.evaluate('window.__modelReview.failures.saveCustomProvider="Deliberate provider save failure"');
-  await review.click('[data-action="save-settings-and-leave"]');
-  await review.waitFor('Boolean(document.querySelector(".pd-settings-discard [role=alert]"))');
-  await review.assert(`document.querySelector(${JSON.stringify(connection)}).value === 'https://draft.example.invalid/v1' && document.querySelector('.pd-model-settings-credentials input').value==='public-test-draft-key'`, 'Failed save keeps connection and credential drafts');
-  await review.clickText('.pd-settings-discard button', '继续编辑');
-  await review.evaluate('delete window.__modelReview.failures.saveCustomProvider');
-  await review.clickText('.pd-settings-nav button', '外观');
-  await review.click('[data-action="save-settings-and-leave"]');
-  await review.waitFor('Boolean(document.querySelector("[data-setting=font]")) && !document.querySelector(".pd-settings-discard")');
-  await review.assert(`window.__modelReview.providers.find(p=>p.provider==='review-gateway').baseUrl==='https://draft.example.invalid/v1' && window.__modelReview.calls.some(c=>c.name==='setProviderApiKey'&&c.args[0]==='review-gateway')`, 'Save-and-leave saves all changed configuration parts');
-  await review.clickText('.pd-settings-nav button', '模型管理');
-  await review.click('[data-provider="review-gateway"]');
-  await review.fill(connection, 'https://second.example.invalid/v1');
-  await review.click('[data-provider="openai"]');
   await review.click('[data-action="save-model-draft-and-leave"]');
-  await review.waitFor('document.querySelector(".pd-model-provider-option.is-selected")?.dataset.provider === "openai" && !document.querySelector("dialog[open][data-model-dialog=confirm]")');
-  await review.assert(`window.__modelReview.providers.find(p=>p.provider==='review-gateway').baseUrl==='https://second.example.invalid/v1'`, 'Provider switching saves the original provider before leaving');
+  await review.waitFor('Boolean(document.querySelector("dialog[open][data-model-dialog=confirm] [role=alert]"))');
+  await review.assert(`document.querySelector(${JSON.stringify(connection)}).value === 'https://draft.example.invalid/v1' && document.querySelector(${JSON.stringify(credentialInput)}).value==='public-test-draft-key'`, 'Failed save keeps connection and credential drafts');
+  await review.clickText('dialog[open][data-model-dialog=confirm] button', '继续编辑');
+  await review.evaluate('delete window.__modelReview.failures.saveCustomProvider');
+  await review.click(`${editDialog} .pd-model-dialog-header button`);
+  await review.waitFor('Boolean(document.querySelector("dialog[open][data-model-dialog=confirm]"))');
+  await review.click('[data-action="save-model-draft-and-leave"]');
+  await review.waitFor('document.querySelector("dialog[open].pd-model-dialog") === null');
+  await review.assert(`window.__modelReview.providers.find(p=>p.provider==='review-gateway').baseUrl==='https://draft.example.invalid/v1' && window.__modelReview.calls.some(c=>c.name==='setProviderApiKey'&&c.args[0]==='review-gateway')`, 'Save-and-leave saves all changed configuration parts');
+  await review.click('[data-provider="review-gateway"]');
+  await review.click('[data-action="edit-provider"]');
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(connection)}))`);
+  await review.fill(connection, 'https://second.example.invalid/v1');
+  await review.click(`${editDialog} .pd-model-dialog-header button`);
+  await review.waitFor('Boolean(document.querySelector("dialog[open][data-model-dialog=confirm]"))');
+  await review.click('[data-action="save-model-draft-and-leave"]');
+  await review.waitFor('document.querySelector("dialog[open].pd-model-dialog") === null');
+  await review.assert(`window.__modelReview.providers.find(p=>p.provider==='review-gateway').baseUrl==='https://second.example.invalid/v1'`, 'Saving the provider settings draft persists the connection');
 
   for (const [width, size, theme] of [[1440,12,'深色'],[900,13,'浅色'],[1440,16,'浅色'],[680,20,'深色']]) {
     await review.viewport(width,1000);

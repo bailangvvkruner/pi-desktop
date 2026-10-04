@@ -1,8 +1,8 @@
 import { unzipSync, strFromU8 } from 'fflate';
 import { XMLParser } from 'fast-xml-parser';
-import type { OfficeParagraph, OfficePreview, OfficeRun, OfficeSheet, OfficeTable } from './officePreviewTypes';
+import type { OfficeParagraph, OfficePreview, OfficeRun, OfficeSheet, OfficeSlide, OfficeTable } from './officePreviewTypes';
 
-export const OFFICE_LIMITS = { archive: 10 * 1024 * 1024, expanded: 24 * 1024 * 1024, xml: 8 * 1024 * 1024, sheets: 50, rows: 1000, columns: 100, cells: 50_000, blocks: 2000, characters: 2_000_000 } as const;
+export const OFFICE_LIMITS = { archive: 10 * 1024 * 1024, expanded: 24 * 1024 * 1024, xml: 8 * 1024 * 1024, sheets: 50, rows: 1000, columns: 100, cells: 50_000, blocks: 2000, characters: 2_000_000, slides: 100, slideTexts: 300 } as const;
 type Node = Record<string, any>;
 const array = (value: any): any[] => value === undefined || value === null ? [] : Array.isArray(value) ? value : [value];
 function xml(source: string, ordered = false): any {
@@ -23,11 +23,11 @@ function columnIndex(reference: string): number {
   return result - 1;
 }
 /** Parse only bounded XML parts. External relationships, macros, embedded objects and remote images are never loaded. */
-export function parseOfficePreview(bytes: Uint8Array, format: 'docx' | 'xlsx'): OfficePreview {
+export function parseOfficePreview(bytes: Uint8Array, format: 'docx' | 'xlsx' | 'pptx'): OfficePreview {
   if (bytes.length > OFFICE_LIMITS.archive) throw new Error('Office file is too large');
   let total = 0;
   const parts = unzipSync(bytes, { filter: entry => {
-    const wanted = format === 'docx' ? entry.name === 'word/document.xml' : /^(?:xl\/(?:workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|styles\.xml|worksheets\/sheet\d+\.xml))$/.test(entry.name);
+    const wanted = format === 'docx' ? entry.name === 'word/document.xml' : format === 'pptx' ? /^ppt\/slides\/slide\d+\.xml$/.test(entry.name) : /^(?:xl\/(?:workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|styles\.xml|worksheets\/sheet\d+\.xml))$/.test(entry.name);
     if (!wanted) return false;
     total += entry.originalSize;
     if (entry.originalSize > OFFICE_LIMITS.xml || total > OFFICE_LIMITS.expanded) throw new Error('Expanded Office content is too large');
@@ -83,6 +83,34 @@ export function parseOfficePreview(bytes: Uint8Array, format: 'docx' | 'xlsx'): 
       }
     }
     return { format, blocks, truncated };
+  }
+  if (format === 'pptx') {
+    const slides: OfficeSlide[] = [];
+    let truncated = false, characters = 0;
+    const names = Object.keys(parts).filter(name => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+      .sort((a, b) => Number(/(\d+)\.xml$/.exec(a)![1]) - Number(/(\d+)\.xml$/.exec(b)![1]));
+    if (!names.length) throw new Error('PowerPoint slides are missing');
+    if (names.length > OFFICE_LIMITS.slides) { truncated = true; names.length = OFFICE_LIMITS.slides; }
+    // Ordered parsing keeps text runs in reading order; only a:t text nodes are read.
+    for (const name of names) {
+      const document = read(name, true);
+      if (!document) continue;
+      const texts: string[] = [];
+      const walk = (nodes: Node[]): void => {
+        for (const node of nodes) {
+          if (node['a:t']) { for (const item of array(node['a:t'])) {
+            const value = String(item['#text'] ?? '');
+            characters += value.length;
+            if (texts.length >= OFFICE_LIMITS.slideTexts || characters > OFFICE_LIMITS.characters) truncated = true;
+            else if (value) texts.push(value);
+          } }
+          for (const [key, value] of Object.entries(node)) if (key !== ':@' && Array.isArray(value)) walk(value);
+        }
+      };
+      walk(document);
+      slides.push({ index: Number(/(\d+)\.xml$/.exec(name)![1]), texts });
+    }
+    return { format, slides, truncated };
   }
   const workbook = read('xl/workbook.xml')?.workbook;
   if (!workbook) throw new Error('Excel workbook is missing');

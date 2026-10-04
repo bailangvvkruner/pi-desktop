@@ -129,6 +129,38 @@ test('discard resolves porcelain paths relative to the repository in a nested wo
   } finally { await service.dispose(); removeSafeTemp(root); }
 });
 
+test('Git graph labels HEAD ahead of the local branch names on its commit', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-desktop-git-graph-'));
+  const { WorkbenchService } = await import('../packages/desktop/src/main/workbenchService.ts');
+  const service = new WorkbenchService(() => root, () => {});
+  const git = (...args) => execFileSync('git', ['-C', root, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', ...args], { encoding: 'utf8' });
+  try {
+    git('init', '-q', '-b', 'main');
+    git('commit', '-q', '--allow-empty', '-m', 'first');
+    git('branch', 'side');
+    git('commit', '-q', '--allow-empty', '-m', 'second');
+    const commits = await service.gitGraph(10);
+    assert.deepEqual(commits.map((commit) => commit.subject), ['second', 'first']);
+    assert.deepEqual(commits[0].refs, ['HEAD', 'main']);
+    assert.deepEqual(commits[1].refs, ['side']);
+    assert.deepEqual(commits[0].parents, [commits[1].hash]);
+  } finally { await service.dispose(); removeSafeTemp(root); }
+});
+
+test('renaming entries allows case-only changes but still rejects a different existing entry', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'pi-desktop-rename-'));
+  const { WorkbenchService } = await import('../packages/desktop/src/main/workbenchService.ts');
+  const service = new WorkbenchService(() => root, () => {});
+  try {
+    writeFileSync(join(root, 'readme.md'), 'a');
+    writeFileSync(join(root, 'other.md'), 'b');
+    await service.renameEntry('readme.md', 'README.md');
+    assert.ok((await service.listEntries()).some((entry) => entry.name === 'README.md'));
+    await assert.rejects(service.renameEntry('README.md', 'other.md'), /同名项目已存在/);
+    assert.equal(readFileSync(join(root, 'other.md'), 'utf8'), 'b');
+  } finally { await service.dispose(); removeSafeTemp(root); }
+});
+
 test('Git history bounds oversized commit subjects without losing the commit', async () => {
   const root = mkdtempSync(join(tmpdir(), 'pi-desktop-long-log-'));
   const { WorkbenchService } = await import('../packages/desktop/src/main/workbenchService.ts');

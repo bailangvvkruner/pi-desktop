@@ -133,6 +133,8 @@ export const HISTORY_ATTACHMENT_BUDGET = 8 * 1024 * 1024;
 const HISTORY_PAGE_MAX = 500;
 const MAX_LOADED_CONTEXTS = 12;
 const TEXT_ATTACHMENT_MARKER = '\n\n<!-- pi-desktop:attachments-v1 -->\n';
+/** Custom-entry type carrying plugin ui.notify notices as inline system rows. */
+export const EXTENSION_NOTICE_CUSTOM_TYPE = 'extension-notice';
 
 async function listWorkspaceSessions(cwd: string) {
 	const sessions = await SessionManager.list(cwd);
@@ -1352,7 +1354,19 @@ class SingleAgentService {
 				return typeof value === 'string' ? value : undefined;
 			},
 			notify: (message, type = 'info') => {
-				void request({ id: randomUUID(), kind: 'notify', title: message, notificationType: type });
+				// Plugin notices join the conversation timeline as inline system rows
+				// instead of floating toasts. Plain custom entries persist with the
+				// session file but never enter model context.
+				const session = this.runtime?.session;
+				try {
+					if (!session) throw new Error('no active session');
+					session.sessionManager.appendCustomEntry(EXTENSION_NOTICE_CUSTOM_TYPE, { message, notificationType: type });
+					// Appending outside the SDK emits no event; resync while idle so the
+					// row appears immediately. During a run the settle resync picks it up.
+					if (session.isIdle) this.fireReady();
+				} catch {
+					void request({ id: randomUUID(), kind: 'notify', title: message, notificationType: type });
+				}
 			},
 			onTerminalInput: () => () => {},
 			setStatus: () => {},
@@ -2839,6 +2853,23 @@ function historyTimeline(entries: SessionEntry[], liveRun?: UiConversationRun | 
 				order: nextOrder++,
 				role: 'system',
 				systemKind: entry.type === 'compaction' ? 'compaction' : entry.type === 'branch_summary' ? 'branch-summary' : 'custom',
+				text,
+				status: 'done',
+			});
+			continue;
+		}
+		// Plugin ui.notify notices ride on plain custom entries: persisted with the
+		// session file, displayed inline, but excluded from model context.
+		if (entry.type === 'custom' && entry.customType === EXTENSION_NOTICE_CUSTOM_TYPE) {
+			const data = entry.data as { message?: unknown; notificationType?: unknown } | undefined;
+			const text = typeof data?.message === 'string' ? data.message.trim() : '';
+			if (text) messages.push({
+				id: entry.id,
+				runId,
+				order: nextOrder++,
+				role: 'system',
+				systemKind: 'extension-notice',
+				notificationType: data?.notificationType === 'warning' || data?.notificationType === 'error' ? data.notificationType : 'info',
 				text,
 				status: 'done',
 			});

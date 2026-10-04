@@ -120,6 +120,9 @@ export const IPC_CHANNELS = {
   workspaceListEntries: 'workspace:list-entries',
   workspaceSearchFiles: 'workspace:search-files',
   workspaceReadFile: 'workspace:read-file',
+  workspaceCreateEntry: 'workspace:create-entry',
+  workspaceRenameEntry: 'workspace:rename-entry',
+  workspaceDeleteEntry: 'workspace:delete-entry',
   resultFileOpen: 'result-file:open',
   resultFileReveal: 'result-file:reveal',
   resultFilePreview: 'result-file:preview',
@@ -131,6 +134,7 @@ export const IPC_CHANNELS = {
   workspaceGitSetStaged: 'workspace:git-set-staged',
   workspaceGitDiscard: 'workspace:git-discard',
   workspaceGitLog: 'workspace:git-log',
+  workspaceGitGraph: 'workspace:git-graph',
   workspaceGitCreateBranch: 'workspace:git-create-branch',
   workspaceOpenPathInEditor: 'workspace:open-path-in-editor',
   workspaceRevealPath: 'workspace:reveal-path',
@@ -396,7 +400,9 @@ export interface UiMessage {
   order: number;
   role: 'user' | 'assistant' | 'system';
   /** System-row flavor: compaction/branch summaries and extension notices (role 'system' only). */
-  systemKind?: 'compaction' | 'branch-summary' | 'custom';
+  systemKind?: 'compaction' | 'branch-summary' | 'custom' | 'extension-notice';
+  /** Extension-notice flavor: info/warning/error styling (systemKind 'extension-notice' only). */
+  notificationType?: 'info' | 'warning' | 'error';
   /** Accumulated text (grows while streaming). */
   text: string;
   /** Only provider-exposed thinking text; signatures and redacted blocks stay in the SDK. */
@@ -714,6 +720,20 @@ export interface WorkspaceGitLogEntry {
   subject: string;
 }
 
+/** One commit in the git graph, with topology and local refs (4.5 graph). */
+export interface WorkspaceGitGraphCommit {
+  hash: string;
+  shortHash: string;
+  author: string;
+  /** ISO-8601 author date. */
+  date: string;
+  subject: string;
+  /** Parent hashes, newest-first order matches git log output. */
+  parents: string[];
+  /** Local branch names and HEAD pointing at this commit. */
+  refs: string[];
+}
+
 
 export interface WorkspaceOpener {
   id: 'explorer' | 'vscode' | (string & {});
@@ -871,8 +891,8 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   probePiEngine(path: string): Promise<UiPiEngineProbe>;
   getPiEngineStatus(): Promise<UiPiEngineStatus>;
   pickPiEngineDirectory(): Promise<string | null>;
-  /** Quit and start the app again so a changed Pi engine takes effect. */
-  relaunchApp(): Promise<void>;
+  /** Quit and start the app again so a changed Pi engine takes effect; false when the user cancels. */
+  relaunchApp(): Promise<boolean>;
   /** Shared appearance state; null when nothing has been saved yet. */
   getAppearance(): Promise<UiAppearanceState | null>;
   setAppearance(state: UiAppearanceState): Promise<void>;
@@ -896,6 +916,12 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   listWorkspaceEntries(relativePath?: string): Promise<WorkspaceEntry[]>;
   searchWorkspaceFiles(query: string, options?: { includeDirectories?: boolean }): Promise<{ files: WorkspaceEntry[]; truncated: boolean; skipped?: number; ignoredDirectories?: string[] }>;
   readWorkspaceFile(relativePath: string): Promise<string>;
+  /** Creates an empty file or folder inside a workspace directory (4.6). */
+  createWorkspaceEntry(parentPath: string, name: string, kind: 'file' | 'directory'): Promise<void>;
+  /** Renames a file or folder within its directory (4.6). */
+  renameWorkspaceEntry(path: string, newName: string): Promise<void>;
+  /** Moves a file or folder to the OS trash (4.6). */
+  deleteWorkspaceEntry(path: string): Promise<void>;
   getWorkspaceGitStatus(): Promise<WorkspaceGitStatus>;
   getWorkspaceGitDiff(relativePath: string, source?: 'staged' | 'unstaged' | 'all'): Promise<string>;
   /** Local branch list and current ref for the composer branch picker. */
@@ -908,6 +934,8 @@ export interface AgentBridge extends InputFeatureBridge, DataFeaturesBridge, Wor
   discardWorkspaceGitChanges(paths: string[]): Promise<void>;
   /** Recent commit history for the git pane (4.5). */
   getWorkspaceGitLog(limit?: number): Promise<WorkspaceGitLogEntry[]>;
+  /** Commit history with parents and refs for the git graph (4.5). */
+  getWorkspaceGitGraph(limit?: number): Promise<WorkspaceGitGraphCommit[]>;
   /** Creates a local branch, optionally switching to it (4.5). */
   createWorkspaceGitBranch(name: string, checkout: boolean): Promise<void>;
   /** Opens a workspace file in VS Code, optionally at a line (4.7). */

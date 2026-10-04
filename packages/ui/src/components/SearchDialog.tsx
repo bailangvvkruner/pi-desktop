@@ -6,7 +6,9 @@ import { useChatStore } from '../store';
 import { useT } from '../i18n';
 import { isConversationWorkspace, sidebarProjectPaths } from '../sidebarOrganization';
 import { Icon } from './Icons';
+import { FileDisplayIcon } from './FileDisplayIcon';
 import { SegmentedIndicator } from './SegmentedIndicator';
+import { clearSearchHistory, readSearchHistory, removeSearchTerm, saveSearchTerm } from '../searchHistory';
 import './searchDialog.css';
 
 export interface SearchCommand {
@@ -99,6 +101,7 @@ export function SearchDialog({ commands, onClose, onSelectSession, onSelectFile 
 	const advanced = typeof dataBridge?.searchSessionsPage === 'function';
 	const label = (zh: string, en: string) => locale === 'en-US' ? en : zh;
 	const [rawQuery, setRawQuery] = useState('');
+	const [searchHistory, setSearchHistory] = useState(() => readSearchHistory());
 	const [selectedScope, setSelectedScope] = useState<Scope>('all');
 	const { query, scope } = parseQuery(rawQuery, selectedScope);
 	const [workspaceFilter, setWorkspaceFilter] = useState('');
@@ -269,6 +272,9 @@ export function SearchDialog({ commands, onClose, onSelectSession, onSelectFile 
 			return;
 		}
 		busyRef.current = true;
+		// Remember the term the moment a result is chosen; failures keep the history too
+		// because the search itself already happened.
+		if (query) setSearchHistory(saveSearchTerm(query));
 		setPending(true);
 		setActionError(null);
 		try {
@@ -324,7 +330,7 @@ export function SearchDialog({ commands, onClose, onSelectSession, onSelectFile 
 		if (row.kind === 'retry') body = <><Icon name="refresh" /><span className="pd-search-result-copy"><span className="pd-search-result-title">{t(row.loading ? 'search.loading' : 'search.retry')} · {t(`search.scope.${row.scope}`)}</span><span className="pd-search-result-snippet">{row.error}</span></span></>;
 		else if (row.kind === 'more') body = <><Icon name="more" /><span className="pd-search-result-copy">{t('search.showAll', { scope: t(`search.scope.${row.scope}`) })}</span><Icon name="chevronRight" /></>;
 		else if (row.kind === 'command') body = <><Icon name={row.command.icon ?? 'spark'} /><span className="pd-search-result-copy"><span className="pd-search-result-title"><Highlight text={row.command.label} query={query} /></span></span>{row.command.shortcut && <kbd>{row.command.shortcut}</kbd>}</>;
-		else if (row.kind === 'file') body = <><Icon name="file" /><span className="pd-search-result-copy"><span className="pd-search-result-title"><Highlight text={row.file.name} query={query} /></span>{row.file.snippet && <span className="pd-search-result-snippet"><Highlight text={row.file.snippet} query={query} /></span>}<span className="pd-search-result-meta"><span><Highlight text={row.file.path} query={query} />{row.file.line ? `:${row.file.line}:${row.file.column}` : ''}</span></span></span></>;
+		else if (row.kind === 'file') body = <><FileDisplayIcon name={row.file.name} /><span className="pd-search-result-copy"><span className="pd-search-result-title"><Highlight text={row.file.name} query={query} /></span>{row.file.snippet && <span className="pd-search-result-snippet"><Highlight text={row.file.snippet} query={query} /></span>}<span className="pd-search-result-meta"><span><Highlight text={row.file.path} query={query} />{row.file.line ? `:${row.file.line}:${row.file.column}` : ''}</span></span></span></>;
 		else {
 			const session = row.session;
 			const title = session.name?.trim() || session.firstMessage.trim().split(/\r?\n/)[0] || t('sidebar.unnamed');
@@ -350,6 +356,10 @@ export function SearchDialog({ commands, onClose, onSelectSession, onSelectFile 
 				</div>}
 				<div className="pd-search-body">
 					<div ref={listRef} id={`${id}-list`} className="pd-search-results" role="listbox" aria-label={t('search.results')} aria-busy={loading || pending}>
+						{!query && searchHistory.length > 0 && <div className="pd-search-group" role="group" aria-labelledby={`${id}-history-title`}>
+							<div className="pd-search-group-title" id={`${id}-history-title`} role="presentation">{t('search.recentSearches')}<button type="button" className="pd-search-history-clear" onClick={() => { clearSearchHistory(); setSearchHistory([]); }}>{t('search.clearHistory')}</button></div>
+							{searchHistory.map((term) => <div key={term} className="pd-search-result is-history" role="option" aria-selected={false} onClick={() => { setRawQuery(term); inputRef.current?.focus(); }}><Icon name="clock" width="15" height="15" /><span className="pd-search-result-copy"><span className="pd-search-result-title">{term}</span></span><button type="button" className="pd-search-history-remove" aria-label={t('search.removeTerm', { term })} onClick={(event) => { event.stopPropagation(); setSearchHistory(removeSearchTerm(term)); }}><Icon name="close" width="13" height="13" /></button></div>)}
+						</div>}
 						{groups.map((group) => <div key={group.scope} role="group" aria-labelledby={`${id}-group-${group.scope}`}><div className="pd-search-group-title" id={`${id}-group-${group.scope}`} role="presentation">{resultLabel(group.scope)}{group.scope === 'files' && <span>{workspaceLabel(cwd)}</span>}</div>{group.rows.map(renderRow)}</div>)}
 					</div>
 					{loading && <div className="pd-search-status" role="status">{t('search.loading')}</div>}

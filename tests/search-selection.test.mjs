@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import vm from 'node:vm';
 import * as sidebarOrganization from '../packages/ui/src/sidebarOrganization.ts';
+import * as searchHistory from '../packages/ui/src/searchHistory.ts';
 
 const desktopRequire = createRequire(new URL('../packages/desktop/package.json', import.meta.url));
 const typescript = desktopRequire('typescript');
@@ -59,6 +60,8 @@ function mountSearch(bridge) {
       if (specifier === '../sidebarOrganization') return sidebarOrganization;
       if (specifier === '../i18n') return { useT: () => ({ t: (key) => key, locale: 'en-US' }) };
       if (specifier === './Icons') return { Icon: 'Icon' };
+      if (specifier === './FileDisplayIcon') return { FileDisplayIcon: 'FileDisplayIcon' };
+      if (specifier === '../searchHistory') return searchHistory;
       return {};
     },
   };

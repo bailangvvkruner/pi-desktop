@@ -1,7 +1,7 @@
 {
   "name": "@pidesktop/desktop",
   "private": true,
-  "version": "0.1.17",
+  "version": "0.1.18",
   "license": "MIT",
   "description": "Desktop workbench for the Pi coding agent",
   "author": "Pi Desktop contributors",
@@ -26,7 +26,8 @@
     "electron-updater": "6.8.9",
     "fflate": "^0.8.3",
     "node-pty": "^1.1.0",
-    "pdfjs-dist": "^6.3.289"
+    "pdfjs-dist": "^6.3.289",
+    "undici": "8.10.2"
   },
   "optionalDependencies": {
     "@esbuild/darwin-arm64": "0.28.2",

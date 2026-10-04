@@ -33,7 +33,6 @@
 .pd-extension-request.is-collapsed { padding-block: 9px; }
 .pd-extension-request.is-collapsed .pd-extension-request-heading h2 { -webkit-line-clamp: 1; }
 .pd-extension-modal-slot { position: sticky; bottom: 0; z-index: 1; width: 100%; min-width: 0; margin-top: 14px; }
-.pd-extension-fallback-slot { position: fixed; right: 20px; bottom: 20px; z-index: 51; width: min(540px, calc(100vw - 40px)); }
 @media (max-height: 600px) {
   .pd-extension-request { max-height: min(220px, 32vh); padding: 9px; }
   .pd-extension-request-heading > span { display: none; }
@@ -41,5 +40,4 @@
 }
 @media (max-width: 540px) {
   .pd-extension-request-count { max-width: 72px; text-align: right; }
-  .pd-extension-fallback-slot { right: 12px; bottom: 12px; width: calc(100vw - 24px); }
 }

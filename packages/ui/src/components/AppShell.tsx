@@ -10,7 +10,7 @@ import { Sidebar } from './Sidebar';
 import { Icon } from './Icons';
 import { HoverTooltip } from './HoverTooltip';
 import { WindowControls } from './WindowControls';
-import { ExtensionDialogHost } from './ExtensionDialogHost';
+import { ExtensionDialogHost, useExtensionRequestPending } from './ExtensionDialogHost';
 import { UpdateNotice } from './UpdateNotice';
 import { OperationFeedback } from './OperationFeedback';
 import { FolderProjectDropZone } from './FolderProjectDropZone';
@@ -20,6 +20,7 @@ import { useChatStore } from '../store';
 import { bindingKeysFor, matchesShortcut } from '../shortcuts/bindings';
 import { useT } from '../i18n';
 import { useSessionNavigation } from '../useSessionNavigation';
+import { playTaskNotificationSound, shouldPlayTaskCompletionSound } from '../taskNotificationSound';
 import { HistoryNavigation, type HistoryNavigationProps } from './HistoryNavigation';
 import { SearchButton } from './SearchButton';
 import { applyThemeColors, normalizeColorPreferences, readColorPreferences, writeColorPreferences, type ThemeColorPreferences } from '../themeColors';
@@ -91,6 +92,24 @@ export function AppShell() {
 	const [workbenchResizing, setWorkbenchResizing] = useState(false);
 	const workbenchOverlay = viewportWidth <= 1100;
 	useEffect(() => { const resize = () => setViewportWidth(window.innerWidth); window.addEventListener('resize', resize); return () => window.removeEventListener('resize', resize); }, []);
+	const agentStatus = useChatStore((state) => state.status);
+	const previousStatusRef = useRef(agentStatus);
+	useEffect(() => {
+		const previous = previousStatusRef.current;
+		previousStatusRef.current = agentStatus;
+		if (shouldPlayTaskCompletionSound(previous, agentStatus, document.hasFocus())) void playTaskNotificationSound();
+	}, [agentStatus]);
+	// Extension questions only render above the chat composer; when one arrives
+	// while another view is showing, return to the conversation instead of popping up.
+	const extensionRequestPending = useExtensionRequestPending();
+	const previousExtensionPendingRef = useRef(false);
+	useEffect(() => {
+		const previous = previousExtensionPendingRef.current;
+		previousExtensionPendingRef.current = extensionRequestPending;
+		// Only the rising edge switches: browsing plugins while a question waits
+		// must not yank the user back on every render.
+		if (!previous && extensionRequestPending && !paiMode) setMainView('chat');
+	}, [extensionRequestPending, paiMode]);
 	useEffect(() => { if (!paiMode) writeStoredPreference('pi-desktop.workbench-width', String(workbenchWidth)); }, [paiMode, workbenchWidth]);
 	useEffect(() => { if (workbenchOpen && narrow) setSidebarOpen(false); }, [workbenchOpen, narrow]);
 	const resizeStart = useRef<{ x: number; width: number } | null>(null);
@@ -396,7 +415,7 @@ export function AppShell() {
 				setSidebarWidth((value) => Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, value + (event.key === 'ArrowRight' ? 16 : -16))));
 			}} />}
 			<div className="pd-main-view">
-			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} historyControls={mainView === 'chat' ? headerControls : undefined} /></ScopedErrorBoundary></div>
+			<div className="pd-chat-view-host" hidden={mainView !== 'chat'} inert={mainView !== 'chat'}><ScopedErrorBoundary scope="conversation" resetKeys={[conversationCwd, conversationId, conversationPath]}><ChatView active={mainView === 'chat'} onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenModelManagement={openModelManagement} searchTarget={searchMessageTarget} navigationError={navigation.error} historyControls={mainView === 'chat' ? headerControls : undefined} /></ScopedErrorBoundary></div>
 			{mainView === 'automations' && <AutomationPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} onOpenSession={async (cwd, path) => { const selected = await useChatStore.getState().selectSession(cwd, path); if (selected) { setSearchMessageTarget(null); setMainView('chat'); if (narrow) setSidebarOpen(false); } return selected; }} />}
 			{mainView === 'plugins' && <PluginsPage headerControls={headerControls} onToggleSidebar={() => setSidebarOpen((open) => !open)} />}
 			<div className="pd-notification-center"><OperationFeedback /><UpdateNotice /><div ref={setNotificationTarget} className="pd-extension-notification-slot" /></div>

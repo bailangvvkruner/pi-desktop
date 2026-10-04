@@ -20,3 +20,10 @@
 .pd-office-sheet th:first-child { position: sticky; left: 0; min-width: 3ch; text-align: right; }
 .pd-office-sheet thead th:first-child { z-index: 2; }
 @media (max-width: 600px) { .pd-office-document { padding: 20px 16px; } .pd-office-preview-toolbar select { max-width: 180px; } }
+
+/* PowerPoint slide text preview */
+.pd-office-slides { display: flex; flex-direction: column; gap: 10px; }
+.pd-office-slide { border: 1px solid var(--pd-border-soft, var(--pd-border)); border-radius: 7px; padding: 8px 12px; }
+.pd-office-slide h3 { margin: 0 0 6px; font-size: var(--pd-font-xs, 11px); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--pd-text-soft, #999); }
+.pd-office-slide p { margin: 2px 0; }
+.pd-office-slide-empty { color: var(--pd-text-soft, #999); }

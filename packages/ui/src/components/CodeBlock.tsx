@@ -2,6 +2,7 @@ import { isValidElement, useContext, useMemo, useState, type ReactNode } from 'r
 import { TranscriptSearchContext } from '../transcriptSearch';
 import hljs from 'highlight.js/lib/common';
 import { useT } from '../i18n';
+import { MermaidDiagram } from './MermaidDiagram';
 import './codeBlock.css';
 
 const COLLAPSE_LINES = 30;
@@ -32,6 +33,8 @@ export function CodeBlock({ code, language }: { code: string; language?: string 
 		}
 	}, [shown, resolved, lines.length]);
 	const [copied, setCopied] = useState(false);
+	const isMermaid = (language ?? '').trim().toLowerCase() === 'mermaid';
+	const [view, setView] = useState<'chart' | 'source'>('chart');
 	const copy = async () => {
 		try {
 			await navigator.clipboard.writeText(source);
@@ -44,13 +47,14 @@ export function CodeBlock({ code, language }: { code: string; language?: string 
 	return (
 		<div className="pd-code-block">
 			<div className="pd-code-block-header">
-				<span className="pd-code-block-language">{resolved || t('chat.code.plain')}</span>
+				<span className="pd-code-block-language">{isMermaid ? 'Mermaid' : resolved || t('chat.code.plain')}</span>
 				<div className="pd-code-block-actions">
+					{isMermaid && <button type="button" aria-pressed={view === 'source'} onClick={() => setView(current => current === 'chart' ? 'source' : 'chart')}>{t(view === 'chart' ? 'chat.diagram.showSource' : 'chat.diagram.showChart')}</button>}
 					<button type="button" onClick={() => void copy()}>{t(copied ? 'chat.code.copied' : 'chat.code.copy')}</button>
 				</div>
 			</div>
-			<pre className="pd-code-block-body"><code dangerouslySetInnerHTML={{ __html: html }} /></pre>
-			{collapsible && (
+			{isMermaid && view === 'chart' ? <div className="pd-mermaid-body"><MermaidDiagram source={source} /></div> : <pre className="pd-code-block-body"><code dangerouslySetInnerHTML={{ __html: html }} /></pre>}
+			{collapsible && (!isMermaid || view === 'source') && (
 				<button type="button" className="pd-code-block-toggle" aria-expanded={!collapsed} onClick={() => setUserCollapsed(!collapsed)}>
 					{collapsed ? t('chat.code.expand', { count: lines.length.toLocaleString(locale) }) : t('chat.code.collapse')}
 				</button>

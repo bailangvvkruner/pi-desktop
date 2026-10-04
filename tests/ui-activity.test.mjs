@@ -68,9 +68,10 @@ test('activity transcript presents genuine reasoning, accessible disclosures and
       assert.doesNotMatch(done, /pd-activity-label is-active/);
     });
 
-    await t.test('failures show output and long running tools expose their latest retained output', () => {
+    await t.test('failures stay collapsed with their output retained, and long running tools expose their latest output', () => {
       const failed = renderToStaticMarkup(createElement(ToolActivityItem, { activity: { ...activity, status: 'error', detail: 'Missing configuration' } }));
-      assert.match(failed, /aria-expanded="true"/);
+      assert.match(failed, /aria-expanded="false"/, 'failures no longer auto-expand (zcode keeps tool blocks folded)');
+      assert.match(failed, /aria-hidden="true" inert=""/, 'the collapsed failure keeps its detail mounted but inert');
       assert.match(failed, /Missing configuration/);
       assert.ok(failed.includes(translate('chat.tool.errorOutput')));
       const long = renderToStaticMarkup(createElement(ToolActivityItem, { activity: { ...activity, detail: 'OLD_START' + 'x'.repeat(13000) + 'LATEST_RESULT' } }));

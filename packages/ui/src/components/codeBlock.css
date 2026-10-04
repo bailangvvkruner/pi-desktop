@@ -22,3 +22,10 @@
 .pd-code-block .hljs-tag, .pd-code-block .hljs-name, .pd-code-block .hljs-selector-id, .pd-code-block .hljs-selector-class { color: var(--pd-hl-tag); }
 .pd-code-block .hljs-emphasis { font-style: italic; }
 .pd-code-block .hljs-strong { font-weight: 600; }
+
+/* Mermaid diagram blocks */
+.pd-mermaid-body { overflow: auto; padding: 10px 12px; }
+.pd-mermaid-diagram { display: flex; justify-content: center; min-width: 100%; }
+.pd-mermaid-diagram svg { max-width: 100%; height: auto; }
+.pd-mermaid-notice { margin: 0 0 6px; font-size: var(--pd-font-xs, 11px); color: var(--pd-text-soft, #999); }
+.pd-mermaid-source { margin: 0; padding: 10px 12px; overflow-x: auto; font-family: var(--pd-font-mono, ui-monospace, monospace); font-size: var(--pd-font-code, 12.5px); line-height: 1.5; }

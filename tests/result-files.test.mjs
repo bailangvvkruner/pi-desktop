@@ -38,6 +38,19 @@ test('result files resolve relative, absolute external and home paths without in
   await assert.rejects(service.revealResultFile({ cwd, path: inside }, () => { throw new Error('Unavailable'); }), /Unavailable/);
 });
 
+test('opening never launches executables or scripts, while preview and reveal still work', async t => {
+  const { cwd, service } = fixture(t);
+  const opened = [], revealed = [];
+  for (const name of ['setup.js', 'fix.BAT', 'run.cmd', 'tool.ps1', 'app.exe', 'page.hta', 'shortcut.lnk', 'build.sh']) {
+    writeFileSync(join(cwd, name), 'echo hi');
+    await assert.rejects(service.openResultFile({ cwd, path: name }, async path => { opened.push(path); return ''; }), /可执行文件或脚本/, name);
+    await service.revealResultFile({ cwd, path: name }, path => revealed.push(path));
+  }
+  assert.deepEqual(opened, []);
+  assert.equal(revealed.length, 8);
+  assert.equal((await service.previewResultFile({ cwd, path: 'setup.js' })).text, 'echo hi');
+});
+
 test('result file requests reject URLs, devices, invalid locations and missing files', async t => {
   const { cwd, service } = fixture(t);
   const requests = [null, [], {}, { cwd: '.', path: 'file.txt' }, { cwd, path: '' }, { cwd, path: 'a\0b' },
@@ -55,7 +68,6 @@ test('previews preserve UTF-8 and UTF-16 and keep HTML and SVG inert text', asyn
   const files = [
     ['utf8.txt', '你好，世界\n🌍', '你好，世界\n🌍'],
     ['utf16.txt', utf16, '你好，世界\n🌍'], ['utf16be.txt', be, '你好，世界\n🌍'],
-    ['page.html', '<script>window.evil = true</script>', '<script>window.evil = true</script>'],
     ['drawing.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>', '<svg xmlns="http://www.w3.org/2000/svg"/>'],
     ['empty.txt', '', ''],
   ];
@@ -67,6 +79,26 @@ test('previews preserve UTF-8 and UTF-16 and keep HTML and SVG inert text', asyn
     assert.equal(preview.truncated, false, path);
     assert.equal(preview.dataUrl, undefined, path);
   }
+});
+
+test('html previews are served as sandboxed documents within the text budget', async t => {
+  const { cwd, service } = fixture(t);
+  const page = '<!doctype html><html><body><h1>报表</h1><script>document.title = "x"</script></body></html>';
+  for (const path of ['report.html', 'legacy.htm']) {
+    writeFileSync(join(cwd, path), page);
+    const preview = await service.previewResultFile({ cwd, path });
+    assert.equal(preview.kind, 'html', path);
+    assert.equal(preview.text, page, path);
+    assert.equal(preview.truncated, false, path);
+    assert.equal(preview.dataUrl, undefined, path);
+    assert.equal(preview.bytesBase64, undefined, path);
+  }
+  writeFileSync(join(cwd, 'large.html'), '<p>' + '好'.repeat(Math.ceil(RESULT_FILE_LIMITS.html / 3) + 100) + '</p>');
+  const large = await service.previewResultFile({ cwd, path: 'large.html' });
+  assert.equal(large.kind, 'html');
+  assert.equal(large.truncated, true);
+  assert.ok(Buffer.byteLength(large.text) <= RESULT_FILE_LIMITS.html);
+  assert.ok(large.text.endsWith('好'));
 });
 
 test('image and PDF previews have verified data URLs while documents and unknown binary remain unsupported', async t => {

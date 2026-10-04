@@ -85,6 +85,12 @@ export function installModelSettingsFixture(options = {}) {
     getInputDraft: () => ({ version: 0, text: '', attachments: [], missing: [] }),
     saveInputDraft: request => ({ version: request.expectedVersion + 1, text: request.text, attachments: [], missing: [] }),
     getInputQueue: () => ({ version: 0, paused: false, items: [] }),
+    testProviderModel: (request) => {
+      if (state.failures.testProviderModel) throw new Error(state.failures.testProviderModel);
+      const ok = state.modelTestOk !== false;
+      return { requestId: request.requestId, provider: request.provider, model: request.model, ok, elapsedMs: 231, error: ok ? null : '推理鉴权失败（401），请检查凭据' };
+    },
+    cancelProviderModelTest: () => undefined,
     recordUiDiagnostic: () => undefined,
     exportDiagnostics: () => ({ path: '/fixture/diagnostics.zip', entries: 1, skipped: [] }),
   };

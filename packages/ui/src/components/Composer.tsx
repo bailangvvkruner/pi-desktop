@@ -71,6 +71,7 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const [quotes, setQuotes] = useState<{ key: string; block: string; source: string }[]>([]);
 	const bridge = useChatStore((s) => s.bridge);
 	const status = useChatStore((s) => s.status);
+	const hasConversationHistory = useChatStore((s) => s.messages.length > 0);
 	const navigating = useChatStore((s) => s.navigationPending || s.sessionLoading);
 	const sessionPreparation = useChatStore((s) => s.sessionPreparation);
 	const draftTransfer = useChatStore((s) => s.draftTransfer);
@@ -144,7 +145,9 @@ export function Composer({ header, onOpenModelManagement, changesSlotRef }: { he
 	const contextUnavailable = unavailable || Boolean(sessionPreparation);
 	const canPersistDraft = !sessionPreparation && !navigating && Boolean(cwd && sessionId) && status !== 'starting' && status !== 'uninitialized' && status !== 'error';
 	const busyHint = t('composer.busyHint', { action: t(defaultBusyBehavior === 'followUp' ? 'composer.queueSend' : 'composer.steer'), alternate: t(defaultBusyBehavior === 'followUp' ? 'composer.steer' : 'composer.queueSend'), shortcut: alternateShortcut });
-	const placeholder = status === 'error' ? t('composer.connectionErrorPlaceholder') : unavailable ? t('composer.connecting') : busy ? busyHint : t('composer.placeholder');
+	// ZCode-style semantic split: fresh conversation invites a new task, an
+	// existing thread invites a follow-up (busy keeps the queue/steer hint).
+	const placeholder = status === 'error' ? t('composer.connectionErrorPlaceholder') : unavailable ? t('composer.connecting') : busy ? busyHint : t(hasConversationHistory ? 'composer.placeholderFollowUp' : 'composer.placeholder');
 	const hasContent = Boolean(text.trim() || attachments.length);
 	const showStop = busy && !hasContent;
 	const primaryActionLabel = t(showStop ? stopping ? 'composer.stopping' : 'composer.stopTitle' : 'composer.send');

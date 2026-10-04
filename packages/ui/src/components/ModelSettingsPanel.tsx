@@ -331,7 +331,7 @@ function ModelEditor({ model, api, disabled, onSave, onCancel, onDirtyChange, on
 	</form>;
 }
 
-type SettingsEditor = { kind: 'templates' } | { kind: 'credentials'; provider: string } | { kind: 'create'; template?: ProviderTemplate } | { kind: 'discover'; provider: UiModelProvider } | { kind: 'model'; provider: UiModelProvider; model?: UiModelSummary };
+type SettingsEditor = { kind: 'templates' } | { kind: 'credentials'; provider: string } | { kind: 'edit'; provider: string } | { kind: 'create'; template?: ProviderTemplate } | { kind: 'discover'; provider: UiModelProvider } | { kind: 'model'; provider: UiModelProvider; model?: UiModelSummary };
 
 export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftStateChange }: {
 	initialTarget?: ModelManagementTarget;
@@ -375,6 +375,30 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 	const [credentialState, setCredentialState] = useState<DraftState>({ dirty: false, saving: false });
 	const [connectionRevision, setConnectionRevision] = useState(0);
 	const [credentialRevision, setCredentialRevision] = useState(0);
+	const [modelTests, setModelTests] = useState<Record<string, { requestId: string; status: 'busy' | 'ok' | 'error'; message: string }>>({});
+	const activeTestIds = useRef<Set<string>>(new Set());
+	useEffect(() => {
+		const ids = activeTestIds.current;
+		return () => { const current = useChatStore.getState().bridge; for (const id of ids) void current?.cancelProviderModelTest(id); };
+	}, []);
+	async function runModelTest(provider: string, model: string) {
+		const activeBridge = useChatStore.getState().bridge;
+		const key = `${provider}/${model}`;
+		const active = modelTests[key];
+		if (active?.status === 'busy') { void activeBridge?.cancelProviderModelTest(active.requestId); return; }
+		if (!activeBridge) return;
+		const requestId = crypto.randomUUID();
+		activeTestIds.current.add(requestId);
+		setModelTests((previous) => ({ ...previous, [key]: { requestId, status: 'busy', message: t('settings.modelTestRunning') } }));
+		try {
+			const result = await activeBridge.testProviderModel({ requestId, provider, model });
+			setModelTests((previous) => previous[key]?.requestId === requestId ? { ...previous, [key]: result.ok ? { requestId, status: 'ok', message: t('settings.modelTestOk', { ms: result.elapsedMs }) } : { requestId, status: 'error', message: result.error ?? t('settings.modelTestFailed') } } : previous);
+		} catch (reason) {
+			setModelTests((previous) => previous[key]?.requestId === requestId ? { ...previous, [key]: { requestId, status: 'error', message: reason instanceof Error ? reason.message : String(reason) } } : previous);
+		} finally {
+			activeTestIds.current.delete(requestId);
+		}
+	}
 	const [leaveAction, setLeaveAction] = useState<(() => void) | null>(null);
 	const [savingLeave, setSavingLeave] = useState(false);
 	const [leaveError, setLeaveError] = useState(false);
@@ -388,7 +412,6 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 	const reportSetupConnectionSaver = useCallback((save: DraftSaver | null) => { setupConnectionSaver.current = save; }, []);
 	const generation = useRef(0);
 	const detailRef = useRef<HTMLDivElement>(null);
-	const credentialRef = useRef<HTMLDivElement>(null);
 	const focusedTarget = useRef('');
 	const draftFocus = useRef<HTMLElement | null>(null);
 	const dirty = connectionDirty || setupConnectionDirty || modalDirty || credentialState.dirty;
@@ -413,6 +436,8 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 	const groups = [{ id: 'configured', items: matches, label: 'settings.providersConfigured' }];
 	const setupProvider = editor?.kind === 'credentials' ? providers.find((item) => item.provider === editor.provider) : undefined;
 	const setupAuth = setupProvider ? authByProvider.get(setupProvider.provider) ?? { provider: setupProvider.provider, configured: configured(setupProvider), supportsApiKey: setupProvider.custom && setupProvider.editable } : undefined;
+	const editProvider = editor?.kind === 'edit' ? providers.find((item) => item.provider === editor.provider) : undefined;
+	const editAuth = editProvider ? authByProvider.get(editProvider.provider) ?? { provider: editProvider.provider, configured: configured(editProvider), supportsApiKey: editProvider.custom && editProvider.editable } : undefined;
 	const removalProvider = confirmRemove?.kind === 'provider' ? confirmRemove.provider : selected;
 	const filteredModels = selected?.models.filter((item) => `${item.id} ${item.name}`.toLocaleLowerCase().includes(modelSearch.trim().toLocaleLowerCase())) ?? [];
 	const availableIds = new Set(availableModels.map((item) => `${item.provider}/${item.id}`));
@@ -456,14 +481,12 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 	}, [setupAuth?.provider, setupAuth?.configured, saving, modalDirty, setupConnectionDirty, leaveAction]);
 	useEffect(() => {
 		if (!targetProvider || selected?.provider !== targetProvider || focusedTarget.current === targetProvider || editor || !canChange) return;
-		if (credentialRef.current) {
-			const input = credentialRef.current.querySelector<HTMLElement>('input:not(:disabled)');
-			if (!input) return;
-			focusedTarget.current = targetProvider;
-			input.focus({ preventScroll: true });
-			credentialRef.current.scrollIntoView({ block: 'nearest' });
-		}
-	}, [targetProvider, selected?.provider, editor, canChange]);
+		// Configured targets jump straight into the provider settings dialog so the
+		// credential form stays one action away without cluttering the detail pane.
+		if (!configuredProviders.some((item) => item.provider === targetProvider)) return;
+		focusedTarget.current = targetProvider;
+		setEditor({ kind: 'edit', provider: targetProvider });
+	}, [targetProvider, selected?.provider, editor, canChange, configuredProviders]);
 	function resetDrafts() {
 		setConnectionDirty(false); setSetupConnectionDirty(false); setModalDirty(false); setModalSaving(false); setCredentialState({ dirty: false, saving: false });
 		setConnectionRevision((value) => value + 1); setCredentialRevision((value) => value + 1); setEditor(null); setConfirmRemove(null);
@@ -535,9 +558,8 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 			if (await run(() => saveProvider(providerRequest(current, current.models.filter((item) => item.id !== confirmRemove.model).map(serializeModel))), 'settings.customModelRemoved')) setConfirmRemove(null);
 		}
 	}
-	const auth = selected ? authByProvider.get(selected.provider) ?? { provider: selected.provider, configured: selectedConfigured, supportsApiKey: selected.custom && selected.editable } : null;
+	const protocolLabel = selected?.api ? PROTOCOLS.find((protocol) => protocol.value === selected.api)?.label ?? selected.api : null;
 	const openEditor = (next: SettingsEditor) => navigate(() => { setModalDirty(false); setEditor(next); });
-	const credential = auth && auth.provider !== setupProvider?.provider && <div ref={credentialRef} key={`credential:${auth.provider}:${credentialRevision}`} className="pd-model-settings-credentials" tabIndex={-1}>{renderCredential(auth, reportCredential, navigate)}</div>;
 	const closeEditor = () => navigate(() => { setModalDirty(false); setEditor(null); });
 	return <div className="pd-model-settings" onFocusCapture={(event) => { if (event.target instanceof HTMLElement && event.target.matches('input, select, textarea')) draftFocus.current = event.target; }}>
 		<div className="pd-model-page-header"><div className="pd-settings-section-head"><h2>{t('settings.modelManagement')}</h2><p>{t('settings.modelManagementHint')}</p></div><div className="pd-model-page-actions">
@@ -558,26 +580,25 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 			<div ref={detailRef} className="pd-model-provider-detail">
 				{selected ? <>
 					<div className="pd-model-provider-detail-head"><div><h3>{selected.name || selected.provider}</h3><div className="pd-model-provider-subtitle"><code>{selected.provider}</code><span className="pd-model-provider-badge">{t(selected.custom ? 'settings.providerCustom' : 'settings.providerBuiltin')}</span><span>{t(selectedConfigured ? 'settings.authAvailable' : 'settings.authMissing')}</span></div></div>
-						{selected.custom && selected.editable && <HoverTooltip title={t('settings.providerRemove')}><button type="button" data-action="remove-provider" className="pd-icon-button is-danger" disabled={!canChange} aria-label={t('settings.providerRemove')} onClick={() => navigate(() => setConfirmRemove({ kind: 'provider', provider: selected }))}><Icon name="trash" width="16" height="16" /></button></HoverTooltip>}
+						<div className="pd-model-page-actions">
+							<HoverTooltip title={t('settings.providerEdit')}><button type="button" data-action="edit-provider" className="pd-model-settings-button" disabled={!canChange} aria-label={t('settings.providerEdit')} onClick={() => openEditor({ kind: 'edit', provider: selected.provider })}><Icon name="pencil" width="13" height="13" />{t('settings.providerEdit')}</button></HoverTooltip>
+							{selected.custom && selected.editable && <HoverTooltip title={t('settings.providerRemove')}><button type="button" data-action="remove-provider" className="pd-icon-button is-danger" disabled={!canChange} aria-label={t('settings.providerRemove')} onClick={() => navigate(() => setConfirmRemove({ kind: 'provider', provider: selected }))}><Icon name="trash" width="16" height="16" /></button></HoverTooltip>}
+						</div>
 					</div>
-					<section className="pd-model-connection-card"><h4>{t('settings.providerConnection')}</h4>
-					{selected.custom && selected.editable ? <ProviderEditor key={`connection:${selected.provider}:${connectionRevision}`} provider={selected} mode="connection" disabled={!canChange} onDirtyChange={setConnectionDirty} onSaveReady={reportConnectionSaver} onSave={saveConnection} onCancel={() => { setConnectionDirty(false); setConnectionRevision((value) => value + 1); }} /> : <>
-						<dl className="pd-model-provider-connection"><dt>{t('settings.providerBaseUrl')}</dt><dd>{selected.baseUrl || '—'}</dd><dt>{t('settings.providerProtocol')}</dt><dd>{selected.api || '—'}</dd></dl>
-						<p className="pd-model-settings-notice">{t(selected.custom ? 'settings.providerReadOnly' : 'settings.providerBuiltinConnection')}</p>
-					</>}
-					{credential}
-					</section>
+					<div className="pd-model-provider-connection-row"><span className="pd-model-provider-url"><span className="pd-model-provider-url-label">{t('settings.providerBaseUrl')}</span><code>{selected.baseUrl || '—'}</code></span>{protocolLabel && <span className="pd-model-provider-badge pd-model-provider-protocol">{protocolLabel}</span>}</div>
 					<section className="pd-model-catalog"><div className="pd-model-settings-subhead"><h4>{t('settings.availableModels')} <span className="pd-model-count">{selected.models.length}</span></h4>{(discoverable || selected.custom && selected.editable) && <div className="pd-model-page-actions">{discoverable && <button type="button" data-action="discover-models" className="pd-model-settings-button" disabled={!canChange} onClick={() => openEditor({ kind: 'discover', provider: selected })}><Icon name="refresh" width="13" height="13" />{t('settings.providerFetchModels')}</button>}{selected.custom && selected.editable && <button type="button" data-action="add-model" className="pd-model-settings-button" disabled={!canChange} onClick={() => openEditor({ kind: 'model', provider: selected })}><Icon name="plus" width="13" height="13" />{t('settings.customModelAdd')}</button>}</div>}</div>
 						<input className="pd-model-provider-search" type="search" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} aria-label={t('composer.pickerSearchLabel')} placeholder={t('composer.pickerSearchPlaceholder')} />
 						<div className="pd-model-settings-models" aria-label={t('settings.availableModels')}>{filteredModels.map((item) => {
 							const current = item.provider === modelProvider && item.id === model;
 							const available = selectedConfigured && availableIds.has(`${item.provider}/${item.id}`);
+							const testState = modelTests[`${item.provider}/${item.id}`];
 							return <div key={item.id} data-model-id={item.id} className={`pd-model-settings-model${current ? ' is-current' : ''}${disabledIds.has(item.id) ? ' is-disabled' : ''}`}>
-								<div className="pd-model-settings-model-copy"><strong>{item.name || item.id}</strong><code>{item.id}</code><span className="pd-model-settings-model-meta"><span>{t('settings.context', { size: modelSize(item.contextWindow) })}</span>{item.reasoning && <span>{t('settings.reasoning')}</span>}{item.input.includes('image') && <span>{t('settings.image')}</span>}<span>{t('settings.modelOutputSize', { size: modelSize(item.maxTokens) })}</span></span></div>
+								<div className="pd-model-settings-model-copy"><strong>{item.name || item.id}</strong><code>{item.id}</code><span className="pd-model-settings-model-meta"><span>{t('settings.context', { size: modelSize(item.contextWindow) })}</span>{item.reasoning && <span>{t('settings.reasoning')}</span>}{item.input.includes('image') && <span>{t('settings.image')}</span>}<span>{t('settings.modelOutputSize', { size: modelSize(item.maxTokens) })}</span></span>{testState && <span className={`pd-model-settings-model-test is-${testState.status}`} role={testState.status === 'error' ? 'alert' : 'status'}>{testState.message}</span>}</div>
 								<div className="pd-model-settings-model-actions">
 									{current ? <span className="pd-model-settings-current-badge">{t('composer.pickerCurrent')}</span> : <HoverTooltip title={t('settings.customModelUse')}><button type="button" data-action="use-model" className="pd-icon-button" disabled={!canChange || !available} aria-label={`${t('settings.customModelUse')} ${item.name || item.id}`} onClick={() => navigate(() => { void run(() => setModel(item.provider, item.id)); })}><Icon name="check" width="15" height="15" /></button></HoverTooltip>}
 									{selected.custom && selected.editable && <><HoverTooltip title={t('settings.customModelEdit')}><button type="button" data-action="edit-model" className="pd-icon-button" disabled={!canChange} aria-label={`${t('settings.customModelEdit')} ${item.name || item.id}`} onClick={() => openEditor({ kind: 'model', provider: selected, model: item })}><Icon name="pencil" width="15" height="15" /></button></HoverTooltip>
-									<HoverTooltip title={t(selected.models.length < 2 ? 'settings.customModelLast' : 'settings.customModelRemove')}><button type="button" data-action="remove-model" className="pd-icon-button is-danger" disabled={!canChange || selected.models.length < 2} aria-label={`${t('settings.customModelRemove')} ${item.name || item.id}`} onClick={() => navigate(() => setConfirmRemove({ kind: 'model', model: item.id }))}><Icon name="trash" width="15" height="15" /></button></HoverTooltip></>}
+											<HoverTooltip title={t(selected.models.length < 2 ? 'settings.customModelLast' : 'settings.customModelRemove')}><button type="button" data-action="remove-model" className="pd-icon-button is-danger" disabled={!canChange || selected.models.length < 2} aria-label={`${t('settings.customModelRemove')} ${item.name || item.id}`} onClick={() => navigate(() => setConfirmRemove({ kind: 'model', model: item.id }))}><Icon name="trash" width="15" height="15" /></button></HoverTooltip></>}
+											<HoverTooltip title={t(testState?.status === 'busy' ? 'settings.modelTestCancel' : 'settings.modelTest')}><button type="button" data-action="test-model" className="pd-icon-button" disabled={!bridge} aria-busy={testState?.status === 'busy'} aria-label={`${t(testState?.status === 'busy' ? 'settings.modelTestCancel' : 'settings.modelTest')} ${item.name || item.id}`} onClick={() => { void runModelTest(item.provider, item.id); }}><Icon name={testState?.status === 'busy' ? 'loader' : 'spark'} width="15" height="15" /></button></HoverTooltip>
 									<label className="pd-model-switch" title={t(current ? 'settings.modelDisableCurrent' : 'settings.modelShowInPicker')}><input type="checkbox" role="switch" data-action="toggle-model" checked={!disabledIds.has(item.id)} disabled={!canChange || current} aria-label={`${t('settings.modelShowInPicker')} ${item.name || item.id}`} onChange={(event) => { const checked = event.target.checked; navigate(() => { void run(() => setModelEnabled(selected.provider, item.id, checked)); }); }} /><span className="pd-model-switch-track" aria-hidden="true"><span className="pd-model-switch-thumb" /></span></label>
 								</div>
 							</div>;
@@ -590,7 +611,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 				{feedback && <p className="pd-model-settings-feedback pd-model-detail-feedback" role="status">{feedback}</p>}
 			</div>
 		</div>
-		{editor && <ModelSettingsDialog view={editor.kind} title={t(editor.kind === 'model' ? editor.model ? 'settings.customModelEdit' : 'settings.customModelAdd' : editor.kind === 'discover' ? 'settings.providerFetchModels' : 'settings.providerAdd')} busy={saving} onClose={closeEditor}>
+		{editor && <ModelSettingsDialog view={editor.kind} title={t(editor.kind === 'model' ? editor.model ? 'settings.customModelEdit' : 'settings.customModelAdd' : editor.kind === 'discover' ? 'settings.providerFetchModels' : editor.kind === 'edit' ? 'settings.providerSettingsTitle' : 'settings.providerAdd')} busy={saving} onClose={closeEditor}>
 			{error && <div className="pd-settings-error" role="alert">{error}</div>}
 			{editor.kind === 'templates' ? <section className="pd-model-template-picker" data-template-picker>
 				<button type="button" data-template="custom" data-autofocus className="pd-model-template-card is-custom" onClick={() => setEditor({ kind: 'create' })}><span className="pd-model-template-custom-icon" aria-hidden="true"><Icon name="plus" width="24" height="24" /></span><span className="pd-model-template-custom-copy"><strong>{t('settings.providerTemplateCustom')}</strong><span>{t('settings.providerTemplateCustomHint')}</span></span></button>
@@ -607,7 +628,15 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 					<div key={`setup:${setupAuth.provider}:${credentialRevision}`} className="pd-model-settings-credentials">{renderCredential(setupAuth, reportModalCredential, navigate)}</div>
 				</> : <p className="pd-model-settings-notice">{t('settings.modelCatalogChanged')}</p>}
 				<div className="pd-model-settings-form-actions"><button type="button" data-action="back-to-providers" className="pd-model-settings-button" disabled={saving} onClick={() => navigate(() => { setModalDirty(false); setEditor({ kind: 'templates' }); })}>{t('settings.providerBackToList')}</button></div>
-			</section>
+		</section>
+			: editor.kind === 'edit' ? (editProvider && editAuth ? <section className="pd-model-provider-edit">
+				{editProvider.custom && editProvider.editable ? <ProviderEditor key={`connection:${editProvider.provider}:${connectionRevision}`} provider={editProvider} mode="connection" disabled={!canChange} onDirtyChange={setConnectionDirty} onSaveReady={reportConnectionSaver} onSave={saveConnection} onCancel={() => { setConnectionDirty(false); setConnectionRevision((value) => value + 1); }} /> : <>
+					<dl className="pd-model-provider-connection"><dt>{t('settings.providerBaseUrl')}</dt><dd>{editProvider.baseUrl || '—'}</dd><dt>{t('settings.providerProtocol')}</dt><dd>{editProvider.api || '—'}</dd></dl>
+					<p className="pd-model-settings-notice">{t(editProvider.custom ? 'settings.providerReadOnly' : 'settings.providerBuiltinConnection')}</p>
+				</>}
+				<div key={`credential:${editProvider.provider}:${credentialRevision}`} className="pd-model-settings-credentials">{renderCredential(editAuth, reportCredential, navigate)}</div>
+				{feedback && <p className="pd-model-settings-feedback" role="status">{feedback}</p>}
+			</section> : <p className="pd-model-settings-notice">{t('settings.modelCatalogChanged')}</p>)
 			: editor.kind === 'model' ? <ModelEditor key={editor.model?.id ?? 'new'} model={editor.model} api={editor.provider.api} disabled={!canChange} onDirtyChange={setModalDirty} onSaveReady={reportModalSaver} onSave={saveModel} onCancel={closeEditor} />
 			: <ProviderEditor key={editor.kind === 'create' ? editor.template?.id ?? 'custom' : editor.provider.provider} mode={editor.kind} provider={editor.kind === 'discover' ? editor.provider : undefined} template={editor.kind === 'create' ? editor.template : undefined} autoDiscover={editor.kind === 'discover'} disabled={editor.kind === 'create' ? !canCreateProvider : !canChange} onDirtyChange={setModalDirty} onSaveReady={reportModalSaver} onCancel={editor.kind === 'create' ? () => navigate(() => { setModalDirty(false); setEditor({ kind: 'templates' }); }) : closeEditor} onSave={editor.kind === 'discover' ? saveImport : async (request) => {
 				if (!canCreateProvider || !await run(() => saveProvider(request), 'settings.providerSaved')) return false;

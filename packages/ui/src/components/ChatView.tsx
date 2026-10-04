@@ -10,7 +10,8 @@ import { ConversationDisclosureProvider } from '../conversationDisclosure';
 import { ConversationRail } from './ConversationRail';
 import { useExtensionRequestPending } from './ExtensionDialogHost';
 import { Composer } from './Composer';
-import { ComposerChanges } from './ComposerChanges';
+import { ComposerChanges, type ComposerChangesHandle } from './ComposerChanges';
+import { findChangeMatches } from '../changesFind';
 import { RunStatusBar } from './RunStatusBar';
 import { ComposerContextBar } from './ComposerContextBar';
 import { ChatTitle, type ChatTitleHandle } from './ChatTitle';
@@ -65,7 +66,7 @@ function SessionLoading() {
 
 export interface SearchMessageTarget { sessionPath: string; messageId: string; snippet?: string; requestId: number }
 
-export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget, historyControls, navigationError, compact = false }: { onToggleSidebar(): void; onOpenModelManagement(target: ModelManagementTarget): void; searchTarget?: SearchMessageTarget | null; historyControls?: ReactNode; navigationError?: string | null; compact?: boolean }) {
+export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget, historyControls, navigationError, compact = false, active = true }: { onToggleSidebar(): void; onOpenModelManagement(target: ModelManagementTarget): void; searchTarget?: SearchMessageTarget | null; historyControls?: ReactNode; navigationError?: string | null; compact?: boolean; /** False while another main view hides the chat; rising edges re-apply the remembered reading position (12). */ active?: boolean }) {
 	const { t } = useT();
 	const extensionRequestPending = useExtensionRequestPending();
 	const messages = useChatStore((s) => s.messages);
@@ -124,6 +125,23 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const followsBottomRef = useRef(true);
 	const scrollAnimationRef = useRef<number | null>(null);
 	const [showBackToBottom, setShowBackToBottom] = useState(false);
+	// Re-showing the chat view restores a stale scrollTop and fires a scroll event
+	// that would otherwise cancel bottom-following (12). Re-apply the remembered
+	// intent before that event: pin to the newest content when the last position
+	// was the bottom; a remembered middle position restores via its saved anchor.
+	const chatActiveRef = useRef(active);
+	useLayoutEffect(() => {
+		if (chatActiveRef.current === active) return;
+		chatActiveRef.current = active;
+		if (!active) return;
+		const node = scrollRef.current;
+		if (!node || node.clientHeight === 0) return;
+		if (followsBottomRef.current || readingAnchor.current?.followsBottom !== false) {
+			followsBottomRef.current = true;
+			node.scrollTop = node.scrollHeight;
+			setShowBackToBottom(false);
+		}
+	}, [active]);
 	const handledSearchRequest = useRef<number | null>(null);
 	const [highlightedMessage, setHighlightedMessage] = useState<SearchMessageTarget | null>(null);
 	const [locationStatus, setLocationStatus] = useState<'loading' | 'missing' | null>(null);
@@ -151,6 +169,23 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	const [findQuery, setFindQuery] = useState('');
 	const [findKey, setFindKey] = useState<string | null>(null);
 	const findMatches = useMemo(() => findOccurrences(messages, findQuery), [messages, findQuery]);
+	// Changes find scope (12): matches inside recorded diffs, stepping opens the review dialog.
+	const [findScope, setFindScope] = useState<'conversation' | 'changes'>('conversation');
+	// -1: no file opened yet, so the first step lands on the first (or last) match.
+	const [changesFindFile, setChangesFindFile] = useState(-1);
+	const changesReviewRef = useRef<ComposerChangesHandle>(null);
+	const changesFindable = useMemo(() => fileChanges.some(change => change.diff), [fileChanges]);
+	const changesFind = useMemo(() => findScope === 'changes' && findOpen ? findChangeMatches(fileChanges, findQuery) : null, [findScope, findOpen, fileChanges, findQuery]);
+	useEffect(() => { setChangesFindFile(-1); }, [findQuery]);
+	useEffect(() => { if (changesFind && changesFindFile >= changesFind.files.length) setChangesFindFile(-1); }, [changesFind, changesFindFile]);
+	const stepChangesFind = (delta: 1 | -1, files = changesFind?.files ?? [], current = changesFindFile) => {
+		if (!files.length) return;
+		const next = current < 0 || current >= files.length
+			? (delta > 0 ? 0 : files.length - 1)
+			: (current + delta + files.length) % files.length;
+		setChangesFindFile(next);
+		changesReviewRef.current?.openReview(files[next]!.path);
+	};
 	const findIndex = Math.max(0, findMatches.findIndex((item) => item.key === findKey));
 	const activeFind = findOpen ? findMatches[findIndex] : undefined;
 	const activeFindId = activeFind?.messageId ?? null;
@@ -258,14 +293,14 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 		if (activeFindId) jumpToMessage(activeFindId);
 		let frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => {
 			const node = scrollRef.current; if (!node) return;
-			const range = paintTranscriptMatches(node, findOpen ? findQuery : '', activeFindId, activeFind?.ordinal ?? 0);
+			const range = paintTranscriptMatches(node, findOpen && findScope === 'conversation' ? findQuery : '', activeFindId, activeFind?.ordinal ?? 0);
 			if (range) revealTranscriptRange(range, node);
 		}); });
 		return () => cancelAnimationFrame(frame);
-	}, [activeFind?.key, findQuery, findOpen]);
+	}, [activeFind?.key, findQuery, findOpen, findScope]);
 	const findClearedRef = useRef(true);
 	useLayoutEffect(() => {
-		const query = findOpen ? findQuery : '';
+		const query = findOpen && findScope === 'conversation' ? findQuery : '';
 		// An empty query only needs one clear pass; skip the rescan while find stays closed.
 		if (!query.trim() && findClearedRef.current) return;
 		findClearedRef.current = !query.trim();
@@ -373,7 +408,9 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 	function handleScroll() {
 		const node = scrollRef.current;
 		if (!node) return;
-		if (restoring.current) return;
+		// Loading swaps the transcript content and clamps scrollTop; the resulting
+		// events are layout noise, not reading intent.
+		if (restoring.current || sessionLoading) return;
 		const nearBottom = node.scrollHeight - node.scrollTop - node.clientHeight <= BOTTOM_THRESHOLD;
 		if (scrollAnimationRef.current === null) followsBottomRef.current = nearBottom;
 		setShowBackToBottom(!nearBottom);
@@ -387,6 +424,9 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 			position = { messageId: row.dataset.messageId ?? null, offset: rect.top - top, followsBottom: nearBottom };
 			break;
 		}
+		// A scroll over cleared content has no anchor row; never overwrite a real
+		// remembered position with a null placeholder (12).
+		if (!position.messageId) return;
 		readingAnchor.current = position;
 		saveReading(memoryKeyRef.current, position);
 		// Long sessions fetch the next older slice as the reader approaches the top.
@@ -476,12 +516,25 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 							hasOlder={hasOlderHistory}
 							loadingOlder={loadingOlder}
 							onLoadOlder={() => { void loadOlderMessages(); }}
-							onStep={(delta) => { if (findMatches.length === 0) return; setFindKey(findMatches[(findIndex + delta + findMatches.length) % findMatches.length]!.key); }}
+							onStep={(delta) => {
+								if (findScope === 'changes') { stepChangesFind(delta); return; }
+								if (findMatches.length === 0) return;
+								setFindKey(findMatches[(findIndex + delta + findMatches.length) % findMatches.length]!.key);
+							}}
+							scope={findScope}
+							onScopeChange={(next) => {
+								setFindScope(next);
+								setChangesFindFile(-1);
+								// changesFind is still null in this render; match against the diffs directly.
+								if (next === 'changes') stepChangesFind(1, findChangeMatches(fileChanges, findQuery).files, -1);
+							}}
+							hasChanges={changesFindable}
+							changesSummary={changesFind ? { files: changesFind.files.length, total: changesFind.total } : null}
 							onClose={closeFind}
 						/>
 					</div>}
 					{locationStatus && <div className="pd-conversation-location" role="status">{c(locationStatus === 'loading' ? 'locating' : 'missing')}{locationStatus === 'missing' && locationTarget && <button type="button" onClick={() => locate(locationTarget.id, locationTarget.snippet)}>{c('retry')}</button>}</div>}
-					<TranscriptSearchContext.Provider value={findOpen ? findQuery : ''}>
+					<TranscriptSearchContext.Provider value={findOpen && findScope === 'conversation' ? findQuery : ''}>
 					<ConversationDisclosureProvider scope={disclosureScope}>
 					<div ref={scrollRef} className="pd-transcript" onScroll={handleScroll} onWheel={cancelScrollAnimation} onTouchStart={cancelScrollAnimation} onPointerDown={cancelScrollAnimation} onKeyDown={(event) => {
 						if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) cancelScrollAnimation();
@@ -498,7 +551,7 @@ export function ChatView({ onToggleSidebar, onOpenModelManagement, searchTarget,
 									: timeline.map((entry) => renderEntry(entry))}
 							</div>
 						)}
-						<div ref={changesRegionRef} className="pd-transcript-end pd-transcript-changes">{!sessionLoading && <ComposerChanges key={`changes:${disclosureScope}`} items={fileChanges} running={agentStatus === 'busy'} liveTarget={changesDock} />}</div>
+							<div ref={changesRegionRef} className="pd-transcript-end pd-transcript-changes">{!sessionLoading && <ComposerChanges ref={changesReviewRef} key={`changes:${disclosureScope}`} items={fileChanges} running={agentStatus === 'busy'} liveTarget={changesDock} />}</div>
 						{awaitingResponse && <div className="pd-transcript-end"><div className="pd-message-column"><div className="pd-response-pending" role="status"><ActivityLabel active>{t('message.preparing')}</ActivityLabel></div></div></div>}
 						{error && <div className="pd-transcript-end">
 							{navigationError

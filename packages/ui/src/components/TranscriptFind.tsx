@@ -6,7 +6,7 @@ import { Icon } from './Icons';
  * In-conversation find bar (Ctrl+F): counts matches across visible messages,
  * steps through them with Enter/Shift+Enter and returns focus on Escape.
  */
-export function TranscriptFind({ query, onQueryChange, index, total, onStep, onClose, loadedMessages, hasOlder = false, loadingOlder = false, onLoadOlder }: {
+export function TranscriptFind({ query, onQueryChange, index, total, onStep, onClose, loadedMessages, hasOlder = false, loadingOlder = false, onLoadOlder, scope = 'conversation', onScopeChange, hasChanges = false, changesSummary }: {
 	query: string;
 	onQueryChange(query: string): void;
 	/** Zero-based active match; null when there is no active match. */
@@ -18,6 +18,13 @@ export function TranscriptFind({ query, onQueryChange, index, total, onStep, onC
 	hasOlder?: boolean;
 	loadingOlder?: boolean;
 	onLoadOlder?(): void;
+	/** Find scope: visible conversation text or recorded file changes (12). */
+	scope?: 'conversation' | 'changes';
+	onScopeChange?(scope: 'conversation' | 'changes'): void;
+	/** Whether any conversation change carries a diff worth searching. */
+	hasChanges?: boolean;
+	/** Match summary for the changes scope: files with hits and total hits. */
+	changesSummary?: { files: number; total: number } | null;
 }) {
 	const { t } = useT();
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -25,9 +32,15 @@ export function TranscriptFind({ query, onQueryChange, index, total, onStep, onC
 		inputRef.current?.focus();
 		inputRef.current?.select();
 	}, []);
-	const count = query.trim()
-		? (total > 0 && index != null ? t('chat.find.count', { current: String(index + 1), total: String(total) }) : t('chat.find.noResults'))
-		: t('chat.find.hint');
+	const count = scope === 'changes'
+		? query.trim()
+			? (changesSummary && changesSummary.total > 0
+				? t('chat.find.changesCount', { files: String(changesSummary.files), total: String(changesSummary.total) })
+				: t('chat.find.noResults'))
+			: t('chat.find.changesHint')
+		: query.trim()
+			? (total > 0 && index != null ? t('chat.find.count', { current: String(index + 1), total: String(total) }) : t('chat.find.noResults'))
+			: t('chat.find.hint');
 	return (
 		<div className="pd-transcript-find" role="search">
 			<Icon name="search" width="14" height="14" />
@@ -45,9 +58,13 @@ export function TranscriptFind({ query, onQueryChange, index, total, onStep, onC
 					else if (event.key === 'Escape') { event.preventDefault(); onClose(); }
 				}}
 			/>
-			<span className={'pd-transcript-find-count' + (query.trim() && total === 0 ? ' is-empty' : '')} aria-live="polite">{count}</span>
-			<button type="button" className="pd-transcript-find-step" onClick={() => onStep(-1)} disabled={total === 0} aria-label={t('chat.find.previous')}><Icon name="chevronUp" width="14" height="14" /></button>
-			<button type="button" className="pd-transcript-find-step" onClick={() => onStep(1)} disabled={total === 0} aria-label={t('chat.find.next')}><Icon name="chevronDown" width="14" height="14" /></button>
+			{onScopeChange && hasChanges && <span className="pd-transcript-find-scopes" role="group" aria-label={t('chat.find.scopeLabel')}>
+				<button type="button" className={scope === 'conversation' ? 'is-active' : ''} aria-pressed={scope === 'conversation'} onClick={() => onScopeChange('conversation')}>{t('chat.find.scopeConversation')}</button>
+				<button type="button" className={scope === 'changes' ? 'is-active' : ''} aria-pressed={scope === 'changes'} onClick={() => onScopeChange('changes')}>{t('chat.find.scopeChanges')}</button>
+			</span>}
+			<span className={'pd-transcript-find-count' + (query.trim() && (scope === 'changes' ? !changesSummary || changesSummary.total === 0 : total === 0) ? ' is-empty' : '')} aria-live="polite">{count}</span>
+			<button type="button" className="pd-transcript-find-step" onClick={() => onStep(-1)} disabled={scope === 'changes' ? !changesSummary || changesSummary.total === 0 : total === 0} aria-label={t('chat.find.previous')}><Icon name="chevronUp" width="14" height="14" /></button>
+			<button type="button" className="pd-transcript-find-step" onClick={() => onStep(1)} disabled={scope === 'changes' ? !changesSummary || changesSummary.total === 0 : total === 0} aria-label={t('chat.find.next')}><Icon name="chevronDown" width="14" height="14" /></button>
 			<button type="button" className="pd-transcript-find-close" onClick={onClose} aria-label={t('chat.find.close')}><Icon name="close" width="14" height="14" /></button>
 			{hasOlder && <div className="pd-transcript-find-scope" role="status">
 				<span>{t('chat.find.loadedOnly', { count: String(loadedMessages ?? 0) })}</span>

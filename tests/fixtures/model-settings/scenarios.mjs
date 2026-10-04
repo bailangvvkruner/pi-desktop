@@ -1,7 +1,8 @@
 // Regression coverage against the actual renderer build and an isolated mock bridge.
 export default async function runScenarios(review) {
   const gateway = '[data-provider="review-gateway"]';
-  const connection = '.pd-model-provider-detail [data-provider-editor="edit"]';
+  const editDialog = 'dialog[open][data-model-dialog="edit"]';
+  const connection = `${editDialog} [data-provider-editor="edit"]`;
   const modelDialog = 'dialog[open][data-model-dialog="model"] [data-model-editor="review-reasoner"]';
   const modelRow = '[data-model-id="review-reasoner"]';
   const customModels = 'document.querySelectorAll("[data-model-id]").length';
@@ -9,10 +10,6 @@ export default async function runScenarios(review) {
   const templatesDialog = 'dialog[open][data-model-dialog="templates"]';
   const credentialsDialog = 'dialog[open][data-model-dialog="credentials"]';
   const waitForTemplates = () => review.waitFor(`Boolean(document.querySelector(${JSON.stringify(templatesDialog)}))`);
-  const selectGateway = async () => {
-    await review.click(gateway);
-    await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(connection)}))`);
-  };
   const noOpenModelDialog = () => review.waitFor('document.querySelector("dialog[open].pd-model-dialog") === null');
   const dialogCentered = (view) => review.assert(`(() => {const box=document.querySelector(${JSON.stringify(`dialog[open][data-model-dialog="${view}"]`)}).getBoundingClientRect(); return Math.abs(box.x+box.width/2-innerWidth/2)<3 && Math.abs(box.y+box.height/2-innerHeight/2)<3;})()`, `${view} dialog is centered in the viewport`);
   const guard = 'dialog[open][data-model-dialog="confirm"], [role="alertdialog"]';
@@ -31,21 +28,32 @@ export default async function runScenarios(review) {
   await review.assert('Boolean(document.querySelector(".pd-model-catalog [data-action=discover-models]"))', 'Builtin provider offers model discovery');
   await review.assert('document.querySelector(".pd-model-catalog [data-action=add-model]") === null', 'Builtin provider keeps manual model adding hidden');
   await review.assert('document.querySelector("[data-provider=anthropic], [data-provider-group=unconfigured], [data-add-provider=anthropic]") === null', 'Unconfigured providers are absent until opening Add provider');
-  await selectGateway();
+  // The detail pane stays compact: URL and models only; editing lives behind the Edit settings dialog.
+  await review.click(gateway);
+  await review.waitFor('document.querySelector(".pd-model-provider-option.is-selected")?.dataset.provider === "review-gateway" && Boolean(document.querySelector(".pd-model-provider-connection-row"))');
   if (process.argv.includes('--trace-inputs')) await review.evaluate('window.__modelReview.traceInputs()');
+  await review.assert('document.querySelector(".pd-model-provider-detail [data-provider-editor]") === null', 'Provider detail keeps the connection editor out of the compact view');
+  await review.assert('document.querySelector(".pd-model-provider-url code").textContent === "https://models.example.invalid/v1"', 'Provider detail shows the API URL');
+  await review.assert(`${customModels} === 3`, 'Model list stays visible without opening the editor');
+  await review.click('[data-action="edit-provider"]');
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(editDialog)}))`);
   const oneConnection = (stage) => review.assert(`document.querySelectorAll(${JSON.stringify(connection)}).length === 1 && document.querySelector(${JSON.stringify(connection)}).isConnected`, `Exactly one connected provider form: ${stage}`);
   await oneConnection('initial');
-  await review.assert(`${customModels} === 3`, 'Model list remains mounted with the inline connection editor');
+  await review.assert(`${customModels} === 3`, 'Model list remains mounted behind the provider settings dialog');
+  await review.click(`${editDialog} .pd-model-dialog-header button`);
+  await noOpenModelDialog();
   if (!process.argv.includes('--skip-layout')) {
   for (const [theme, label] of [['dark', '深色'], ['light', '浅色']]) {
     await review.clickText('.pd-settings-nav button', '外观');
     await review.clickText('.pd-appearance-choice', label);
     await review.clickText('.pd-settings-nav button', '模型管理');
-    await selectGateway();
+    await review.click(gateway);
+    await review.waitFor('document.querySelector(".pd-model-provider-option.is-selected")?.dataset.provider === "review-gateway"');
     for (const width of [1440, 900, 680]) {
       await review.viewport(width, 1000);
       await review.assert('document.documentElement.scrollWidth <= innerWidth', `No page horizontal overflow: ${theme} ${width}`);
       await review.record(`layout-${theme}-${width}`, `(() => { const selectors = ['.pd-settings-dialog','.pd-model-provider-sidebar','.pd-model-provider-detail']; return Object.fromEntries(selectors.map(selector => {const element = document.querySelector(selector); const box = element.getBoundingClientRect(); return [selector, {x:box.x,y:box.y,width:box.width,height:box.height,scrollWidth:element.scrollWidth,clientWidth:element.clientWidth}]})); })()`);
+      await review.assert(`document.querySelector(${JSON.stringify(connection)}) === null`, `Compact provider detail renders without an inline editor: ${theme} ${width}`);
       await review.screenshot(`01-${theme}-${width}-custom-provider`);
       await review.click('[data-action="add-provider"]');
       await waitForTemplates();
@@ -105,16 +113,21 @@ export default async function runScenarios(review) {
   await review.waitFor('Boolean(document.querySelector("[data-provider=anthropic]"))');
   await review.assert('document.querySelectorAll("[data-provider]").length === 3 && window.__modelReview.providers.find(provider=>provider.provider==="anthropic").configured', 'Saving a credential closes configuration and adds the provider to the main list');
   await review.click('[data-provider="anthropic"]');
-  await review.waitFor('Boolean(document.querySelector(".pd-model-settings-credentials input#pd-api-key-anthropic"))');
-  await review.click('.pd-model-settings-credentials .pd-settings-remove');
+  await review.click('[data-action="edit-provider"]');
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(`${editDialog} input#pd-api-key-anthropic`)}))`);
+  await review.assert(`document.querySelector(${JSON.stringify(`${editDialog} .pd-model-provider-connection`)}).textContent.includes('https://api.anthropic.com') === false`, 'Builtin provider settings show read-only connection info');
+  await review.click(`${editDialog} .pd-settings-remove`);
   await review.waitFor('document.querySelector("[data-provider=anthropic]") === null');
   await review.assert('document.querySelectorAll("[data-provider]").length === 2', 'Removing the stored credential removes the unconfigured provider from the main list');
+  await review.click(`${editDialog} .pd-model-dialog-header button`);
+  await noOpenModelDialog();
   await review.click('[data-action="add-provider"]');
   await waitForTemplates();
   await review.assert(`Boolean(document.querySelector(${JSON.stringify(`${templatesDialog} [data-add-provider="anthropic"]`)}))`, 'The provider returns to Add provider after its credential is removed');
   await review.click(`${templatesDialog} .pd-model-dialog-header button`);
   await noOpenModelDialog();
-  await selectGateway();
+  await review.click(gateway);
+  await review.waitFor('document.querySelector(".pd-model-provider-option.is-selected")?.dataset.provider === "review-gateway"');
 
   // Failure keeps the model draft; cancellation does not call the bridge again.
   await review.click(`${modelRow} [data-action="edit-model"]`);
@@ -133,15 +146,24 @@ export default async function runScenarios(review) {
   await waitForGuard();
   await discard();
   await noOpenModelDialog();
-  await oneConnection('after model discard');
+  await review.assert(`document.querySelector(${JSON.stringify(connection)}) === null`, 'Model discard leaves no stray provider form');
   await review.assert(`${saveCalls}.length === ${failedSaveCount}`, 'Cancelling model editor does not write');
   await review.evaluate('delete window.__modelReview.failures.saveCustomProvider');
   await review.click(`${modelRow} [data-action="edit-model"]`);
   await review.fill(`${modelDialog} [data-field="model.name"]`, '已成功更新的推理模型');
   await review.click(`${modelDialog} button[type="submit"]`);
   await noOpenModelDialog();
-  await oneConnection('after model save');
+  await review.assert(`document.querySelector(${JSON.stringify(connection)}) === null`, 'Model save leaves no stray provider form');
   await review.waitFor(`document.querySelector(${JSON.stringify(modelRow)}).textContent.includes('已成功更新的推理模型')`);
+
+  // Per-model inference test replaces the standalone panel; results render inline in the model row.
+  await review.assert('document.querySelector("[data-setting=model-test]") === null', 'The standalone inference test panel is gone');
+  await review.click('[data-model-id="review-fast"] [data-action="test-model"]');
+  await review.waitFor('document.querySelector("[data-model-id=review-fast]").textContent.includes("推理成功 · 231 ms")');
+  await review.evaluate('window.__modelReview.modelTestOk = false');
+  await review.click('[data-model-id="review-fast"] [data-action="test-model"]');
+  await review.waitFor('document.querySelector("[data-model-id=review-fast]").textContent.includes("401")');
+  await review.evaluate('delete window.__modelReview.modelTestOk');
 
   // Discovery preserves existing models, deduplicates new ids, imports selection.
   await review.evaluate(`window.__modelReview.discovery = {models: [{id:'review-reasoner',name:'不应覆盖已有名称',contextWindow:2,maxTokens:1}, {id:'import-selected',name:'本次选择导入',contextWindow:128000,maxTokens:8192,input:['text'],reasoning:false}, {id:'import-skipped',name:'本次不导入',contextWindow:128000,maxTokens:8192,input:['text'],reasoning:false}, {id:'import-selected',name:'重复目录项',contextWindow:128000,maxTokens:8192,input:['text'],reasoning:false}],warnings:[]}`);
@@ -155,7 +177,7 @@ export default async function runScenarios(review) {
   await review.screenshot('03-discovery-selection');
   await review.click('dialog[open][data-model-dialog="discover"] [data-action="import-models"]');
   await noOpenModelDialog();
-  await oneConnection('after discovery import');
+  await review.assert(`document.querySelector(${JSON.stringify(connection)}) === null`, 'Discovery import leaves no stray provider form');
   await review.waitFor('Boolean(document.querySelector("[data-model-id=import-selected]"))');
   await review.assert('document.querySelector("[data-model-id=import-skipped]") === null', 'Only selected new models are imported');
   await review.assert('window.__modelReview.providers.find(p=>p.provider==="review-gateway").models.find(m=>m.id==="review-reasoner").name === "已成功更新的推理模型"', 'Discovery preserves existing custom metadata');
@@ -173,10 +195,12 @@ export default async function runScenarios(review) {
   await review.assert('document.querySelector("dialog[open].pd-model-dialog") === null', 'Late discovery cannot reopen a closed dialog');
   await review.assert(`${saveCalls}.length === ${beforeLateDiscovery} && !window.__modelReview.providers.some(p=>p.models.some(m=>m.id==='too-late-model'))`, 'Late discovery cannot write or modify the catalog');
 
-  // Connection changes protect provider selection and top-level settings changes.
+  // Connection and credential drafts live in the provider settings dialog and guard closing it.
   const connectionUrl = `${connection} [data-field="provider.baseUrl"]`;
   const connectionName = `${connection} [data-field="provider.name"]`;
-  const credentialInput = '.pd-model-settings-credentials input[type="password"]';
+  const credentialInput = `${editDialog} .pd-model-settings-credentials input[type="password"]`;
+  await review.click('[data-action="edit-provider"]');
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(connection)}))`);
   await review.fill(credentialInput, 'fixture-secret-not-a-real-key');
   await review.fill(connectionUrl, 'https://cancel.example.invalid/v1');
   await review.record('connection-draft-before-cancel', `({url:document.querySelector(${JSON.stringify(connectionUrl)}).value, actions:[...document.querySelectorAll(${JSON.stringify(`${connection} [data-action]`)})].map(e=>e.dataset.action)})`);
@@ -192,62 +216,72 @@ export default async function runScenarios(review) {
   await review.waitFor('window.__modelReview.providers.find(p=>p.provider==="review-gateway").name === "已保存连接名称"');
   await review.assert(`document.querySelector(${JSON.stringify(credentialInput)}).value === 'fixture-secret-not-a-real-key'`, 'Connection save preserves independent credential draft');
   await review.assert(`${saveCalls}.at(-1).args[0].apiKey === undefined`, 'Connection save never includes the credential draft');
+  await review.waitFor(`document.querySelector(${JSON.stringify('.pd-model-provider-detail-head h3')}).textContent.includes('已保存连接名称')`);
   await review.fill(credentialInput, '');
   await review.fill(connectionUrl, 'https://draft.example.invalid/v1');
   const beforeConnectionLeave = await review.evaluate(`${saveCalls}.length`);
-  await review.click(gateway);
-  await review.assert(`document.querySelector(${JSON.stringify(guard)}) === null`, 'Selecting the current provider does not open a discard guard');
-  await review.assert(`document.querySelector(${JSON.stringify(connectionUrl)}).value === 'https://draft.example.invalid/v1'`, 'Selecting the current provider preserves connection draft');
-  // URL inputs do not support selection APIs, so verify selection with the name field.
-  await review.evaluate(`(() => { const e=document.querySelector(${JSON.stringify(connectionName)}); e.focus(); e.setSelectionRange(1,4,'backward'); })()`);
-  await review.click('[data-provider="openai"]');
+  await review.click(`${editDialog} .pd-model-dialog-header button`);
   await waitForGuard();
   await keepEditing();
-  await review.assert(`document.querySelector(${JSON.stringify(connectionUrl)}).value === 'https://draft.example.invalid/v1'`, 'Keeping connection draft retains provider and content');
-  await review.assert(`(() => {const e=document.querySelector(${JSON.stringify(connectionName)}); return document.activeElement===e && e.selectionStart===1 && e.selectionEnd===4 && e.selectionDirection==='backward';})()`, 'Provider guard restores the original draft input and selection');
-  await review.evaluate(`(() => { const e=document.querySelector(${JSON.stringify(connectionName)}); e.focus(); e.setSelectionRange(0,3,'forward'); })()`);
-  await review.clickText('.pd-settings-nav button', '常规');
+  await review.assert(`document.querySelector(${JSON.stringify(editDialog)}) !== null && document.querySelector(${JSON.stringify(connectionUrl)}).value === 'https://draft.example.invalid/v1'`, 'Keeping the connection draft retains the dialog and its content');
+  // URL inputs do not support selection APIs, so verify selection with the name field.
+  await review.evaluate(`(() => { const e=document.querySelector(${JSON.stringify(connectionName)}); e.focus(); e.setSelectionRange(1,4,'backward'); })()`);
+  await review.click(`${editDialog} .pd-model-dialog-header button`);
   await waitForGuard();
   await review.screenshot('04-connection-leave-guard');
   await keepEditing();
-  await review.assert('document.querySelector(".pd-settings-nav [aria-current=page]").textContent === "模型管理"', 'Keeping connection draft stays on model settings');
-  await review.assert(`(() => {const e=document.querySelector(${JSON.stringify(connectionName)}); return document.activeElement===e && e.selectionStart===0 && e.selectionEnd===3 && e.selectionDirection==='forward';})()`, 'Settings guard restores the original draft input and selection');
-  await review.clickText('.pd-settings-nav button', '常规');
+  await review.assert(`(() => {const e=document.querySelector(${JSON.stringify(connectionName)}); return document.activeElement===e && e.selectionStart===1 && e.selectionEnd===4 && e.selectionDirection==='backward';})()`, 'Dialog guard restores the original draft input and selection');
+  await review.evaluate(`(() => { const e=document.querySelector(${JSON.stringify(connectionName)}); e.focus(); e.setSelectionRange(0,3,'forward'); })()`);
+  await review.click(`${editDialog} .pd-model-dialog-header button`);
+  await waitForGuard();
   await discard();
+  await noOpenModelDialog();
   await review.assert(`${saveCalls}.length === ${beforeConnectionLeave}`, 'Discarding connection changes does not save');
-  await review.clickText('.pd-settings-nav button', '模型管理');
-  await selectGateway();
+  await review.click('[data-action="edit-provider"]');
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(connectionUrl)}))`);
   await review.assert(`document.querySelector(${JSON.stringify(connectionUrl)}).value === 'https://models.example.invalid/v1'`, 'Discarded connection was not persisted');
+  await review.fill(connectionUrl, 'https://saved-and-continue.example.invalid/v1');
+  await review.click(`${editDialog} .pd-model-dialog-header button`);
+  await waitForGuard();
+  await review.assert('document.querySelector("[data-action=save-model-draft-and-leave]").disabled === false', 'A connection draft can be saved when leaving the provider settings dialog');
+  await review.click('[data-action="save-model-draft-and-leave"]');
+  await noOpenModelDialog();
+  await review.waitFor('window.__modelReview.providers.find(p=>p.provider==="review-gateway").baseUrl === "https://saved-and-continue.example.invalid/v1"');
 
-  // Credential content is also unsaved data and must protect closing settings.
+  // Credential content is also unsaved data and must protect closing the provider settings dialog.
+  await review.click('[data-action="edit-provider"]');
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(credentialInput)}))`);
   await review.fill(credentialInput, 'fixture-secret-not-a-real-key');
   await review.evaluate('window.__modelReview.failures.setProviderApiKey = "模拟凭据保存失败"');
-  await review.click('.pd-model-settings-credentials button[type="submit"]');
-  await review.waitFor('document.querySelector(".pd-model-settings-credentials").textContent.includes("模拟凭据保存失败")');
+  await review.click(`${editDialog} .pd-model-settings-credentials button[type="submit"]`);
+  await review.waitFor(`document.querySelector(${JSON.stringify(`${editDialog} .pd-model-settings-credentials`)}).textContent.includes("模拟凭据保存失败")`);
   await review.assert(`document.querySelector(${JSON.stringify(credentialInput)}).value === 'fixture-secret-not-a-real-key'`, 'Failed credential save retains the secret draft');
   await review.evaluate('delete window.__modelReview.failures.setProviderApiKey');
   const beforeSecret = await review.evaluate('window.__modelReview.calls.filter(call=>call.name==="setProviderApiKey").length');
-  await review.click('.pd-settings-header button[aria-label="关闭设置"]');
+  await review.click(`${editDialog} .pd-model-dialog-header button`);
   await waitForGuard();
   await keepEditing();
   await review.assert(`document.querySelector(${JSON.stringify(credentialInput)}).value === 'fixture-secret-not-a-real-key'`, 'Keeping secret draft retains it in memory');
-  await review.click('.pd-settings-header button[aria-label="关闭设置"]');
+  await review.click(`${editDialog} .pd-model-dialog-header button`);
+  await waitForGuard();
   await discard();
-  await review.waitFor('document.querySelector(".pd-settings-dialog") === null');
+  await noOpenModelDialog();
   await review.assert(`window.__modelReview.calls.filter(call=>call.name==="setProviderApiKey").length === ${beforeSecret}`, 'Closing after discard never writes the secret');
-  await review.click('.pd-settings-entry');
-  await review.clickText('.pd-settings-nav button', '模型管理');
-  await selectGateway();
+  await review.click('[data-action="edit-provider"]');
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(credentialInput)}))`);
   await review.assert(`document.querySelector(${JSON.stringify(credentialInput)}).value === ''`, 'Reopening does not resurrect discarded secret');
+  await review.click(`${editDialog} .pd-model-dialog-header button`);
+  await noOpenModelDialog();
 
   // Running agent still permits new providers while protecting session settings.
   await review.click('[data-provider="openai"]');
   await review.assert('document.querySelector("[data-model-id=gpt-review] [data-action=toggle-model]").disabled === true', 'The current model cannot be disabled');
-  await selectGateway();
+  await review.click(gateway);
+  await review.waitFor('document.querySelector(".pd-model-provider-option.is-selected")?.dataset.provider === "review-gateway"');
   await review.evaluate('window.__modelReview.snapshot.status = "busy"; window.__modelReview.emitAgent({type:"status",status:"busy"})');
   await review.settle();
-  await review.assert(`document.querySelector(${JSON.stringify('[data-field="provider.baseUrl"]')}).disabled === true`, 'Busy state disables connection mutation');
-  await review.assert('[...document.querySelectorAll("[data-action=add-model],[data-action=edit-model],[data-action=toggle-model],[data-action=discover-models],[data-action=use-model],[data-action=remove-provider]")].every(element=>element.disabled)', 'Busy state protects existing models, connections, and provider removal');
+  await review.assert('document.querySelector("[data-action=edit-provider]").disabled === true', 'Busy state blocks provider settings editing');
+  await review.assert('[...document.querySelectorAll("[data-action=add-model],[data-action=edit-model],[data-action=toggle-model],[data-action=discover-models],[data-action=use-model],[data-action=remove-provider],[data-action=edit-provider]")].every(element=>element.disabled)', 'Busy state protects existing models, connections, and provider removal');
   await review.assert('document.querySelector("[data-action=add-provider]").disabled === false', 'Busy state permits adding a new provider');
   await review.screenshot('05-busy-gated-controls');
   await review.click('[data-action="add-provider"]');
@@ -320,27 +354,35 @@ export default async function runScenarios(review) {
   await review.click('dialog[open] [data-action="confirm-remove"]');
   await review.waitFor('!window.__modelReview.providers.some(provider=>provider.provider==="saved-draft-during-chat")');
   await noOpenModelDialog();
-  await selectGateway();
+  await review.click(gateway);
+  await review.waitFor('document.querySelector(".pd-model-provider-option.is-selected")?.dataset.provider === "review-gateway"');
+  await review.click('[data-action="edit-provider"]');
+  await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(connectionUrl)}))`);
 
   // Removing credentials can hide the selected provider, so it must protect connection drafts.
   const beforeGuardedRemoval = await review.evaluate('window.__modelReview.calls.filter(call=>call.name==="removeProviderCredential").length');
   await review.fill(connectionUrl, 'https://credential-removal-draft.example.invalid/v1');
-  await review.click('.pd-model-provider-detail .pd-settings-remove');
+  await review.click(`${editDialog} .pd-settings-remove`);
   await waitForGuard();
   await review.assert(`window.__modelReview.calls.filter(call=>call.name==="removeProviderCredential").length === ${beforeGuardedRemoval}`, 'Credential removal waits for the connection draft guard');
   await keepEditing();
   await review.assert(`document.querySelector(${JSON.stringify(connectionUrl)}).value === 'https://credential-removal-draft.example.invalid/v1'`, 'Keeping the connection draft after credential removal preserves its URL');
   await review.assert(`window.__modelReview.calls.filter(call=>call.name==="removeProviderCredential").length === ${beforeGuardedRemoval}`, 'Keeping the connection draft cancels credential removal');
   await review.click('[data-action="cancel-connection"]');
-  await review.assert(`document.querySelector(${JSON.stringify(connectionUrl)}).value === 'https://models.example.invalid/v1' && window.__modelReview.providers.find(provider=>provider.provider==='review-gateway').configured`, 'Cancelling the connection draft retains the original connection and credential');
+  await review.assert(`document.querySelector(${JSON.stringify(connectionUrl)}).value === 'https://saved-and-continue.example.invalid/v1' && window.__modelReview.providers.find(provider=>provider.provider==='review-gateway').configured`, 'Cancelling the connection draft retains the original connection and credential');
+  await review.click(`${editDialog} .pd-model-dialog-header button`);
+  await noOpenModelDialog();
 
   // An entirely unconfigured catalog still exposes every provider through Add provider.
   const configuredProviderIds = await review.evaluate('window.__modelReview.providers.filter(provider=>provider.configured).map(provider=>provider.provider)');
   for (const provider of configuredProviderIds || []) {
     await review.click(`[data-provider="${provider}"]`);
-    await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(`.pd-model-provider-detail input#pd-api-key-${provider}`)}))`);
-    await review.click('.pd-model-provider-detail .pd-settings-remove');
+    await review.click('[data-action="edit-provider"]');
+    await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(`dialog[open] input#pd-api-key-${provider}`)}))`);
+    await review.click('dialog[open] .pd-settings-remove');
     await review.waitFor(`document.querySelector(${JSON.stringify(`[data-provider="${provider}"]`)}) === null`);
+    await review.click('dialog[open] .pd-model-dialog-header button');
+    await noOpenModelDialog();
   }
   await review.assert('document.querySelectorAll("[data-provider]").length === 0 && window.__modelReview.providers.every(provider=>!provider.configured)', 'Removing all credentials leaves an empty configured provider list');
   await review.assert('document.querySelector("[data-action=add-provider]").disabled === false', 'Add provider remains enabled with no configured providers');

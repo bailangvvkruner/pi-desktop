@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { basename, extname, isAbsolute, resolve } from 'node:path';
 import type { ResultFilePreview, ResultFileTarget } from '@pidesktop/shared';
 
-export const RESULT_FILE_LIMITS = { text: 1024 * 1024, image: 16 * 1024 * 1024, pdf: 20 * 1024 * 1024, office: 10 * 1024 * 1024 } as const;
+export const RESULT_FILE_LIMITS = { text: 1024 * 1024, html: 1024 * 1024, image: 16 * 1024 * 1024, pdf: 20 * 1024 * 1024, office: 10 * 1024 * 1024 } as const;
 
 function localPath(value: unknown): value is string {
   if (typeof value !== 'string' || !value.trim() || value.length > 32_768 || /[\u0000-\u001f]/.test(value)) return false;
@@ -15,6 +15,21 @@ function localPath(value: unknown): value is string {
     if (value.split(/[\\/]/).some(part => /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:[. ]|$)/i.test(part))) return false;
   }
   return true;
+}
+
+/**
+ * File types the OS would execute instead of display when "opened". Links come
+ * from model output, so launching them must never run code on a single click.
+ */
+const EXECUTABLE_EXTENSIONS = new Set([
+  '.exe', '.com', '.scr', '.pif', '.cpl', '.msi', '.msp', '.msc', '.appx', '.msix', '.application', '.appref-ms', '.gadget',
+  '.bat', '.cmd', '.ps1', '.psm1', '.psd1', '.ps1xml', '.vbs', '.vbe', '.js', '.jse', '.wsf', '.wsh', '.ws', '.hta', '.sct',
+  '.lnk', '.url', '.scf', '.reg', '.inf', '.chm', '.jar', '.jnlp', '.settingcontent-ms',
+  '.sh', '.bash', '.zsh', '.csh', '.ksh', '.command', '.tool', '.app', '.pkg', '.dmg', '.appimage', '.desktop', '.run', '.bin',
+]);
+
+export function isExecutableResultFile(path: string): boolean {
+  return EXECUTABLE_EXTENSIONS.has(extname(path).toLowerCase());
 }
 
 function sameDirectory(first: string, second: string): boolean {
@@ -81,7 +96,12 @@ export class ResultFileService {
   }
 
   async openResultFile(request: unknown, openPath: (path: string) => Promise<string>): Promise<void> {
+    const requested = validateTarget(request).path;
     const target = await this.resolveTarget(request);
+    // Check both the link text and the resolved file: a symlink must not hide a script.
+    if (isExecutableResultFile(requested) || isExecutableResultFile(target.path)) {
+      throw new Error('出于安全考虑，不会直接运行可执行文件或脚本。请使用“打开所在位置”后自行确认。');
+    }
     this.assertCurrent(target.cwd);
     const error = await openPath(target.path);
     if (error) throw new Error(error);
@@ -112,12 +132,13 @@ export class ResultFileService {
       const mime = imageMime(head);
       const pdf = head.toString('ascii', 0, 5) === '%PDF-';
       const extension = extname(target.path).toLowerCase();
-      const officeFormat = extension === '.docx' ? 'docx' : extension === '.xlsx' ? 'xlsx' : undefined;
+      const officeFormat = extension === '.docx' ? 'docx' : extension === '.xlsx' ? 'xlsx' : extension === '.pptx' ? 'pptx' : undefined;
       const office = officeFormat && head.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
-      const kind = mime ? 'image' : pdf ? 'pdf' : office ? 'office' : 'text';
+      const html = extension === '.html' || extension === '.htm';
+      const kind = mime ? 'image' : pdf ? 'pdf' : office ? 'office' : html ? 'html' : 'text';
       const limit = RESULT_FILE_LIMITS[kind];
       this.assertCurrent(target.cwd);
-      if (kind !== 'text' && opened.size > limit) return { ...base, kind: 'unsupported', reason: 'too-large' };
+      if (kind !== 'text' && kind !== 'html' && opened.size > limit) return { ...base, kind: 'unsupported', reason: 'too-large' };
       // Office archives and executables are never misrepresented as a text preview.
       if (kind === 'text' && /\.(?:docx?|xlsx?|pptx?|od[tpfs]|zip|7z|rar|exe|dll|wasm|mp[34]|mov|avi|wav|flac|ttf|woff2?)$/i.test(extension)) {
         return { ...base, kind: 'unsupported', reason: 'unsupported' };
@@ -132,6 +153,13 @@ export class ResultFileService {
       this.assertCurrent(target.cwd);
       const truncated = offset > limit || opened.size > limit;
       const content = bytes.subarray(0, Math.min(offset, limit));
+      // HTML previews render inside a sandboxed iframe and share the text budget.
+      if (kind === 'html') {
+        const html = decodeText(content, truncated);
+        return html === null
+          ? { ...base, kind: 'unsupported', reason: 'unsupported' }
+          : { ...base, kind: 'html', text: html, truncated };
+      }
       if (kind !== 'text') {
         if (truncated) return { ...base, kind: 'unsupported', reason: 'too-large' };
         if (kind === 'office') return { ...base, kind, officeFormat, bytesBase64: content.toString('base64') };

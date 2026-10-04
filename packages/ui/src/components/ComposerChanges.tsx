@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, type MouseEvent } from 'react';
+import { forwardRef, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, type FocusEvent, type MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import type { UiFileChange } from '@pidesktop/shared';
 import { useT } from '../i18n';
@@ -10,7 +10,10 @@ import './composerChanges.css';
 const INITIAL_FILES = 3;
 
 /** Conversation snapshots: live summary above the input, settled card below the transcript. */
-export function ComposerChanges({ items, running = false, liveTarget }: { items: UiFileChange[]; running?: boolean; liveTarget?: HTMLElement | null }) {
+/** Lets the find bar open the review dialog directly (changes find scope). */
+export interface ComposerChangesHandle { openReview(path: string): void }
+
+export const ComposerChanges = forwardRef<ComposerChangesHandle, { items: UiFileChange[]; running?: boolean; liveTarget?: HTMLElement | null }>(function ComposerChanges({ items, running = false, liveTarget }, ref) {
   const { t, locale } = useT(), zh = locale === 'zh-CN';
   const [showAll, setShowAll] = useState(false);
   const [liveFilesOpen, setLiveFilesOpen] = useState(false);
@@ -36,6 +39,12 @@ export function ComposerChanges({ items, running = false, liveTarget }: { items:
     reviewTrigger.current = event.currentTarget;
     setReviewPath(path); setLiveFilesOpen(false);
   };
+  // The find bar opens reviews without a originating control; focus returns to the composer.
+  useImperativeHandle(ref, () => ({ openReview: (path: string) => {
+    if (!items.some(item => item.path === path)) return;
+    reviewTrigger.current = null;
+    setReviewPath(path); setLiveFilesOpen(false);
+  } }), [items]);
   useEffect(() => {
     if (!running) setLiveFilesOpen(false);
   }, [running]);
@@ -85,4 +94,4 @@ export function ComposerChanges({ items, running = false, liveTarget }: { items:
     {running && liveTarget ? createPortal(liveSummary, liveTarget) : completed}
     {reviewPath !== null && <ChangesDialog items={items} initialPath={reviewPath} returnFocus={reviewTrigger.current} getReturnFocus={() => primary.current ?? document.querySelector<HTMLTextAreaElement>('.pd-composer-shell textarea')} onClose={() => setReviewPath(null)} />}
   </>;
-}
+});

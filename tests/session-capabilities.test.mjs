@@ -30,6 +30,9 @@ test('session stats, system rows, tree branches and export work through the serv
     saved.appendCompaction('Early work covered the project layout.', summary.id, 1234);
     saved.appendCustomMessageEntry('desktop-notice', 'Extension notice text', true);
     saved.appendCustomMessageEntry('desktop-hidden', 'Never displayed', false);
+    saved.appendCustomEntry('extension-notice', { message: '报告已生成', notificationType: 'warning' });
+    saved.appendCustomEntry('extension-notice', { message: '旧版字段', notificationType: 'bogus' });
+    saved.appendCustomEntry('extension-notice', { message: '   ' });
     saved.appendMessage({ role: 'user', content: 'Continue after compaction', timestamp: Date.now() });
     saved.appendMessage(assistant([{ type: 'text', text: 'Post-compaction reply' }]));
 
@@ -41,13 +44,20 @@ test('session stats, system rows, tree branches and export work through the serv
 
     await test('compaction and visible custom entries appear as system rows', () => {
       const systemRows = snapshot.messages.filter((message) => message.role === 'system');
-      assert.equal(systemRows.length, 2);
+      assert.equal(systemRows.length, 4);
       assert.equal(systemRows[0].systemKind, 'compaction');
       assert.ok(systemRows[0].text.includes('project layout'));
       assert.equal(systemRows[1].systemKind, 'custom');
       assert.equal(systemRows[1].text, 'Extension notice text');
-      // Hidden custom entries never reach the transcript.
+      // Plugin notices project as inline system rows with normalized types.
+      assert.equal(systemRows[2].systemKind, 'extension-notice');
+      assert.equal(systemRows[2].notificationType, 'warning');
+      assert.equal(systemRows[2].text, '报告已生成');
+      assert.equal(systemRows[3].systemKind, 'extension-notice');
+      assert.equal(systemRows[3].notificationType, 'info');
+      // Hidden custom entries and blank notices never reach the transcript.
       assert.ok(!snapshot.messages.some((message) => message.text === 'Never displayed'));
+      assert.ok(!snapshot.messages.some((message) => message.systemKind === 'extension-notice' && !message.text.trim()));
     });
 
     await test('stats aggregate the persisted branch and usage', () => {

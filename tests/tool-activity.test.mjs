@@ -102,10 +102,10 @@ test('compact activity components preserve accessible details and support a pare
       assert.match(render(ToolActivityPanel, { sourceActivities: [read], indices: [0] }), /pd-activity-summary/);
     });
 
-    await context.test('failed command details retain full commands, errors, copy and wrapping controls', () => {
+    await context.test('failed commands stay collapsed by default yet retain full commands, errors, copy and wrapping controls', () => {
       const command = 'node --test\n tests/a.test.mjs --test-name-pattern=preserve-last-argument';
       const html = render(ToolActivityItem, { activity: { ...read, tool: 'bash', title: 'bash(node --test…)', status: 'error', command, exitCode: 1, detail: 'specific failure output', files: [] } });
-      assert.match(html, /pd-activity-head[^>]*aria-expanded="true"/);
+      assert.match(html, /pd-activity-head[^>]*aria-expanded="false"/, 'failures no longer auto-expand (zcode keeps tool blocks folded)');
       assert.match(html, /pd-activity-command-text is-wrapped/);
       assert.ok(html.includes(command));
       assert.match(html, /specific failure output/);

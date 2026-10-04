@@ -46,6 +46,10 @@ export function ResultFilePreviewDialog({ target, onClose }: { target: ResultFil
 	const loading = !preview && !loadError;
 	const imageSource = preview?.kind === 'image' && /^data:image\/(?:png|jpeg|gif|webp|bmp|x-icon|avif);base64,/i.test(preview.dataUrl ?? '') ? preview.dataUrl : undefined;
 	const pdfSource = preview?.kind === 'pdf' && /^data:application\/pdf;base64,/i.test(preview.dataUrl ?? '') ? preview.dataUrl : undefined;
+	// A fully sandboxed data: iframe is an opaque, inert document. It inherits the
+	// renderer CSP (no inline scripts) anyway, so scripts and forms stay disabled
+	// and the preview says so instead of rendering interactive pages half-broken.
+	const htmlSource = preview?.kind === 'html' && typeof preview.text === 'string' ? `data:text/html;charset=utf-8,${encodeURIComponent(preview.text)}` : undefined;
 
 	function sameContext() {
 		const current = useChatStore.getState();
@@ -151,7 +155,11 @@ export function ResultFilePreviewDialog({ target, onClose }: { target: ResultFil
 					{mediaError || !imageSource ? <div className="pd-result-file-preview-state" role="alert"><p>{label('无法显示此图片。', 'This image could not be displayed.')}</p><button type="button" onClick={retryPreview}>{label('重试', 'Retry')}</button></div> : <div className={`pd-result-file-preview-image${zoom === null ? ' is-fit' : ''}`}><img key={`${targetKey}:${retry}`} src={imageSource} alt={name} style={zoom === null ? undefined : { zoom }} onError={() => setMediaError(true)} /></div>}
 				</> : preview?.kind === 'office' && preview.bytesBase64 && preview.officeFormat ?
 				<Suspense fallback={<div className="pd-result-file-preview-state" role="status">{label('正在加载预览…', 'Loading preview…')}</div>}><OfficeFilePreview key={`${targetKey}:${retry}`} bytesBase64={preview.bytesBase64} format={preview.officeFormat} /></Suspense> : preview?.kind === 'pdf' && pdfSource && !mediaError ?
-				<iframe className="pd-result-file-preview-pdf" title={`${label('PDF 预览', 'PDF preview')}: ${name}`} src={pdfSource} onError={() => setMediaError(true)} /> :
+				<iframe className="pd-result-file-preview-pdf" title={`${label('PDF 预览', 'PDF preview')}: ${name}`} src={pdfSource} onError={() => setMediaError(true)} /> : preview?.kind === 'html' && htmlSource ?
+				<div className="pd-result-file-preview-html">
+					<p className="pd-result-file-preview-note">{label('静态预览：脚本与表单已禁用，交互内容请用默认应用打开。', 'Static preview: scripts and forms are disabled. Open it in the default app for interactive content.')}{preview.truncated ? label('文件较大，仅预览前 1 MB 内容。', ' Only the first 1 MB of this file is previewed.') : null}</p>
+					<iframe title={`${label('HTML 预览', 'HTML preview')}: ${name}`} src={htmlSource} sandbox="" referrerPolicy="no-referrer" />
+				</div> :
 				<div className="pd-result-file-preview-state"><Icon name={preview?.kind === 'directory' ? 'folder' : 'file'} width="36" height="36" /><strong>{preview?.kind === 'directory' ? label('文件夹', 'Folder') : label('暂无预览', 'Preview unavailable')}</strong><p>{preview?.kind === 'pdf' ? label('无法显示此 PDF，请使用默认应用打开。', 'This PDF could not be displayed. Open it in its default app.') : unavailableReason()}</p><button type="button" disabled={!bridge || busy !== null} onClick={() => void act('open')}>{openLabel}</button></div>}
 		</div></ScopedErrorBoundary>
 	</dialog>, document.body);

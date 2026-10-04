@@ -49,6 +49,9 @@
 .pd-result-file-preview-image img { display: block; flex-shrink: 0; align-self: center; max-width: none; margin: auto; object-fit: contain; }
 .pd-result-file-preview-image.is-fit img { max-width: 100%; max-height: 100%; }
 .pd-result-file-preview-pdf { flex: 1; width: 100%; min-height: 0; border: 0; background: var(--pd-bg); }
+.pd-result-file-preview-html { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+.pd-result-file-preview-html > iframe { flex: 1; width: 100%; min-height: 0; border: 0; background: #fff; }
+.pd-result-file-preview-note { flex: 0 0 auto; margin: 0; padding: 8px 20px; color: var(--pd-text-subtle); background: var(--pd-surface); border-bottom: 1px solid var(--pd-border-soft); font-size: var(--pd-font-caption); }
 .pd-result-file-preview .pd-workbench-reader { min-width: 0; }
 .pd-result-file-preview .pd-workbench-reader-tools { padding: 9px 12px; background: var(--pd-surface); }
 .pd-result-file-preview .pd-workbench-reader-notice { padding-block: 4px; }

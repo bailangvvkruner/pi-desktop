@@ -3,11 +3,11 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams, type ExecFileExce
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { lstat, open, readFile, readdir, realpath, stat } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, readdir, realpath, rename, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import type { WorkspaceBranches, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitLogEntry, WorkspaceGitStatus, WorkspaceOpener } from '@pidesktop/shared';
+import type { WorkspaceBranches, WorkspaceCommandEvent, WorkspaceEntry, WorkspaceGitGraphCommit, WorkspaceGitLogEntry, WorkspaceGitStatus, WorkspaceOpener } from '@pidesktop/shared';
 
 const execFileAsync = promisify(execFile);
 const MAX_PREVIEW_BYTES = 1024 * 1024;
@@ -33,6 +33,18 @@ async function editorIcon(executable: string): Promise<string | undefined> {
 		return undefined;
 	}
 }
+/**
+ * Runs the VS Code CLI from PATH. On Windows it is `code.cmd`, and Node refuses
+ * to spawn batch files without a shell (CVE-2024-27980, EINVAL). Route it
+ * through cmd.exe with every argument quoted; Windows paths cannot contain '"'.
+ */
+function runVsCodeCli(args: string[]): Promise<unknown> {
+	if (process.platform !== 'win32') return execFileAsync('code', args, { timeout: 15000, windowsHide: true });
+	if (args.some((arg) => arg.includes('"'))) return Promise.reject(new Error('路径包含无效字符'));
+	const commandLine = ['code.cmd', ...args].map((arg) => `"${arg}"`).join(' ');
+	return execFileAsync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"${commandLine}"`], { timeout: 15000, windowsHide: true, windowsVerbatimArguments: true });
+}
+
 function isWithin(root: string, candidate: string): boolean {
 	const rel = relative(root, candidate);
 	return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
@@ -127,7 +139,7 @@ export class WorkbenchService {
 		}
 		// Fallback: the `code` CLI must live on PATH.
 		try {
-			await execFileAsync(process.platform === 'win32' ? 'code.cmd' : 'code', [root], { timeout: 15000, windowsHide: true });
+			await runVsCodeCli([root]);
 		} catch (error) {
 			throw new Error(`未找到 VS Code，请安装后重试：${error instanceof Error ? error.message : String(error)}`);
 		}
@@ -148,7 +160,7 @@ export class WorkbenchService {
 			if (executable) return;
 		}
 		try {
-			await execFileAsync(process.platform === 'win32' ? 'code.cmd' : 'code', ['-g', target], { timeout: 15000, windowsHide: true });
+			await runVsCodeCli(['-g', target]);
 		} catch (error) {
 			throw new Error(`未找到 VS Code，请安装后重试：${error instanceof Error ? error.message : String(error)}`);
 		}
@@ -213,6 +225,88 @@ export class WorkbenchService {
 		if (bytes.includes(0)) throw new Error('无法预览二进制文件');
 		try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
 		catch { throw new Error('文件不是有效的 UTF-8 文本'); }
+	}
+
+	/**
+	 * Validate a single path segment for create/rename (4.6). Pure so tests can
+	 * cover it directly: separators, forbidden characters, Windows reserved device
+	 * names, control characters and trailing dots/spaces are all rejected.
+	 */
+	static validateEntryName(name: string): string {
+		if (typeof name !== 'string' || name.length === 0) throw new Error('名称不能为空');
+		if (name.length > 255) throw new Error('名称过长（最多 255 个字符）');
+		if (name === '.' || name === '..') throw new Error('名称无效');
+		if (/[\\/]/.test(name)) throw new Error('名称不能包含路径分隔符');
+		if (/[<>:"|?*]/.test(name)) throw new Error('名称包含无效字符 <>:"|?*');
+		if (/[\u0000-\u001f\u007f]/.test(name)) throw new Error('名称包含控制字符');
+		if (/[. ]$/.test(name)) throw new Error('名称不能以点或空格结尾');
+		const stem = name.replace(/\.[^.]*$/, '').toUpperCase();
+		if (/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(stem)) throw new Error('名称与 Windows 保留设备名冲突');
+		return name;
+	}
+
+	private async mutateGuard(generation: number, approvedCwd: string, root: string): Promise<void> {
+		if (this.commandGeneration !== generation || this.getWorkspace() !== approvedCwd) throw new Error('工作区已切换，请重试');
+		if (resolve(await this.workspaceRoot()) !== resolve(root)) throw new Error('工作区已切换，请重试');
+	}
+
+	/** Creates an empty file or folder inside a workspace directory (4.6). */
+	async createEntry(parentRelativePath: string, name: string, kind: 'file' | 'directory'): Promise<void> {
+		if (kind !== 'file' && kind !== 'directory') throw new Error('类型无效');
+		WorkbenchService.validateEntryName(name);
+		const generation = this.commandGeneration;
+		const approvedCwd = this.getWorkspace();
+		const { root, path: parent } = await this.resolveEntry(parentRelativePath);
+		if (!(await stat(parent)).isDirectory()) throw new Error('目标不是文件夹');
+		const target = resolve(parent, name);
+		if (!isWithin(root, target)) throw new Error('目标不属于当前工作区');
+		await this.mutateGuard(generation, approvedCwd, root);
+		if (kind === 'directory') {
+			try { await mkdir(target); }
+			catch (error) { throw new Error(`创建文件夹失败：${error instanceof Error && (error as NodeJS.ErrnoException).code === 'EEXIST' ? '同名项目已存在' : error instanceof Error ? error.message : String(error)}`); }
+		} else {
+			let handle;
+			try { handle = await open(target, 'wx'); }
+			catch (error) { throw new Error(`创建文件失败：${error instanceof Error && (error as NodeJS.ErrnoException).code === 'EEXIST' ? '同名文件已存在' : error instanceof Error ? error.message : String(error)}`); }
+			await handle.close();
+		}
+	}
+
+	/** Renames a file or folder inside its directory (4.6). */
+	async renameEntry(relativePath: string, newName: string): Promise<void> {
+		WorkbenchService.validateEntryName(newName);
+		const generation = this.commandGeneration;
+		const approvedCwd = this.getWorkspace();
+		const { root, path } = await this.resolveEntry(relativePath);
+		const parent = resolve(path, '..');
+		if (!isWithin(root, parent) || resolve(root) === resolve(path)) throw new Error('不能重命名工作区根目录');
+		const target = resolve(parent, newName);
+		if (!isWithin(root, target)) throw new Error('目标不属于当前工作区');
+		if (resolve(target) === resolve(path)) return;
+		// On case-insensitive file systems "readme.md" → "README.md" stats the
+		// source itself; only a different file (another inode) is a conflict.
+		const existing = await stat(target, { bigint: true }).catch((error: unknown) => {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+			throw error;
+		});
+		if (existing) {
+			const source = await stat(path, { bigint: true });
+			if (existing.ino !== source.ino || existing.dev !== source.dev) throw new Error('同名项目已存在');
+		}
+		await this.mutateGuard(generation, approvedCwd, root);
+		try { await rename(path, target); }
+			catch (error) { throw new Error(`重命名失败：${error instanceof Error ? error.message : String(error)}`); }
+	}
+
+	/** Moves a file or folder to the OS trash; the renderer confirms first (4.6). */
+	async deleteEntry(relativePath: string, trash: (path: string) => Promise<void>): Promise<void> {
+		const generation = this.commandGeneration;
+		const approvedCwd = this.getWorkspace();
+		const { root, path } = await this.resolveEntry(relativePath);
+		if (resolve(root) === resolve(path)) throw new Error('不能删除工作区根目录');
+		await this.mutateGuard(generation, approvedCwd, root);
+		try { await trash(path); }
+		catch (error) { throw new Error(`移入回收站失败：${error instanceof Error ? error.message : String(error)}`); }
 	}
 
 	async gitStatus(): Promise<WorkspaceGitStatus> {
@@ -374,6 +468,40 @@ export class WorkbenchService {
 				const [hash, shortHash, author, date, ...subject] = line.split('\x1f');
 				return { hash: hash ?? '', shortHash: shortHash ?? '', author: author?.trimEnd() ?? '', date: date ?? '', subject: subject.join('\x1f').trimEnd() };
 			});
+		} catch {
+			return []; // not a repository or no commits yet
+		}
+	}
+
+	/**
+	 * Commit history with parent topology and local refs for the git graph.
+	 * Runs one bounded log plus for-each-ref; both fail soft to an empty graph.
+	 */
+	async gitGraph(limit = 60): Promise<WorkspaceGitGraphCommit[]> {
+		const capped = Math.min(Math.max(Math.trunc(limit) || 60, 1), 200);
+		const root = await this.workspaceRoot();
+		const prefix = this.gitPrefix(root);
+		try {
+			const output = (await execFileAsync('git', [...prefix, 'log', `-n${capped}`, '--pretty=format:%H%x1f%h%x1f%<(200,trunc)%an%x1f%aI%x1f%P%x1f%<(1000,trunc)%s'], { timeout: 15000, maxBuffer: 2 * 1024 * 1024, env: SAFE_GIT_ENV })).stdout;
+			const commits: WorkspaceGitGraphCommit[] = output.split('\n').filter((line) => line.trim()).map((line) => {
+				const [hash, shortHash, author, date, parents, ...subject] = line.split('\x1f');
+				return { hash: hash ?? '', shortHash: shortHash ?? '', author: author?.trimEnd() ?? '', date: date ?? '',
+					parents: parents ? parents.trim().split(' ').filter(Boolean) : [], subject: subject.join('\x1f').trimEnd(), refs: [] };
+			});
+			// Local branch tips and HEAD decorate the matching hashes.
+			const refs = new Map<string, string[]>();
+			const addRef = (hash: string, label: string): void => { const list = refs.get(hash) ?? []; list.push(label); refs.set(hash, list); };
+			for (const line of (await execFileAsync('git', [...prefix, 'for-each-ref', '--format=%(objectname) %(refname:short)', 'refs/heads'], { timeout: 8000, maxBuffer: 256 * 1024, env: SAFE_GIT_ENV })).stdout.split('\n')) {
+				const [hash, ...name] = line.trim().split(' ');
+				if (hash && name.length) addRef(hash, name.join(' '));
+			}
+			try {
+				const head = (await execFileAsync('git', [...prefix, 'rev-parse', 'HEAD'], { timeout: 8000, maxBuffer: 256, env: SAFE_GIT_ENV })).stdout.trim();
+				// HEAD leads its commit's labels, ahead of the branch names.
+				if (head) refs.set(head, ['HEAD', ...(refs.get(head) ?? [])]);
+			} catch { /* unborn HEAD keeps plain refs */ }
+			for (const commit of commits) commit.refs = (refs.get(commit.hash) ?? []).slice(0, 8);
+			return commits;
 		} catch {
 			return []; // not a repository or no commits yet
 		}

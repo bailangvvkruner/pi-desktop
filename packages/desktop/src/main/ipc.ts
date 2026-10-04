@@ -265,9 +265,14 @@ export function readCurrentDesktopSettings(): DesktopSettings {
 }
 
 /** Persists a close-policy choice made from the close dialog (4.2). */
-export function saveCloseBehavior(behavior: DesktopSettings['closeBehavior']): void {
-	const current = readCurrentDesktopSettings();
-	writeDesktopSettings(desktopSettingsPath(), { ...current, closeBehavior: behavior });
+export function saveCloseBehavior(behavior: DesktopSettings['closeBehavior']): Promise<void> {
+	// Share the settings queue so a concurrent Settings save cannot drop this choice.
+	const result = desktopSettingsQueue.then(() => {
+		const current = readCurrentDesktopSettings();
+		writeDesktopSettings(desktopSettingsPath(), { ...current, closeBehavior: behavior });
+	});
+	desktopSettingsQueue = result.then(() => undefined, () => undefined);
+	return result;
 }
 
 /** Sends a main → renderer command (tray menu, notification clicks). */
@@ -786,9 +791,25 @@ export function registerIpc(options: {
 		});
 		return selected.canceled ? null : (selected.filePaths[0] ?? null);
 	});
-	handleRendererInvoke(IPC_CHANNELS.appRelaunch, () => {
+	handleRendererInvoke(IPC_CHANNELS.appRelaunch, async (event) => {
+		const owner = invokingWindow(event);
+		if (await isAgentWorkActive()) {
+			const english = getAppLocale() === 'en-US';
+			const { response } = await dialog.showMessageBox(owner, {
+				type: 'warning',
+				message: english ? 'Tasks are still running' : '仍有任务在运行',
+				detail: english ? 'Restarting interrupts the running conversation or automation.' : '重启会中断正在运行的会话或自动化任务。',
+				buttons: [english ? 'Cancel' : '取消', english ? 'Restart' : '重启'],
+				defaultId: 0,
+				cancelId: 0,
+			});
+			if (response !== 1) return false;
+		}
+		// app.quit (unlike app.exit) runs before-quit, which disposes the agent
+		// host and flushes queued metadata before the relaunch takes over.
 		app.relaunch();
-		app.exit(0);
+		app.quit();
+		return true;
 	});
 	automationService = automations;
 	handleRendererInvoke(IPC_CHANNELS.pluginCatalog, (event, cwd: unknown) => {
@@ -964,7 +985,8 @@ export function registerIpc(options: {
 		// The detach target is always the home workspace, not the last-saved cwd
 		// that defaultWorkspace() restores.
 		const home = readCurrentDesktopSettings().conversationStorageDirectory;
-		mkdirSync(home, { recursive: true });
+		// Recursive mkdir still fails with EPERM on an existing drive root (D:\).
+		if (!statSync(home, { throwIfNoEntry: false })?.isDirectory()) mkdirSync(home, { recursive: true });
 		return home;
 	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceRemove, (_event, cwd: string) => queueWorkspaceActivation(async () => {

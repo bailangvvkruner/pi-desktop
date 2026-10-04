@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import * as themeColors from '../packages/ui/src/themeColors.ts';
 import * as workbenchReading from '../packages/ui/src/workbenchReading.ts';
 import * as shortcutBindings from '../packages/ui/src/shortcuts/bindings.ts';
+import * as taskNotificationSound from '../packages/ui/src/taskNotificationSound.ts';
 
 const desktopRequire = createRequire(new URL('../packages/desktop/package.json', import.meta.url));
 const typescript = desktopRequire('typescript');
@@ -19,7 +20,7 @@ function mountShell(storage, chatState = { appInfo: { platform: 'win32' } }) {
   const styles = new Map();
   const document = { documentElement: { dataset: {}, style: {
     setProperty: (key, value) => styles.set(key, value), removeProperty: (key) => styles.delete(key),
-  } }, querySelector: () => null };
+  } }, querySelector: () => null, hasFocus: () => false };
   const context = {
     exports: {}, document, URLSearchParams, navigator: { userAgent: 'Windows' }, localStorage: storage,
     window: { location: { search: '' }, localStorage: storage, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), addEventListener() {}, removeEventListener() {} },
@@ -39,6 +40,8 @@ function mountShell(storage, chatState = { appInfo: { platform: 'win32' } }) {
       if (specifier === '../useSessionNavigation') return { useSessionNavigation: () => ({}) };
       if (specifier === '../workbenchReading') return workbenchReading;
       if (specifier === '../shortcuts/bindings') return shortcutBindings;
+      if (specifier === '../taskNotificationSound') return taskNotificationSound;
+      if (specifier === './ExtensionDialogHost') return { ExtensionDialogHost: 'ExtensionDialogHost', useExtensionRequestPending: () => false };
       // The real module runs outside this VM realm. Inject its supported storage
       // dependency so it observes this mount's browser storage, including errors.
       if (specifier === '../themeColors') return {

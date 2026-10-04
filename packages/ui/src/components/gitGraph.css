@@ -1,0 +1,25 @@
+.pd-git-graph { display: flex; align-items: flex-start; gap: 2px; padding: 4px 10px; overflow-x: auto; }
+.pd-git-graph-svg { flex: none; }
+.pd-git-edge { fill: none; stroke-width: 1.6; }
+.pd-git-edge.is-overflow { stroke-dasharray: 3 3; opacity: 0.55; }
+.pd-git-dot { stroke: var(--pd-surface-raised, var(--pd-surface)); stroke-width: 1.5; }
+.pd-git-dot.is-head { stroke-width: 2.5; }
+.pd-git-graph-rows { flex: 1 1 auto; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.pd-git-graph-rows li { display: flex; align-items: center; gap: 8px; padding: 4px 2px; font-size: var(--pd-font-caption, 12px); }
+.pd-git-graph-rows li code { flex: none; font-size: var(--pd-font-xs, 11px); color: var(--pd-text-soft, #999); }
+.pd-git-graph-subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-git-graph-rows li small { flex: none; color: var(--pd-text-soft, #999); font-size: var(--pd-font-xs, 11px); }
+.pd-git-graph-rows li.is-head .pd-git-graph-subject { font-weight: 600; }
+.pd-git-graph-refs { flex: none; display: inline-flex; gap: 4px; }
+.pd-git-ref { padding: 0 5px; border-radius: 999px; font-size: var(--pd-font-xs, 11px); line-height: 16px; background: color-mix(in srgb, var(--pd-accent) 16%, transparent); color: var(--pd-accent); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-git-ref.is-head { background: color-mix(in srgb, var(--pd-accent) 30%, transparent); font-weight: 600; }
+
+/* Lane palette shared by edges and dots. */
+.pd-git-edge.lane-0, .pd-git-dot.lane-0 { stroke: #3b82f6; fill: #3b82f6; }
+.pd-git-edge.lane-1, .pd-git-dot.lane-1 { stroke: #16a34a; fill: #16a34a; }
+.pd-git-edge.lane-2, .pd-git-dot.lane-2 { stroke: #d97706; fill: #d97706; }
+.pd-git-edge.lane-3, .pd-git-dot.lane-3 { stroke: #a855f7; fill: #a855f7; }
+.pd-git-edge.lane-4, .pd-git-dot.lane-4 { stroke: #dc2626; fill: #dc2626; }
+.pd-git-edge.lane-5, .pd-git-dot.lane-5 { stroke: #0d9488; fill: #0d9488; }
+.pd-git-edge.lane-6, .pd-git-dot.lane-6 { stroke: #db2777; fill: #db2777; }
+.pd-git-edge.lane-7, .pd-git-dot.lane-7 { stroke: #64748b; fill: #64748b; }

@@ -61,7 +61,9 @@ export function ToolActivityItem({ activity, onInteract }: { activity: UiToolAct
 	const detailId = useId();
 	// null follows the default. Either user choice wins over every later update.
 	const [userExpanded, setUserExpanded] = useDisclosureChoice(`tool:${activity.id}`);
-	const expanded = userExpanded ?? (activity.status === 'error' || activity.status === 'interrupted');
+	// Failures stay collapsed like any finished tool (zcode): the head already
+	// flags the error via icon, exit code and status; the detail opens on demand.
+	const expanded = userExpanded ?? false;
 	const [showAll, setShowAll] = useState(false);
 	const [wrapLines, setWrapLines] = useState(true);
 	const [copyStatus, setCopyStatus] = useState('');
@@ -157,7 +159,7 @@ export const ToolActivityPanel = memo(function ToolActivityPanel({ sourceActivit
 	const runningCount = activities.filter((activity) => activity.status === 'running').length;
 	const failedCount = activities.filter((activity) => activity.status === 'error').length;
 	const interruptedCount = activities.filter((activity) => activity.status === 'interrupted').length;
-	const expanded = userExpanded ?? (runningCount > 0 || failedCount > 0 || interruptedCount > 0);
+	const expanded = userExpanded ?? runningCount > 0;
 	const summary = [
 		t('chat.tool.count', { count: activities.length }),
 		runningCount > 0 ? t('chat.tool.runningCount', { count: runningCount }) : null,

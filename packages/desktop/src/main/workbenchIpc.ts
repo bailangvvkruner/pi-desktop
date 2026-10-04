@@ -44,6 +44,19 @@ export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchServi
 	handleRendererInvoke(IPC_CHANNELS.workspaceCommit, (_event, message: string) => service.gitCommit(message));
 	handleRendererInvoke(IPC_CHANNELS.workspaceListEntries, (_event, relativePath?: string) => service.listEntries(relativePath));
 	handleRendererInvoke(IPC_CHANNELS.workspaceReadFile, (_event, relativePath: string) => service.readFile(relativePath));
+	handleRendererInvoke(IPC_CHANNELS.workspaceCreateEntry, (_event, parentPath: unknown, name: unknown, kind: unknown) => {
+		if (typeof parentPath !== 'string' || typeof name !== 'string' || (kind !== 'file' && kind !== 'directory')) throw new Error('新建参数无效');
+		return service.createEntry(parentPath, name, kind);
+	});
+	handleRendererInvoke(IPC_CHANNELS.workspaceRenameEntry, (_event, path: unknown, newName: unknown) => {
+		if (typeof path !== 'string' || typeof newName !== 'string') throw new Error('重命名参数无效');
+		return service.renameEntry(path, newName);
+	});
+	handleRendererInvoke(IPC_CHANNELS.workspaceDeleteEntry, (_event, path: unknown) => {
+		if (typeof path !== 'string') throw new Error('删除参数无效');
+		// Trash semantics keep every delete recoverable from the OS recycle bin.
+		return service.deleteEntry(path, (target) => shell.trashItem(target));
+	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceGitStatus, () => service.gitStatus());
 	handleRendererInvoke(IPC_CHANNELS.workspaceGitDiff, (_event, relativePath: string, source?: 'staged' | 'unstaged' | 'all') => service.gitDiff(relativePath, source));
 	handleRendererInvoke(IPC_CHANNELS.workspaceBranches, () => service.gitBranches());
@@ -59,6 +72,10 @@ export function registerWorkbenchIpc(getWorkspace: () => string): WorkbenchServi
 	handleRendererInvoke(IPC_CHANNELS.workspaceGitLog, (_event, limit: unknown) => {
 		const count = typeof limit === 'number' ? limit : 30;
 		return service.gitLog(count);
+	});
+	handleRendererInvoke(IPC_CHANNELS.workspaceGitGraph, (_event, limit: unknown) => {
+		const count = typeof limit === 'number' ? limit : 60;
+		return service.gitGraph(count);
 	});
 	handleRendererInvoke(IPC_CHANNELS.workspaceGitCreateBranch, (_event, name: unknown, checkout: unknown) => {
 		if (typeof name !== 'string' || typeof checkout !== 'boolean') throw new Error('分支参数无效');

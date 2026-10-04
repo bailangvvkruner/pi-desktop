@@ -1,5 +1,4 @@
 import { McpSettingsPanel } from './McpSettingsPanel';
-import { ModelTestPanel } from './ModelTestPanel';
 import { DataManagementPanel } from './DataManagementPanel';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import type { UiDesktopSettings, UiProviderAuthStatus, UiUpdateState } from '@pidesktop/shared';
@@ -17,6 +16,7 @@ import { DEFAULT_UI_FONT_SIZE, UI_FONT_SIZE_MAX, UI_FONT_SIZE_MIN, applyUiFontSi
 import { createSettingsLeaveGuard, type SettingsDraftState as DraftState, type SettingsLeaveRequest } from '../settingsLeaveGuard';
 import { useBusyInputBehavior } from '../busyInputBehavior';
 import { ConversationMetricsSettings } from './ConversationMetricsSettings';
+import { useTaskNotificationSoundEnabled } from '../taskNotificationSound';
 import { ConversationStorageSettings } from './ConversationStorageSettings';
 import { EngineSettingsPanel } from './EngineSettingsPanel';
 
@@ -134,6 +134,8 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 	const [uiFontSize, setUiFontSize] = useState(readUiFontSize);
 	const [busyInputBehavior, setBusyInputBehavior] = useBusyInputBehavior();
 	const [busyInputSaveFailed, setBusyInputSaveFailed] = useState(false);
+	const [notificationSound, setNotificationSound] = useTaskNotificationSoundEnabled();
+	const [notificationSoundSaveFailed, setNotificationSoundSaveFailed] = useState(false);
 	const [contentFonts, setContentFonts] = useState(() => ({ code: readContentFontSize('code'), command: readContentFontSize('command') }));
 	const [savingLeave, setSavingLeave] = useState(false);
 	const [leaveError, setLeaveError] = useState(false);
@@ -359,6 +361,14 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 									disabled={savingDesktopSettings} onClick={() => { void saveDesktopSettings({ notificationsEnabled: false }); }}>{t('settings.notificationsOff')}</button>
 							</div>
 						)}
+						<div className="pd-settings-section-head"><h3>{t('settings.notificationSound')}</h3><p>{t('settings.notificationSoundDescription')}</p></div>
+						<div className="pd-language-options" data-setting="notification-sound" role="group" aria-label={t('settings.notificationSound')}>
+							<button type="button" className={notificationSound ? 'is-selected' : ''} aria-pressed={notificationSound}
+								onClick={() => setNotificationSoundSaveFailed(!setNotificationSound(true))}>{t('settings.notificationsOn')}</button>
+							<button type="button" className={!notificationSound ? 'is-selected' : ''} aria-pressed={!notificationSound}
+								onClick={() => setNotificationSoundSaveFailed(!setNotificationSound(false))}>{t('settings.notificationsOff')}</button>
+						</div>
+						{notificationSoundSaveFailed && <p className="pd-settings-feedback" role="status">{t('settings.notificationSoundSaveFailed')}</p>}
 						{!paiMode && appInfo?.platform === 'win32' && desktopSettings && (
 							<>
 								<div className="pd-settings-section-head"><h3>{t('settings.closeBehavior')}</h3><p>{t('settings.closeBehaviorDescription')}</p></div>
@@ -392,7 +402,7 @@ export function SettingsPanel({ initialPage = 'general', modelManagementTarget, 
 							<div className="pd-settings-divider" />
 							<ColorThemeSettings themePreference={themePreference} preferences={colorPreferences} onChange={onColorPreferencesChange} saveFailed={colorSaveFailed} />
 						</>}
-						{page === 'model' && <><ModelSettingsPanel key={cwd} initialTarget={modelTarget} onDraftStateChange={reportDraftState} renderCredential={(provider: UiProviderAuthStatus, onDraftStateChange?: (state: DraftState) => void, onRemoveRequest?: (remove: () => void) => void) => <ProviderCredentialRow key={provider.provider} {...provider} onDraftStateChange={onDraftStateChange} onRemoveRequest={onRemoveRequest} />} /><ModelTestPanel /></>}
+						{page === 'model' && <ModelSettingsPanel key={cwd} initialTarget={modelTarget} onDraftStateChange={reportDraftState} renderCredential={(provider: UiProviderAuthStatus, onDraftStateChange?: (state: DraftState) => void, onRemoveRequest?: (remove: () => void) => void) => <ProviderCredentialRow key={provider.provider} {...provider} onDraftStateChange={onDraftStateChange} onRemoveRequest={onRemoveRequest} />} />}
 						{page === 'engine' && <EngineSettingsPanel onDraftStateChange={reportDraftState} />}
 						{page === 'shortcuts' && <>
 							<div className="pd-settings-section-head"><h2>{t('settings.shortcuts')}</h2><p>{t('settings.shortcutsDescription')}</p></div>
