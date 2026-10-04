@@ -118,7 +118,7 @@ export function WorkbenchTextView({ text, path = '', diff = false, command = fal
       <div className="pd-workbench-reader-lines">{rows.slice(0, command ? rows.length : shown).map((row, i) => <div key={i} data-row={i} className={`pd-workbench-code-line is-${row.kind}${errorRanges.some(range => range.start < row.offset + row.text.length && range.end > row.offset) ? ' is-stderr' : ''}`}>
         {diff && <span className="pd-workbench-line-number" aria-hidden="true">{row.oldLine}</span>}<span className="pd-workbench-line-number" aria-hidden="true">{row.newLine}</span><code>{content(row, i)}</code>
       </div>)}</div>
-      {selectedRows && onQuote && createPortal(<button type="button" className="pd-quote-selection" style={{ position: 'fixed', zIndex: 60, left: selectedRows.left, top: selectedRows.top }} onMouseDown={event => event.preventDefault()} onClick={quoteSelection}>{label('添加到对话', 'Add to chat')}</button>, document.body)}
+      {selectedRows && onQuote && createPortal(<button type="button" className="pd-quote-selection" style={{ position: 'fixed', zIndex: 'var(--pd-z-selection-action)', left: selectedRows.left, top: selectedRows.top }} onMouseDown={event => event.preventDefault()} onClick={quoteSelection}>{label('添加到对话', 'Add to chat')}</button>, document.body)}
       {!command && shown < rows.length && <button type="button" className="pd-workbench-show-lines" onClick={() => setLimit(value => value + 400)}>{label('继续显示后续行', 'Show more lines')} ({Math.min(shown, rows.length)}/{rows.length})</button>}
     </div>
   </div>;

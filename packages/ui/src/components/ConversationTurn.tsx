@@ -10,6 +10,7 @@ import { ThinkingActivity } from './ThinkingActivity';
 import { ToolActivityPanel } from './ToolActivity';
 import { Icon } from './Icons';
 import './conversationTurn.css';
+import { countToolGroup, isExplorationGroup, toolGroupSummaryParts } from '../toolGroupSummary';
 
 function RunDuration({ run }: { run: UiConversationRun }) {
   const { locale } = useT();
@@ -55,13 +56,18 @@ export const ConversationTurn = memo(function ConversationTurn({ entry, messages
     // A new navigation request opens a folded result; terminal updates still fold the run.
   }, [reveal?.request]);
   const status = run?.status ?? (running ? 'running' : ownMessages.some(message => message.status === 'error') ? 'failed' : 'completed');
-  const label = ({ running: zh ? '进行中' : 'Working', completed: zh ? '已完成' : 'Worked', cancelled: zh ? '已停止' : 'Stopped', failed: zh ? '运行失败' : 'Failed', interrupted: zh ? '运行中断' : 'Interrupted' })[status];
+  // The turn header is where tool groups are summarized: "Read 3 files · 2 searches"
+  // instead of "5 tool calls" (ZCode explore grouping); exploration-only turns say so.
+  const toolCounts = countToolGroup(ownTools);
+  const toolSummary = toolGroupSummaryParts(toolCounts, locale).join(' · ');
+  const exploring = isExplorationGroup(toolCounts) && !processMessages.some(message => message.status === 'error');
+  const label = ({ running: zh ? (exploring ? '正在探索' : '进行中') : (exploring ? 'Exploring' : 'Working'), completed: zh ? (exploring ? '已探索' : '已完成') : (exploring ? 'Explored' : 'Worked'), cancelled: zh ? '已停止' : 'Stopped', failed: zh ? '运行失败' : 'Failed', interrupted: zh ? '运行中断' : 'Interrupted' })[status];
   const failureCount = ownTools.filter(tool => tool.status === 'error').length;
   const header = <>
     <Icon name={running ? 'clock' : status === 'completed' ? 'check' : status === 'failed' ? 'close' : 'square'} width="14" height="14" />
     <ActivityLabel active={running}>{label}</ActivityLabel>
     {run && entry.lastForRun && <RunDuration run={run} />}
-    {ownTools.length > 0 && <span className="pd-turn-count">{zh ? `${ownTools.length} 次工具调用` : `${ownTools.length} tool ${ownTools.length === 1 ? 'call' : 'calls'}`}</span>}
+    {ownTools.length > 0 && <span className="pd-turn-count" title={zh ? `${ownTools.length} 次工具调用` : `${ownTools.length} tool ${ownTools.length === 1 ? 'call' : 'calls'}`}>{toolSummary || (zh ? `${ownTools.length} 次工具调用` : `${ownTools.length} tool ${ownTools.length === 1 ? 'call' : 'calls'}`)}</span>}
     {failureCount > 0 && <span className="pd-turn-failures">{zh ? `${failureCount} 次失败` : `${failureCount} failed`}</span>}
     {hasProcess && <Icon name="chevronDown" className={`pd-chevron${expanded ? ' is-open' : ''}`} width="14" height="14" />}
   </>;

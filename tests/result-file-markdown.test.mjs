@@ -51,6 +51,16 @@ test('conversation Markdown renders local references as file actions while prese
     assert.match(windows, /\*字面星号\*/);
     assert.doesNotMatch(windows, /\\\*字面星号/);
     assert.doesNotMatch(windows, /proj\.github|work_draft/);
+    // Images: remote ones never load in the app; inline data images render; others fall back to text.
+    const images = render('![架构图](https://example.com/a.png) ![点](data:image/png;base64,iVBORw0KGgo=) ![脚本](javascript:alert(1))');
+    assert.match(images, /class="pd-md-image-link" href="https:\/\/example.com\/a.png"[^>]*>[\s\S]*架构图[\s\S]*example\.com/);
+    assert.doesNotMatch(images, /<img[^>]+src="https:/);
+    assert.match(images, /class="pd-md-image"[^>]*><img src="data:image\/png;base64,iVBORw0KGgo="/);
+    assert.match(images, /pd-md-image-alt">\[脚本\]/);
+    assert.doesNotMatch(images, /javascript:/);
+    // Tables carry the copy/CSV/preview toolbar around a scrollable table.
+    const table = render('| 名称 | 值 |\n| --- | --- |\n| a | 1 |');
+    assert.match(table, /class="pd-md-table"[\s\S]*role="toolbar"[\s\S]*class="pd-md-table-scroll"><table>/);
     // Ordinary escapes outside Windows paths are untouched.
     assert.match(render('价格 \\$5 与 a\\_b'), /价格 \$5 与 a_b/);
   } finally { await server.close(); }

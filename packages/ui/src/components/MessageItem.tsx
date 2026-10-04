@@ -1,5 +1,5 @@
 import type { UiAttachment, UiMessage } from '@pidesktop/shared';
-import { memo, useContext, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { memo, useContext, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
 import { useChatStore } from '../store';
@@ -32,6 +32,38 @@ function AttachmentPreview({ attachment }: { attachment: UiAttachment }) {
 	return <details className="pd-message-attachment pd-message-text-file"><summary>{attachment.name} <span>{t('message.textFile')}</span></summary><pre className="pd-message-text-preview">{attachment.text.slice(0, previewLength)}{attachment.text.length > previewLength ? `\n${t('message.previewTruncated')}` : ''}</pre></details>;
 }
 
+/** Collapsed height of a long sent message (ZCode ConversationUserInputBody). */
+const USER_TEXT_COLLAPSED_PX = 120;
+const USER_TEXT_TOLERANCE_PX = 24;
+
+/**
+ * Long sent messages (pasted logs, specs) fold to a few lines with an expand
+ * toggle, so one prompt never pushes the whole conversation off screen. Search
+ * and find matches inside the text keep it expanded.
+ */
+function UserMessageText({ text, forceExpanded }: { text: string; forceExpanded: boolean }) {
+	const { t } = useT();
+	const ref = useRef<HTMLParagraphElement>(null);
+	const [expandable, setExpandable] = useState(false);
+	const [expanded, setExpanded] = useState(false);
+	// Short messages never need measuring.
+	const candidate = text.length > 280 || text.split('\n').length > 5;
+	useLayoutEffect(() => {
+		const element = ref.current;
+		if (!candidate || !element) { setExpandable(false); return; }
+		const measure = () => setExpandable(element.scrollHeight > USER_TEXT_COLLAPSED_PX + USER_TEXT_TOLERANCE_PX);
+		measure();
+		const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+		observer?.observe(element);
+		return () => observer?.disconnect();
+	}, [text, candidate]);
+	const open = expanded || forceExpanded || !expandable;
+	return <>
+		<p ref={ref} data-message-body className={expandable && !open ? 'is-collapsed' : undefined} style={expandable && !open ? { maxHeight: USER_TEXT_COLLAPSED_PX } : undefined}>{text}</p>
+		{expandable && !forceExpanded && <button type="button" className="pd-user-text-toggle" aria-expanded={open} onClick={() => setExpanded(!open)}>{t(open ? 'message.collapseText' : 'message.expandText')}<Icon name="chevronDown" className={`pd-chevron${open ? ' is-open' : ''}`} width="13" height="13" /></button>}
+	</>;
+}
+
 /** Sent messages reveal copy and edit actions on hover, zcode-style. */
 const UserMessageItem = memo(function UserMessageItem({ message, highlighted, findMatch }: { message: UiMessage; highlighted: boolean; findMatch?: boolean }) {
 	const { t } = useT();
@@ -41,6 +73,8 @@ const UserMessageItem = memo(function UserMessageItem({ message, highlighted, fi
 	const [submitting, setSubmitting] = useState(false);
 	const [draft, setDraft] = useState(message.text);
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+	const query = useContext(TranscriptSearchContext).trim().toLocaleLowerCase();
+	const queryInside = Boolean(query && message.text.toLocaleLowerCase().includes(query));
 
 	useEffect(() => {
 		if (!editing) return;
@@ -118,7 +152,7 @@ const UserMessageItem = memo(function UserMessageItem({ message, highlighted, fi
 	return (
 		<div className={`pd-message-row is-user${highlighted ? ' is-search-match' : ''}${findMatch ? ' is-find-match' : ''}`} data-message-id={message.id}>
 			<div className="pd-message-column">
-				<div className="pd-user-bubble">{message.text && <p data-message-body>{message.text}</p>}<MessageImages message={message} />{Boolean(message.attachments?.length) && <div className="pd-message-attachments">{message.attachments?.map((attachment, index) => <AttachmentPreview key={`${attachment.name}-${index}`} attachment={attachment} />)}</div>}</div>
+				<div className="pd-user-bubble">{message.text && <UserMessageText text={message.text} forceExpanded={highlighted || Boolean(findMatch) || queryInside} />}<MessageImages message={message} />{Boolean(message.attachments?.length) && <div className="pd-message-attachments">{message.attachments?.map((attachment, index) => <AttachmentPreview key={`${attachment.name}-${index}`} attachment={attachment} />)}</div>}</div>
 				{Boolean(message.attachmentsOmitted) && <p className="pd-activity-note">{t('message.attachmentsOmitted', { count: String(message.attachmentsOmitted) })}</p>}
 				<div className="pd-message-actions">
 					<HoverTooltip title={t(copied ? 'message.copied' : 'message.copy')}><button type="button" className="pd-message-action" onClick={() => void copy()} disabled={!message.text} aria-label={t(copied ? 'message.copied' : 'message.copy')}><Icon name={copied ? 'check' : 'copy'} width="14" height="14" /></button></HoverTooltip>
@@ -209,7 +243,7 @@ const AssistantMessageItem = memo(function AssistantMessageItem({ message, highl
 				{showHeading && <div className="pd-assistant-heading"><span className="pd-assistant-mark">π</span><span>Pi</span></div>}
 				{hasThinking && !hideThinking && <ThinkingActivity message={message} />}
 				{message.text && <div ref={bodyRef} data-message-body className="pd-markdown" onPointerUp={inspectSelection} onKeyUp={inspectSelection}><ConversationMarkdown>{message.text}</ConversationMarkdown></div>}
-				{selection && createPortal(<button type="button" className="pd-quote-selection" data-quote-for={message.id} style={{ position: 'fixed', zIndex: 60, ...selectionPosition }} onMouseDown={(event) => event.preventDefault()} onClick={quote}>{c('quote')}</button>, document.body)}
+				{selection && createPortal(<button type="button" className="pd-quote-selection" data-quote-for={message.id} style={{ position: 'fixed', zIndex: 'var(--pd-z-selection-action)', ...selectionPosition }} onMouseDown={(event) => event.preventDefault()} onClick={quote}>{c('quote')}</button>, document.body)}
 				{!hidePending && message.status === 'streaming' && message.thinkingStatus !== 'streaming' && <span className="pd-response-pending" role="status"><ActivityLabel active>{t(message.text ? 'message.generating' : 'message.preparing')}</ActivityLabel></span>}
 				{message.status === 'error' && <div className="pd-message-interrupted">{message.errorMessage || t('message.interrupted')}</div>}
 				{showActions && (

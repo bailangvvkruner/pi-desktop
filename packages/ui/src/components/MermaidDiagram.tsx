@@ -2,6 +2,8 @@ import { useEffect, useSyncExternalStore, useState } from 'react';
 import type mermaidApi from 'mermaid';
 import { decideMermaidAutoRender, type MermaidAutoRenderSkipReason } from '../mermaidBudget';
 import { useT } from '../i18n';
+import { DiagramPreviewDialog } from './DiagramPreviewDialog';
+import { Icon } from './Icons';
 
 /** One shared lazy import: the mermaid bundle never loads until a diagram appears. */
 let mermaidPromise: Promise<typeof mermaidApi> | null = null;
@@ -62,6 +64,7 @@ export function MermaidDiagram({ source }: { source: string }) {
 	const theme = useDocumentTheme();
 	const visible = useDocumentVisible();
 	const [svg, setSvg] = useState<string | null>(null);
+	const [preview, setPreview] = useState(false);
 	const [skipped, setSkipped] = useState<MermaidAutoRenderSkipReason | 'render-failed' | null>(null);
 
 	useEffect(() => {
@@ -85,7 +88,11 @@ export function MermaidDiagram({ source }: { source: string }) {
 		return () => { cancelled = true; clearTimeout(timer); };
 	}, [source, theme, visible]);
 
-	if (svg) return <div className="pd-mermaid-diagram" role="img" aria-label={t('chat.diagram.aria')} dangerouslySetInnerHTML={{ __html: svg }} />;
+	if (svg) return <div className="pd-mermaid-frame">
+		<div className="pd-mermaid-diagram" role="img" aria-label={t('chat.diagram.aria')} dangerouslySetInnerHTML={{ __html: svg }} />
+		<button type="button" className="pd-mermaid-expand" onClick={() => setPreview(true)} aria-label={t('chat.diagram.fullscreen')} title={t('chat.diagram.fullscreen')}><Icon name="maximize" width="13" height="13" /></button>
+		{preview && <DiagramPreviewDialog svg={svg} title={t('chat.diagram.aria')} onClose={() => setPreview(false)} />}
+	</div>;
 	const reasonKey = skipped === 'render-failed' ? 'chat.diagram.renderFailed'
 		: skipped === 'source-too-large' || skipped === 'line-count-too-large' || skipped === 'complexity-too-large' ? 'chat.diagram.tooLarge'
 		: skipped === 'document-hidden' ? 'chat.diagram.hidden' : null;

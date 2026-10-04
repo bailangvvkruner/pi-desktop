@@ -16,7 +16,7 @@
 	padding: 12px 14px;
 	border: 1px solid var(--pd-border);
 	border-left: 3px solid var(--pd-brand);
-	border-radius: 12px;
+	border-radius: var(--pd-radius-lg);
 	background: var(--pd-surface);
 	color: var(--pd-text);
 	box-shadow: 0 8px 24px #0003;
@@ -43,7 +43,7 @@
 .pd-extension-notice > div { flex: 1; min-width: 0; }
 .pd-extension-notice strong { display: block; font-weight: 600; }
 .pd-extension-notice p { margin: 4px 0 0; color: var(--pd-text-subtle); white-space: pre-wrap; }
-.pd-extension-notice button { display: grid; flex: 0 0 auto; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
+.pd-extension-notice button { display: grid; flex: 0 0 auto; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-subtle); cursor: pointer; }
 .pd-extension-notice button:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-extension-notice button:focus-visible, .pd-extension-notifications:focus-visible { outline: 2px solid var(--pd-brand); outline-offset: 2px; }
 

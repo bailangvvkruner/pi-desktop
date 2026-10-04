@@ -1,5 +1,5 @@
 .pd-extension-slot { min-width: 0; margin-bottom: 10px; }
-.pd-extension-request { display: flex; flex-direction: column; min-width: 0; max-height: min(320px, 36vh); overflow: hidden; padding: 12px; border: 1px solid var(--pd-border-strong); border-radius: 12px; background: var(--pd-surface); color: var(--pd-text); box-shadow: var(--pd-shadow-low); font-size: var(--pd-font-caption); }
+.pd-extension-request { display: flex; flex-direction: column; min-width: 0; max-height: min(320px, 36vh); overflow: hidden; padding: 12px; border: 1px solid var(--pd-border-strong); border-radius: var(--pd-radius-lg); background: var(--pd-surface); color: var(--pd-text); box-shadow: var(--pd-shadow-low); font-size: var(--pd-font-caption); }
 .pd-extension-request-head { display: flex; flex: 0 0 auto; align-items: center; gap: 9px; min-width: 0; }
 .pd-extension-request-head > svg { flex-shrink: 0; color: var(--pd-text-subtle); }
 .pd-extension-request-heading { flex: 1; min-width: 0; }
@@ -8,23 +8,23 @@
 /* Expanded, a long question or folded preview stays readable instead of being clipped. */
 .pd-extension-request:not(.is-collapsed) .pd-extension-request-heading h2 { display: block; max-height: min(126px, 26vh); overflow: hidden auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .pd-extension-request-count { flex-shrink: 0; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); }
-.pd-extension-request .pd-extension-request-toggle { display: grid; flex-shrink: 0; place-items: center; width: 27px; height: 27px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--pd-text-subtle); }
+.pd-extension-request .pd-extension-request-toggle { display: grid; flex-shrink: 0; place-items: center; width: 27px; height: 27px; padding: 0; border: 0; border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); }
 .pd-extension-request .pd-extension-request-toggle:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-extension-request-body { min-height: 0; margin-top: 10px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .pd-extension-request-body[hidden] { display: none; }
 .pd-extension-request-message { margin: 0 0 10px; color: var(--pd-text-subtle); font-size: inherit; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .pd-extension-request-options { display: flex; flex-direction: column; gap: 4px; max-height: min(192px, 22vh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-.pd-extension-request-options > button { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 34px; flex-shrink: 0; padding: 7px 9px; border: 1px solid transparent; border-radius: 7px; background: var(--pd-bg); color: var(--pd-text); font: inherit; line-height: 1.5; text-align: left; }
-.pd-extension-request-option-number { display: grid; place-items: center; flex: 0 0 auto; min-width: 20px; height: 20px; padding: 0 3px; border: 1px solid var(--pd-border); border-radius: 5px; color: var(--pd-text-subtle); font-size: var(--pd-font-xs); }
+.pd-extension-request-options > button { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 34px; flex-shrink: 0; padding: 7px 9px; border: 1px solid transparent; border-radius: var(--pd-radius-sm); background: var(--pd-bg); color: var(--pd-text); font: inherit; line-height: 1.5; text-align: left; }
+.pd-extension-request-option-number { display: grid; place-items: center; flex: 0 0 auto; min-width: 20px; height: 20px; padding: 0 3px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xs); color: var(--pd-text-subtle); font-size: var(--pd-font-xs); }
 .pd-extension-request-options > button > span:nth-child(2) { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .pd-extension-request-options > button > svg { flex-shrink: 0; color: var(--pd-text-subtle); }
 .pd-extension-request-options > button:hover:not(:disabled) { border-color: var(--pd-border-strong); background: var(--pd-surface-hover); }
 .pd-extension-request-options > p { margin: 0; padding: 8px 0; color: var(--pd-text-subtle); }
-.pd-extension-request input, .pd-extension-request textarea { display: block; box-sizing: border-box; width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--pd-border-strong); border-radius: 7px; background: var(--pd-bg); color: var(--pd-text); font: inherit; line-height: 1.5; }
+.pd-extension-request input, .pd-extension-request textarea { display: block; box-sizing: border-box; width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--pd-border-strong); border-radius: var(--pd-radius-sm); background: var(--pd-bg); color: var(--pd-text); font: inherit; line-height: 1.5; }
 .pd-extension-request textarea { min-height: 66px; max-height: 140px; resize: vertical; font-family: ui-monospace, Consolas, monospace; }
 .pd-extension-request :is(button, input, textarea):focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: -2px; }
 .pd-extension-request-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 9px; }
-.pd-extension-request-actions > button { min-height: 29px; padding: 4px 10px; border: 1px solid var(--pd-border-strong); border-radius: 7px; background: transparent; color: var(--pd-text-subtle); font: inherit; line-height: 1.4; }
+.pd-extension-request-actions > button { min-height: 29px; padding: 4px 10px; border: 1px solid var(--pd-border-strong); border-radius: var(--pd-radius-sm); background: transparent; color: var(--pd-text-subtle); font: inherit; line-height: 1.4; }
 .pd-extension-request-actions > button:hover:not(:disabled) { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-extension-request-actions > .is-primary { border-color: var(--pd-brand); background: var(--pd-brand); color: var(--pd-brand-ink); }
 .pd-extension-request-actions > .is-primary:hover:not(:disabled) { background: var(--pd-brand-hover); color: var(--pd-brand-ink); }

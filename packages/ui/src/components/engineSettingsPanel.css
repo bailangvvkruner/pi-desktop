@@ -1,2 +1,2 @@
-.pd-engine-note { margin: 8px 0 0; color: var(--pd-text-secondary, var(--pd-text)); font-size: var(--pd-font-caption); line-height: 1.6; overflow-wrap: anywhere; }
+.pd-engine-note { margin: 8px 0 0; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); line-height: 1.6; overflow-wrap: anywhere; }
 .pd-engine-note code { font-family: ui-monospace, Consolas, 'Microsoft YaHei', monospace; }

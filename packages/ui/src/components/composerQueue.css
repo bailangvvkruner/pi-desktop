@@ -3,7 +3,7 @@
 .pd-composer-queue + .pd-composer-shell[data-composer-layout] { border-top-left-radius: 0; border-top-right-radius: 0; }
 .pd-queue-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .pd-composer-queue-list { max-height: min(30dvh, 280px); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--pd-border-strong) transparent; overscroll-behavior: contain; }
-.pd-composer-queue-item { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 34px; padding: 3px 7px; border-radius: 6px; position: relative; }
+.pd-composer-queue-item { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 34px; padding: 3px 7px; border-radius: var(--pd-radius-sm); position: relative; }
 .pd-composer-queue-item:hover, .pd-composer-queue-item:focus-within { background: var(--pd-surface-hover); }
 .pd-composer-queue-item.is-editing > .pd-composer-queue-text { opacity: .6; }
 .pd-composer-queue-item.is-dragging { opacity: .4; }
@@ -11,11 +11,11 @@
 .pd-composer-queue-item.drop-before::before { top: 0; }
 .pd-composer-queue-item.drop-after::after { bottom: 0; }
 .pd-composer-queue-text { flex: 1; min-width: 0; padding: 3px 0; border: 0; background: transparent; color: var(--pd-text-subtle); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; font-size: var(--pd-font-caption); line-height: 1.6; }
-.pd-queue-drag { display: grid; place-items: center; flex: 0 0 16px; width: 16px; height: 24px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: var(--pd-text-weak); cursor: grab; font-size: 19px; line-height: 1; touch-action: none; }
+.pd-queue-drag { display: grid; place-items: center; flex: 0 0 16px; width: 16px; height: 24px; padding: 0; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-weak); cursor: grab; font-size: 19px; line-height: 1; touch-action: none; }
 .pd-queue-drag:active { cursor: grabbing; }
 .pd-queue-drag:disabled { opacity: .25; cursor: default; }
 .pd-composer-queue-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; }
-.pd-composer-queue-action { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 26px; height: 26px; padding: 3px 5px; border: 0; border-radius: 5px; background: transparent; color: var(--pd-text-weak); font-size: var(--pd-font-sm); white-space: nowrap; }
+.pd-composer-queue-action { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 26px; height: 26px; padding: 3px 5px; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text-weak); font-size: var(--pd-font-sm); white-space: nowrap; }
 .pd-composer-queue-action.is-steer { color: var(--pd-text-subtle); }
 .pd-composer-queue-action:hover:not(:disabled), .pd-composer-queue-action[aria-expanded='true'] { background: var(--pd-selected); color: var(--pd-text); }
 .pd-composer-queue-action:disabled { opacity: .4; cursor: default; }
@@ -23,16 +23,16 @@
 .pd-queue-state.is-recovered { color: var(--pd-warning); }
 .pd-queue-paused, .pd-queue-error { display: flex; align-items: center; gap: 8px; padding: 7px 8px; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); }
 .pd-queue-paused > span, .pd-queue-error > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.pd-queue-paused button, .pd-queue-error button { flex: 0 0 auto; padding: 3px 8px; border: 1px solid var(--pd-border); border-radius: 5px; background: transparent; color: var(--pd-text); font: inherit; }
+.pd-queue-paused button, .pd-queue-error button { flex: 0 0 auto; padding: 3px 8px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-xs); background: transparent; color: var(--pd-text); font: inherit; }
 .pd-queue-error { color: var(--pd-danger); }
-.pd-queue-menu { position: fixed; z-index: 100; width: 224px; max-height: min(70dvh, 340px); overflow: auto; padding: 5px; border: 1px solid var(--pd-border-strong); border-radius: 9px; color: var(--pd-text); background: var(--pd-surface-raised); box-shadow: var(--pd-shadow-popover); }
-.pd-queue-menu button { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 32px; padding: 6px 9px; border: 0; border-radius: 5px; background: transparent; color: inherit; font-size: var(--pd-font-caption); text-align: left; }
+.pd-queue-menu { position: fixed; z-index: var(--pd-z-menu-top); width: 224px; max-height: min(70dvh, 340px); overflow: auto; padding: 5px; border: 1px solid var(--pd-border-strong); border-radius: var(--pd-radius-md); color: var(--pd-text); background: var(--pd-surface-raised); box-shadow: var(--pd-shadow-popover); }
+.pd-queue-menu button { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 32px; padding: 6px 9px; border: 0; border-radius: var(--pd-radius-xs); background: transparent; color: inherit; font-size: var(--pd-font-caption); text-align: left; }
 .pd-queue-menu button:hover:not(:disabled), .pd-queue-menu button:focus-visible { background: var(--pd-surface-hover); }
 .pd-queue-menu button:disabled { opacity: .4; }
 .pd-queue-menu hr { height: 0; margin: 5px 3px; border: 0; border-top: 1px solid var(--pd-border-soft); }
 .pd-composer-queue :is(button, textarea):focus-visible, .pd-queue-menu button:focus-visible, .pd-queue-details-dialog button:focus-visible, .pd-queue-composer-edit button:focus-visible { outline: 2px solid var(--pd-focus-border, var(--pd-brand)); outline-offset: -2px; }
-.pd-queue-details-dialog { width: min(660px, calc(100vw - 32px)); max-height: calc(100dvh - 64px); margin: auto; padding: 16px; border: 1px solid var(--pd-border-strong); border-radius: 12px; background: var(--pd-bg); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); }
-.pd-queue-details-dialog::backdrop { background: var(--pd-overlay, #0006); }
+.pd-queue-details-dialog { width: min(660px, calc(100vw - 32px)); max-height: calc(100dvh - 64px); margin: auto; padding: 16px; border: 1px solid var(--pd-border-strong); border-radius: var(--pd-radius-lg); background: var(--pd-bg); color: var(--pd-text); box-shadow: var(--pd-shadow-dialog); }
+.pd-queue-details-dialog::backdrop { background: var(--pd-overlay); }
 .pd-queue-details-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .pd-queue-details-dialog p { margin: 14px 0; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; line-height: 1.7; }
 .pd-queue-detail-attachment { display: flex; align-items: center; gap: 8px; margin-block: 6px; color: var(--pd-text-subtle); }
@@ -44,11 +44,11 @@
 .pd-queue-edit-heading small { margin-left: auto; color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
 .pd-composer-shell .pd-queue-composer-edit textarea { display: block; width: 100%; min-height: 76px; max-height: min(34dvh, 320px); padding: 13px 16px 9px; border: 0; outline: none; resize: none; background: transparent; color: var(--pd-text); font: inherit; line-height: 1.6; }
 .pd-queue-edit-attachments { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 16px 0; }
-.pd-queue-edit-attachments > span { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 7px; border: 1px solid var(--pd-border-soft); border-radius: 6px; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); overflow-wrap: anywhere; }
+.pd-queue-edit-attachments > span { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 7px; border: 1px solid var(--pd-border-soft); border-radius: var(--pd-radius-sm); color: var(--pd-text-subtle); font-size: var(--pd-font-sm); overflow-wrap: anywhere; }
 .pd-queue-edit-attachments svg { flex: 0 0 auto; }
 .pd-queue-edit-toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px 12px; }
 .pd-queue-edit-toolbar > span { flex: 1; color: var(--pd-text-weak); font-size: var(--pd-font-xs); }
-.pd-queue-edit-toolbar button { min-height: 30px; padding: 5px 12px; border: 1px solid var(--pd-border); border-radius: 7px; color: var(--pd-text); background: transparent; font-size: var(--pd-font-sm); white-space: nowrap; }
+.pd-queue-edit-toolbar button { min-height: 30px; padding: 5px 12px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); color: var(--pd-text); background: transparent; font-size: var(--pd-font-sm); white-space: nowrap; }
 .pd-queue-edit-toolbar button.is-primary { border-color: var(--pd-send-bg); background: var(--pd-send-bg); color: var(--pd-send-ink); }
 .pd-queue-edit-toolbar button:disabled { opacity: .45; }
 .pd-queue-composer-edit > p { margin: 4px 16px; color: var(--pd-warning); font-size: var(--pd-font-sm); }

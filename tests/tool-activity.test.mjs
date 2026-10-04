@@ -57,6 +57,17 @@ test('compact activity components preserve accessible details and support a pare
         assert.match(settled, /pd-turn-summary[^>]*aria-expanded="false"/);
         assert.match(settled, /pd-turn-answer[\s\S]*data-message-id="live-final"[\s\S]*Final result\./);
       }
+      // The turn header summarizes its tools semantically (the inline groups have no header of their own).
+      const explored = renderTurn(finalMessages, { ...run, status: 'completed', finishedAt: 3000 }, [
+        { ...read, order: 2, runId: run.id },
+        { ...read, id: 'grep-1', tool: 'grep', title: 'grep(TODO)', files: null, order: 2.5, runId: run.id },
+      ]);
+      assert.match(explored, /pd-turn-summary[\s\S]*(?:已探索|Explored)[\s\S]*pd-turn-count[^>]*>(?:读取 1 个文件 · 搜索 1 次|Read 1 file · 1 search)</);
+      const mixed = renderTurn(finalMessages, { ...run, status: 'completed', finishedAt: 3000 }, [
+        { ...read, order: 2, runId: run.id },
+        { ...read, id: 'bash-1', tool: 'bash', title: 'bash(pnpm test)', command: 'pnpm test', files: null, order: 2.5, runId: run.id },
+      ]);
+      assert.match(mixed, /(?:已完成|Worked)[\s\S]*pd-turn-count[^>]*>(?:读取 1 个文件 · 运行 1 条命令|Read 1 file · Ran 1 command)</);
       const directReply = renderTurn([{ id: 'plain', order: 0, role: 'assistant', text: 'Direct reply.', status: 'streaming' }], undefined, [], true);
       assert.match(directReply, /pd-turn-process[\s\S]*Direct reply\./);
       assert.doesNotMatch(directReply, /pd-turn-answer/);

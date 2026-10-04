@@ -1,5 +1,5 @@
 .pd-conversation-turn { width:100%; min-width:0; }
-.pd-turn-summary { display:flex; align-items:center; flex-wrap:wrap; gap:8px; min-height:30px; max-width:100%; padding:4px 2px; border:0; border-radius:5px; background:transparent; color:var(--pd-text-subtle); font:inherit; font-size:var(--pd-font-sm); text-align:start; }
+.pd-turn-summary { display:flex; align-items:center; flex-wrap:wrap; gap:8px; min-height:30px; max-width:100%; padding:4px 2px; border:0; border-radius:var(--pd-radius-xs); background:transparent; color:var(--pd-text-subtle); font:inherit; font-size:var(--pd-font-sm); text-align:start; }
 button.pd-turn-summary { cursor:pointer; }
 button.pd-turn-summary:hover { color:var(--pd-text); background:var(--pd-surface-hover); }
 .pd-turn-summary>svg { flex:0 0 auto; }

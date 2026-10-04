@@ -7,17 +7,17 @@
 .pd-instruction-description { margin: 8px 0; color: var(--pd-text-subtle); font-size: var(--pd-font-caption); line-height: 1.6; }
 .pd-instruction-path { display: block; color: var(--pd-text-subtle); font: var(--pd-font-sm)/1.6 ui-monospace, Consolas, monospace; overflow-wrap: anywhere; user-select: text; }
 .pd-instruction-label { display: block; margin: 12px 0 7px; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); }
-.pd-instruction-editor { display: block; width: 100%; min-height: 155px; max-height: 440px; padding: 11px 12px; resize: vertical; border: 1px solid var(--pd-border); border-radius: 8px; background: var(--pd-bg); color: var(--pd-text); font: var(--pd-code-font-size, 12px)/1.65 ui-monospace, Consolas, 'Microsoft YaHei', monospace; tab-size: 2; }
+.pd-instruction-editor { display: block; width: 100%; min-height: 155px; max-height: 440px; padding: 11px 12px; resize: vertical; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); background: var(--pd-bg); color: var(--pd-text); font: var(--pd-code-font-size, 12px)/1.65 ui-monospace, Consolas, 'Microsoft YaHei', monospace; tab-size: 2; }
 .pd-instruction-editor::placeholder { color: var(--pd-text-weak); }
 .pd-instruction-editor:disabled { opacity: .7; }
 .pd-instruction-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; }
 .pd-instruction-footer > span { min-width: 0; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); line-height: 1.5; }
 .pd-instruction-save { flex-shrink: 0; min-height: 30px; }
-.pd-instruction-button { min-height: 30px; padding: 5px 10px; border: 1px solid var(--pd-border); border-radius: 6px; background: var(--pd-surface); color: var(--pd-text); font-size: var(--pd-font-sm); }
+.pd-instruction-button { min-height: 30px; padding: 5px 10px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); font-size: var(--pd-font-sm); }
 .pd-instruction-button:hover:not(:disabled) { background: var(--pd-surface-hover); }
 .pd-personalization .pd-settings-error { margin: 10px 0 0; }
 .pd-personalization > .pd-settings-error > button { display: block; margin-top: 10px; }
-.pd-instruction-conflict { margin-top: 12px; padding: 12px; border: 1px solid var(--pd-border); border-radius: 8px; background: var(--pd-surface-muted); color: var(--pd-text); font-size: var(--pd-font-caption); line-height: 1.6; }
+.pd-instruction-conflict { margin-top: 12px; padding: 12px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-md); background: var(--pd-surface-muted); color: var(--pd-text); font-size: var(--pd-font-caption); line-height: 1.6; }
 .pd-instruction-conflict > strong { color: var(--pd-warning); }
 .pd-instruction-conflict p { margin: 5px 0 8px; color: var(--pd-text-subtle); }
 .pd-instruction-conflict summary { cursor: pointer; }

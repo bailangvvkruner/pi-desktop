@@ -9,7 +9,7 @@
   pointer-events: auto;
   user-select: text;
   cursor: text;
-  z-index: 20;
+  z-index: var(--pd-z-tooltip);
   width: max-content;
   max-width: min(28rem, calc(100vw - 16px), var(--pd-tooltip-available-width, 100vw));
   max-height: calc(100vh - 16px);
@@ -33,4 +33,4 @@
 .pd-hover-tooltip-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .pd-hover-tooltip-title { min-width: 0; font-weight: 500; white-space: pre-line; overflow-wrap: anywhere; }
 .pd-hover-tooltip-description { margin-top: 6px; color: var(--pd-tooltip-subtle); line-height: 1.55; overflow-wrap: anywhere; }
-.pd-hover-tooltip-shortcut { display: inline-flex; flex: 0 0 auto; align-items: center; min-height: 17px; padding: 0 5px; border-radius: 4px; background: var(--pd-tooltip-tag-bg); color: var(--pd-tooltip-tag-text); font-family: ui-monospace, Consolas, monospace; font-size: var(--pd-font-xs); font-weight: 500; white-space: nowrap; }
+.pd-hover-tooltip-shortcut { display: inline-flex; flex: 0 0 auto; align-items: center; min-height: 17px; padding: 0 5px; border-radius: var(--pd-radius-xs); background: var(--pd-tooltip-tag-bg); color: var(--pd-tooltip-tag-text); font-family: ui-monospace, Consolas, monospace; font-size: var(--pd-font-xs); font-weight: 500; white-space: nowrap; }

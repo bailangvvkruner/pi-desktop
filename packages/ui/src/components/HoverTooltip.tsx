@@ -135,7 +135,8 @@ export function HoverTooltip({ children, title, description, shortcut, disabled 
 			const top = Math.max(VIEWPORT_PADDING, Math.min(preferredTop, height - bounds.height - VIEWPORT_PADDING));
 			// Hints inside a picker must sit above that picker; ordinary composer hints
 			// retain their low layer so they cannot cover settings or search dialogs.
-			let zIndex = 20;
+			// Base layer comes from the design tokens (--pd-z-tooltip); picker ancestors raise it.
+			let zIndex = Number.parseInt(getComputedStyle(document.documentElement).getPropertyValue('--pd-z-tooltip'), 10) || 20;
 			for (let ancestor: HTMLElement | null = button; ancestor; ancestor = ancestor.parentElement) {
 				const layer = Number.parseInt(window.getComputedStyle(ancestor).zIndex, 10);
 				if (Number.isFinite(layer)) zIndex = Math.max(zIndex, layer + 1);

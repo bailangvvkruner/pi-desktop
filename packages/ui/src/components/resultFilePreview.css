@@ -8,7 +8,7 @@
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--pd-border);
-  border-radius: 16px;
+  border-radius: var(--pd-radius-dialog);
   background: var(--pd-surface);
   color: var(--pd-text);
   box-shadow: var(--pd-shadow-dialog);
@@ -25,11 +25,11 @@
 .pd-result-file-preview-heading h2 { margin: 0; overflow: hidden; color: var(--pd-text); font-size: var(--pd-font-lg); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .pd-result-file-preview-heading p { max-height: 3.2em; margin: 4px 0 0; overflow: auto; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); line-height: 1.6; overflow-wrap: anywhere; }
 .pd-result-file-preview button { font-family: inherit; cursor: pointer; }
-.pd-result-file-preview-close { display: grid; flex: 0 0 32px; align-self: flex-start; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--pd-text-subtle); }
+.pd-result-file-preview-close { display: grid; flex: 0 0 32px; align-self: flex-start; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--pd-radius-md); background: transparent; color: var(--pd-text-subtle); }
 .pd-result-file-preview-close:hover { background: var(--pd-surface-hover); color: var(--pd-text); }
 .pd-result-file-preview-actions { display: flex; flex: 0 0 auto; align-items: center; flex-wrap: wrap; gap: 8px; padding: 0 20px 12px; border-bottom: 1px solid var(--pd-border-soft); }
 .pd-result-file-preview-actions > span { flex: 1; min-width: 100px; color: var(--pd-text-subtle); font-size: var(--pd-font-sm); }
-.pd-result-file-preview-actions > button, .pd-result-file-preview-state > button, .pd-result-file-preview-zoom > button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; max-width: 100%; padding: 4px 10px; border: 1px solid var(--pd-border); border-radius: 7px; background: var(--pd-surface); color: var(--pd-text); font-size: var(--pd-font-caption); line-height: 1.5; overflow-wrap: anywhere; }
+.pd-result-file-preview-actions > button, .pd-result-file-preview-state > button, .pd-result-file-preview-zoom > button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; max-width: 100%; padding: 4px 10px; border: 1px solid var(--pd-border); border-radius: var(--pd-radius-sm); background: var(--pd-surface); color: var(--pd-text); font-size: var(--pd-font-caption); line-height: 1.5; overflow-wrap: anywhere; }
 .pd-result-file-preview-actions button svg { flex-shrink: 0; }
 .pd-result-file-preview-actions button:first-of-type svg { transform: rotate(45deg); }
 .pd-result-file-preview-actions button:hover:not(:disabled), .pd-result-file-preview-state button:hover:not(:disabled), .pd-result-file-preview-zoom button:hover:not(:disabled) { background: var(--pd-surface-hover); }
@@ -56,7 +56,7 @@
 .pd-result-file-preview .pd-workbench-reader-tools { padding: 9px 12px; background: var(--pd-surface); }
 .pd-result-file-preview .pd-workbench-reader-notice { padding-block: 4px; }
 @media (max-width: 560px) {
-  .pd-result-file-preview { width: calc(100vw - 24px); height: calc(100dvh - 24px); border-radius: 12px; }
+  .pd-result-file-preview { width: calc(100vw - 24px); height: calc(100dvh - 24px); border-radius: var(--pd-radius-lg); }
   .pd-result-file-preview-header { gap: 8px; padding: 14px 12px 12px; }
   .pd-result-file-preview-actions { gap: 6px; padding: 0 12px 10px; }
   .pd-result-file-preview-actions > span { flex-basis: 100%; }

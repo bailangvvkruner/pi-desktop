@@ -1,6 +1,5 @@
-.pd-markdown a.pd-result-file-link { color: #70b7ff; text-decoration: none; overflow-wrap: anywhere; cursor: pointer; }
+.pd-markdown a.pd-result-file-link { color: var(--pd-link); text-decoration: none; overflow-wrap: anywhere; cursor: pointer; }
 .pd-markdown a.pd-result-file-link code { color: inherit; border-color: color-mix(in srgb, currentColor 25%, transparent); background: color-mix(in srgb, currentColor 7%, transparent); }
 .pd-markdown a.pd-result-file-link:hover { text-decoration: underline dotted; text-underline-offset: 3px; }
-.pd-markdown a.pd-result-file-link:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: 3px; border-radius: 3px; }
+.pd-markdown a.pd-result-file-link:focus-visible { outline: 2px solid var(--pd-focus-border); outline-offset: 3px; border-radius: var(--pd-radius-xs); }
 .pd-markdown a.pd-result-file-link[aria-disabled='true'] { cursor: default; opacity: .65; }
-:root[data-theme='light'] .pd-markdown a.pd-result-file-link { color: #0969c3; }

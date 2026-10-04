@@ -3,7 +3,7 @@
 	position: absolute;
 	top: 66px;
 	left: 50%;
-	z-index: 180;
+	z-index: var(--pd-z-toast);
 	display: flex;
 	flex-direction: column;
 	gap: 8px;

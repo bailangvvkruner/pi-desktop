@@ -3,6 +3,7 @@ import { TranscriptSearchContext } from '../transcriptSearch';
 import hljs from 'highlight.js/lib/common';
 import { useT } from '../i18n';
 import { MermaidDiagram } from './MermaidDiagram';
+import { useCodeWrap } from '../codeWrapPreference';
 import './codeBlock.css';
 
 const COLLAPSE_LINES = 30;
@@ -33,6 +34,7 @@ export function CodeBlock({ code, language }: { code: string; language?: string 
 		}
 	}, [shown, resolved, lines.length]);
 	const [copied, setCopied] = useState(false);
+	const [wrap, setWrap] = useCodeWrap();
 	const isMermaid = (language ?? '').trim().toLowerCase() === 'mermaid';
 	const [view, setView] = useState<'chart' | 'source'>('chart');
 	const copy = async () => {
@@ -50,10 +52,11 @@ export function CodeBlock({ code, language }: { code: string; language?: string 
 				<span className="pd-code-block-language">{isMermaid ? 'Mermaid' : resolved || t('chat.code.plain')}</span>
 				<div className="pd-code-block-actions">
 					{isMermaid && <button type="button" aria-pressed={view === 'source'} onClick={() => setView(current => current === 'chart' ? 'source' : 'chart')}>{t(view === 'chart' ? 'chat.diagram.showSource' : 'chat.diagram.showChart')}</button>}
+					{(!isMermaid || view === 'source') && <button type="button" aria-pressed={wrap} onClick={() => setWrap(!wrap)}>{t(wrap ? 'chat.code.noWrap' : 'chat.code.wrap')}</button>}
 					<button type="button" onClick={() => void copy()}>{t(copied ? 'chat.code.copied' : 'chat.code.copy')}</button>
 				</div>
 			</div>
-			{isMermaid && view === 'chart' ? <div className="pd-mermaid-body"><MermaidDiagram source={source} /></div> : <pre className="pd-code-block-body"><code dangerouslySetInnerHTML={{ __html: html }} /></pre>}
+			{isMermaid && view === 'chart' ? <div className="pd-mermaid-body"><MermaidDiagram source={source} /></div> : <pre className={`pd-code-block-body${wrap ? ' is-wrapped' : ''}`}><code dangerouslySetInnerHTML={{ __html: html }} /></pre>}
 			{collapsible && (!isMermaid || view === 'source') && (
 				<button type="button" className="pd-code-block-toggle" aria-expanded={!collapsed} onClick={() => setUserCollapsed(!collapsed)}>
 					{collapsed ? t('chat.code.expand', { count: lines.length.toLocaleString(locale) }) : t('chat.code.collapse')}
