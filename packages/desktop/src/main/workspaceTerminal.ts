@@ -6,6 +6,10 @@ import type { WorkspaceTerminalEvent, WorkspaceTerminalSnapshot } from '@pideskt
 type Terminal = { pty: IPty; snapshot: WorkspaceTerminalSnapshot; pending: Map<number, number>; pendingBytes: number; paused: boolean; buffer: string; released?: boolean; timer?: ReturnType<typeof setTimeout> };
 type PtyAgentSocket = { on?(event: 'error', listener: (error: Error) => void): unknown; destroy?(): void };
 // node-pty's Windows ConPTY agent exposes its pipes only through private fields.
+/** The ConPTY output worker thread (node-pty private field), when present. */
+function conoutWorker(pty: IPty): { on?(event: 'error', listener: (error: Error) => void): unknown; unref?(): void } | undefined {
+  return (pty as unknown as { _agent?: { _conoutSocketWorker?: { _worker?: { on?(event: 'error', listener: (error: Error) => void): unknown; unref?(): void } } } })._agent?._conoutSocketWorker?._worker;
+}
 function agentSockets(pty: IPty): PtyAgentSocket[] {
   const agent = (pty as unknown as { _agent?: { inSocket?: PtyAgentSocket, outSocket?: PtyAgentSocket, _conoutSocketWorker?: { _worker?: { unref(): void } } } })._agent;
   const sockets = agent ? [agent.inSocket, agent.outSocket] : [];
@@ -34,6 +38,12 @@ export class WorkspaceTerminalService {
       // uncaughtException (write EPIPE) in the host long after dispose(),
       // crashing test runs. Swallow pipe errors for the socket's lifetime.
       for (const socket of agentSockets(processPty)) try { socket.on?.('error', () => {}); } catch {}
+      // The conout worker pipes ConPTY output into the out socket without any
+      // error handler; once teardown destroys that socket its write fails
+      // (EPIPE / "ended by the other party"), the worker throws, and the Worker
+      // re-emits 'error' on this thread with no listener — an uncaughtException
+      // that failed Windows CI. The worker is disposable at that point.
+      try { conoutWorker(processPty)?.on?.('error', () => {}); } catch {}
       processPty.onData(data => {
         terminal.snapshot.output += data; if (terminal.snapshot.output.length > 256 * 1024) { terminal.snapshot.output = terminal.snapshot.output.slice(-256 * 1024); terminal.snapshot.truncated = true; }
         terminal.buffer += data;
@@ -65,7 +75,7 @@ export class WorkspaceTerminalService {
     // forever (test runners hang on exit). Destroy the pipes and unref the
     // blocked worker so the host may exit.
     for (const socket of agentSockets(terminal.pty)) try { socket.destroy?.(); } catch {}
-    try { (terminal.pty as unknown as { _agent?: { _conoutSocketWorker?: { _worker?: { unref(): void } } } })._agent?._conoutSocketWorker?._worker?.unref(); } catch {}
+    try { conoutWorker(terminal.pty)?.unref?.(); } catch {}
   }
   private async stop(terminal: Terminal) {
     if (terminal.snapshot.running) {
