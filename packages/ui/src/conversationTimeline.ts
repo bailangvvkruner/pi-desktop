@@ -6,7 +6,9 @@ export interface ConversationTurnEntry {
 }
 export type ConversationTimelineEntry = Extract<TimelineEntry, { kind: 'message' }> | ConversationTurnEntry;
 
-/** Users and system notices always stay visible, including steering within a run. */
+/** Users and system notices always stay visible, including steering within a run.
+ * Plugin notices recorded inside a run join that run's turn so its process folds
+ * as one block; they render beside the fold instead of splitting it in two. */
 export function buildConversationTimeline(messages: UiMessage[], activities: UiToolActivity[], runs: UiConversationRun[]): ConversationTimelineEntry[] {
   const result: ConversationTimelineEntry[] = [];
   let anchor = 'history', inheritedRun: string | undefined;
@@ -18,7 +20,8 @@ export function buildConversationTimeline(messages: UiMessage[], activities: UiT
   for (const entry of buildTimelineLayout(messages, activities)) {
     if (entry.kind === 'message') {
       const message = messages[entry.index]!;
-      if (message.role !== 'assistant') {
+      if (message.role === 'system' && message.systemKind === 'extension-notice' && message.runId) append(entry, message.runId);
+      else if (message.role !== 'assistant') {
         result.push(entry); anchor = message.id;
         if (message.role === 'user') inheritedRun = message.runId;
       } else append(entry, message.runId ?? inheritedRun);
@@ -57,8 +60,13 @@ export function entryContainsMessage(entry: ConversationTimelineEntry, id: strin
 /** Live replies stay with their thinking until the whole run identifies its final answer. */
 export function turnAnswer(entry: ConversationTurnEntry, messages: UiMessage[], running = false): UiMessage | undefined {
   if (running || !entry.lastForRun) return undefined;
-  const last = entry.entries.at(-1);
-  if (last?.kind !== 'message') return undefined;
-  const message = messages[last.index];
-  return message?.role === 'assistant' && (message.text || message.status === 'error') ? message : undefined;
+  // Notices ride inside their run's turn but never become its answer.
+  for (let index = entry.entries.length - 1; index >= 0; index -= 1) {
+    const item = entry.entries[index]!;
+    if (item.kind !== 'message') return undefined;
+    const message = messages[item.index];
+    if (message?.systemKind === 'extension-notice') continue;
+    return message?.role === 'assistant' && (message.text || message.status === 'error') ? message : undefined;
+  }
+  return undefined;
 }

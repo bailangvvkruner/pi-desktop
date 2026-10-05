@@ -20,6 +20,26 @@ test('one run keeps commentary and tools together, with only its last response a
   assert.equal(turnAnswer(buildConversationTimeline(messages.slice(0, 2), tools, [run('run1')])[1], messages), undefined);
 });
 
+test('plugin notices inside a run join its turn without splitting the folded process', () => {
+  const notice = (id, order, runId) => ({ id, order, runId, role: 'system', systemKind: 'extension-notice', notificationType: 'info', text: '构建完成', status: 'done' });
+  const messages = [message('u', 0, 'user', 'Review', 'a'), message('plan', 1, 'assistant', 'Inspect', 'a'),
+    notice('n1', 2, 'a'), message('answer', 4, 'assistant', 'Fixed', 'a')];
+  const tools = [{ id: 'read', order: 3, runId: 'a', status: 'done' }];
+  const entries = buildConversationTimeline(messages, tools, [run('a')]);
+  assert.deepEqual(entries.map(entry => entry.kind), ['message', 'turn']);
+  assert.deepEqual(entries[1].entries.map(entry => entry.id), ['plan', 'n1', 'read', 'answer']);
+  assert.equal(turnAnswer(entries[1], messages).id, 'answer');
+  // A notice recorded after the final reply still leaves that reply as the answer.
+  const trailing = [message('u', 0, 'user', 'Review', 'b'), message('answer', 1, 'assistant', 'Fixed', 'b'), notice('n2', 2, 'b')];
+  const trailingEntries = buildConversationTimeline(trailing, [], [run('b')]);
+  assert.equal(trailingEntries.length, 2);
+  assert.deepEqual(trailingEntries[1].entries.map(entry => entry.id), ['answer', 'n2']);
+  assert.equal(turnAnswer(trailingEntries[1], trailing).id, 'answer');
+  // Idle notices recorded between runs stay standalone rows.
+  const idle = [message('u', 0, 'user', 'Review', 'a'), message('answer', 1, 'assistant', 'Fixed', 'a'), notice('n3', 2, undefined)];
+  assert.deepEqual(buildConversationTimeline(idle, [], [run('a')]).map(entry => entry.kind === 'message' ? entry.id : 'turn'), ['u', 'turn', 'n3']);
+});
+
 test('live prose stays in the process through assistant-end and tools until the whole run settles', () => {
   const store = useChatStore.getState;
   const answer = () => {

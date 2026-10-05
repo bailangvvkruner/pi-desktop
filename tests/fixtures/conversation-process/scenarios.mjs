@@ -143,6 +143,32 @@ export default async function conversationProcessScenarios(review) {
   await review.waitFor(expanded('manual', false));
   await review.assert('window.__processReview.visible(document.querySelector("[data-message-id=manual-final] [data-message-body]"))', 'Completing a manually collapsed running turn never forces it open or hides its answer');
 
+
+  // Plugin notices recorded inside a run join its folded process instead of splitting it.
+  await review.evaluate(`(() => {
+    const s = window.__processReview, now = Date.now();
+    const run = { id: 'noticed', startedAt: now - 45000, finishedAt: now - 2000, status: 'completed' };
+    const messages = [
+      { id: 'noticed-u', runId: 'noticed', order: 0, role: 'user', text: '带插件通知的完整运行', status: 'done' },
+      { id: 'noticed-plan', runId: 'noticed', order: 1, role: 'assistant', text: '先分析再构建。', thinking: '分析依赖后执行构建。', thinkingStatus: 'done', status: 'done' },
+      { id: 'noticed-n1', runId: 'noticed', order: 2, role: 'system', systemKind: 'extension-notice', notificationType: 'info', text: '依赖安装完成', status: 'done' },
+      { id: 'noticed-n2', runId: 'noticed', order: 4, role: 'system', systemKind: 'extension-notice', notificationType: 'warning', text: '构建产生 1 个警告', status: 'done' },
+      { id: 'noticed-answer', runId: 'noticed', order: 5, role: 'assistant', text: '构建流程已完成，结果如下。', status: 'done' },
+      { id: 'noticed-n3', runId: 'noticed', order: 6, role: 'system', systemKind: 'extension-notice', notificationType: 'error', text: '报告上传失败，已保留本地副本', status: 'done' },
+    ];
+    const activities = [{ id: 'noticed-build', runId: 'noticed', order: 3, tool: 'bash', title: '执行构建', command: 'pnpm build', status: 'done', exitCode: 0, endedAt: now - 3000 }];
+    s.ready(s.path + '-noticed', messages, activities, [run]);
+  })()`);
+  await review.waitFor('document.querySelectorAll(".pd-conversation-turn[data-run-id=noticed]").length === 1');
+  await review.assert('document.querySelectorAll(".pd-conversation-turn").length === 1', 'A notice inside a run does not split its turn into separately folded blocks');
+  await review.assert(expanded('noticed', 'false'), 'The noticed run folds its process by default');
+  await review.assert('(() => { const s = window.__processReview; const turn = document.querySelector("[data-run-id=noticed]"); return ["noticed-n1","noticed-n2","noticed-n3"].every(id => { const card = turn.querySelector("[data-message-id=" + id + "]"); return s.visible(card) && card.closest(".pd-turn-process") === null && card.closest(".pd-turn-steps") === null; }); })()', 'Notice cards stay visible outside the folded process');
+  await review.assert('(() => { const s = window.__processReview; return !s.visible(document.querySelector("[data-message-id=noticed-plan] [data-message-body]")) && s.visible(document.querySelector("[data-message-id=noticed-answer] [data-message-body]")); })()', 'Folding hides only the process; the final answer stays visible');
+  await review.assert('(() => { const turn = document.querySelector("[data-run-id=noticed]"); const before = turn.querySelector("[data-message-id=noticed-n2]").closest(".pd-turn-notices"); const answer = turn.querySelector(".pd-turn-answer"); const after = turn.querySelector("[data-message-id=noticed-n3]").closest(".pd-turn-notices"); return !before.classList.contains("is-after") && Boolean(answer.compareDocumentPosition(before) & Node.DOCUMENT_POSITION_PRECEDING) && after.classList.contains("is-after") && Boolean(answer.compareDocumentPosition(after) & Node.DOCUMENT_POSITION_FOLLOWING); })()', 'Notices before the answer render above it and later notices below it');
+  await review.click(summary('noticed'));
+  await review.assert('(() => { const s = window.__processReview; const turn = document.querySelector("[data-run-id=noticed]"); return s.visible(document.querySelector("[data-message-id=noticed-plan] [data-message-body]")) && turn.querySelectorAll(".pd-turn-process [data-message-id=noticed-n1]").length === 0 && turn.querySelectorAll(".pd-activity-item").length === 1; })()', 'Expanding restores the process without duplicating notice cards inside it');
+  await review.click(summary('noticed'));
+  await review.screenshot('process-plugin-notices-folded');
   // Protocol terminal states remain distinguishable even without a final message.
   await review.evaluate(`(() => {
     const s=window.__processReview, now=Date.now();
