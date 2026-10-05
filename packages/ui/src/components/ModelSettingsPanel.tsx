@@ -425,15 +425,23 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 	const configured = (item: UiModelProvider) => authByProvider.get(item.provider)?.configured ?? item.configured;
 	const configuredProviders = providers.filter(configured);
 	const unconfiguredProviders = providers.filter((item) => !configured(item));
+	// 未配置的自定义供应商必须留在列表里：刚创建（可能还没填密钥）的
+	// 供应商要能被找到、配置凭据并删除；未配置的内置供应商仍只在
+	// “添加供应商”弹窗中提供，避免数十个内置条目淹没侧栏。
+	const unconfiguredCustom = unconfiguredProviders.filter((item) => item.custom);
 	const availableTemplates = PROVIDER_TEMPLATES.filter((item) => !providers.some((provider) => provider.provider === item.id));
 	const defaultProvider = configuredProviders.find((item) => item.provider === modelProvider) ?? configuredProviders[0];
-	const selected = configuredProviders.find((item) => item.provider === selectedId) ?? defaultProvider;
+	const selected = [...configuredProviders, ...unconfiguredCustom].find((item) => item.provider === selectedId) ?? defaultProvider;
 	const selectedConfigured = selected ? configured(selected) : false;
 	// Builtin providers whose catalog api speaks a standard protocol can also
 	// discover their live model list (agent falls back to the catalog definition).
 	const discoverable = Boolean(selected?.api && (!selected.custom || selected.editable) && PROTOCOLS.some((protocol) => protocol.value === selected.api));
-	const matches = configuredProviders.filter((item) => `${item.provider} ${item.name}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
-	const groups = [{ id: 'configured', items: matches, label: 'settings.providersConfigured' }];
+	const searchMatches = (items: UiModelProvider[]) => items.filter((item) => `${item.provider} ${item.name}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+	const matches = searchMatches(configuredProviders);
+	const groups = [
+		{ id: 'configured', items: matches, label: 'settings.providersConfigured' },
+		{ id: 'unconfigured', items: searchMatches(unconfiguredCustom), label: 'settings.providersUnconfigured' },
+	];
 	const setupProvider = editor?.kind === 'credentials' ? providers.find((item) => item.provider === editor.provider) : undefined;
 	const setupAuth = setupProvider ? authByProvider.get(setupProvider.provider) ?? { provider: setupProvider.provider, configured: configured(setupProvider), supportsApiKey: setupProvider.custom && setupProvider.editable } : undefined;
 	const editProvider = editor?.kind === 'edit' ? providers.find((item) => item.provider === editor.provider) : undefined;
@@ -570,12 +578,12 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 		{status !== 'idle' && <p className="pd-model-settings-notice" role="status">{t('settings.modelBusy')}</p>}
 		<div className="pd-model-provider-layout">
 			<nav className="pd-model-provider-sidebar" aria-label={t('settings.providers')}>
-				<div className="pd-model-provider-heading"><strong>{t('settings.providers')}</strong><span>{configuredProviders.length}</span></div>
+				<div className="pd-model-provider-heading"><strong>{t('settings.providers')}</strong><span>{configuredProviders.length + unconfiguredCustom.length}</span></div>
 				<input className="pd-model-provider-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('settings.providerSearch')} aria-label={t('settings.providerSearch')} />
 				<div className="pd-model-provider-list">{groups.map((group) => group.items.length > 0 && <section key={group.id} className="pd-model-provider-group" data-provider-group={group.id}><h4>{t(group.label)}</h4>{group.items.map((item) => <button key={item.provider} data-provider={item.provider} type="button" className={`pd-model-provider-option${selected?.provider === item.provider ? ' is-selected' : ''}`} aria-pressed={selected?.provider === item.provider} disabled={saving} onClick={() => selectProvider(item.provider)}>
 					<span className="pd-model-provider-monogram" aria-hidden="true">{(item.name || item.provider).slice(0, 2).toUpperCase()}</span><span className="pd-model-provider-option-copy"><strong>{item.name || item.provider}</strong><small>{t('settings.providerCount', { count: item.models.length })}</small></span><span className={`pd-model-provider-state${configured(item) ? ' is-ready' : ''}`} aria-label={t(configured(item) ? 'settings.authAvailable' : 'settings.authMissing')} />
 				</button>)}</section>)}
-				{!matches.length && <p className="pd-model-settings-notice">{t(loading ? 'settings.providerLoading' : search ? 'settings.providerNoMatch' : 'settings.providersConfiguredEmpty')}</p>}</div>
+				{!groups.some((group) => group.items.length) && <p className="pd-model-settings-notice">{t(loading ? 'settings.providerLoading' : search ? 'settings.providerNoMatch' : 'settings.providersConfiguredEmpty')}</p>}</div>
 			</nav>
 			<div ref={detailRef} className="pd-model-provider-detail">
 				{selected ? <>

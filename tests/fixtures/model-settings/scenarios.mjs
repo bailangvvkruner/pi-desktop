@@ -27,7 +27,7 @@ export default async function runScenarios(review) {
   // live model discovery, while manual model adding stays custom-only.
   await review.assert('Boolean(document.querySelector(".pd-model-catalog [data-action=discover-models]"))', 'Builtin provider offers model discovery');
   await review.assert('document.querySelector(".pd-model-catalog [data-action=add-model]") === null', 'Builtin provider keeps manual model adding hidden');
-  await review.assert('document.querySelector("[data-provider=anthropic], [data-provider-group=unconfigured], [data-add-provider=anthropic]") === null', 'Unconfigured providers are absent until opening Add provider');
+  await review.assert('document.querySelector("[data-provider=anthropic], [data-provider-group=unconfigured], [data-add-provider=anthropic]") === null', 'Unconfigured builtin providers stay out of the sidebar until Add provider opens');
   // The detail pane stays compact: URL and models only; editing lives behind the Edit settings dialog.
   await review.click(gateway);
   await review.waitFor('document.querySelector(".pd-model-provider-option.is-selected")?.dataset.provider === "review-gateway" && Boolean(document.querySelector(".pd-model-provider-connection-row"))');
@@ -316,7 +316,9 @@ export default async function runScenarios(review) {
   await review.click('[data-action="save-model-draft-and-leave"]');
   await noOpenModelDialog();
   await review.waitFor('window.__modelReview.providers.some(provider=>provider.provider==="saved-draft-during-chat")');
-  await review.assert('document.querySelector("[data-provider=saved-draft-during-chat]") === null', 'A new provider without credentials stays out of the configured list');
+  await review.waitFor('Boolean(document.querySelector(\'[data-provider-group=unconfigured] [data-provider=saved-draft-during-chat]\'))');
+  await review.waitFor('document.querySelector(".pd-model-provider-option.is-selected")?.dataset.provider === "saved-draft-during-chat"');
+  await review.assert('!window.__modelReview.providers.find(provider=>provider.provider==="saved-draft-during-chat").configured && document.querySelector("[data-provider=saved-draft-during-chat]").closest("[data-provider-group]").dataset.providerGroup === "unconfigured"', 'A provider created without a key appears immediately in the unconfigured group and gets selected');
   await review.assert('window.__modelReview.snapshot.status === "busy"', 'Saving a provider draft while leaving its editor keeps the task running');
   await review.click('[data-action="add-provider"]');
   await waitForTemplates();
@@ -338,7 +340,7 @@ export default async function runScenarios(review) {
   await review.fill(setupUrl, 'https://maintained-draft.example.invalid/v1');
   await review.click(`${setupConnection} [data-action="save-connection"]`);
   await review.waitFor('window.__modelReview.providers.find(provider=>provider.provider==="saved-draft-during-chat")?.baseUrl === "https://maintained-draft.example.invalid/v1"');
-  await review.assert(`Boolean(document.querySelector(${JSON.stringify(setupConnection)})) && document.querySelector('[data-provider=saved-draft-during-chat]') === null`, 'Saving an unconfigured custom connection keeps its Add provider editor open and its main-list entry hidden');
+  await review.assert(`Boolean(document.querySelector(${JSON.stringify(setupConnection)})) && document.querySelector('[data-provider=saved-draft-during-chat]')?.closest('[data-provider-group]')?.dataset.providerGroup === 'unconfigured'`, 'Saving an unconfigured custom connection keeps its Add provider editor open and its sidebar entry in the unconfigured group');
   const beforeSetupDiscard = await review.evaluate(`${saveCalls}.length`);
   await review.fill(setupUrl, 'https://discarded-setup.example.invalid/v1');
   await review.click(`${credentialsDialog} [data-action="back-to-providers"]`);
@@ -373,20 +375,24 @@ export default async function runScenarios(review) {
   await review.click(`${editDialog} .pd-model-dialog-header button`);
   await noOpenModelDialog();
 
-  // An entirely unconfigured catalog still exposes every provider through Add provider.
+  // An entirely unconfigured catalog keeps custom providers listed while exposing every provider through Add provider.
   const configuredProviderIds = await review.evaluate('window.__modelReview.providers.filter(provider=>provider.configured).map(provider=>provider.provider)');
   for (const provider of configuredProviderIds || []) {
+    const custom = await review.evaluate(`Boolean(window.__modelReview.providers.find(item=>item.provider===${JSON.stringify(provider)})?.custom)`);
     await review.click(`[data-provider="${provider}"]`);
     await review.click('[data-action="edit-provider"]');
     await review.waitFor(`Boolean(document.querySelector(${JSON.stringify(`dialog[open] input#pd-api-key-${provider}`)}))`);
     await review.click('dialog[open] .pd-settings-remove');
-    await review.waitFor(`document.querySelector(${JSON.stringify(`[data-provider="${provider}"]`)}) === null`);
+    if (custom) await review.waitFor(`document.querySelector(${JSON.stringify(`[data-provider="${provider}"]`)})?.closest('[data-provider-group]')?.dataset.providerGroup === 'unconfigured'`);
+    else await review.waitFor(`document.querySelector(${JSON.stringify(`[data-provider="${provider}"]`)}) === null`);
     await review.click('dialog[open] .pd-model-dialog-header button');
     await noOpenModelDialog();
   }
-  await review.assert('document.querySelectorAll("[data-provider]").length === 0 && window.__modelReview.providers.every(provider=>!provider.configured)', 'Removing all credentials leaves an empty configured provider list');
+  const unconfiguredCustomCount = await review.evaluate('window.__modelReview.providers.filter(provider=>provider.custom).length');
+  await review.assert(`document.querySelectorAll("[data-provider]").length === ${unconfiguredCustomCount} && [...document.querySelectorAll("[data-provider]")].every(element => element.closest('[data-provider-group=unconfigured]'))`, 'Removing every credential keeps custom providers visible in the unconfigured group');
+  await review.assert('document.querySelector("[data-provider-group=configured]") === null && document.querySelector(".pd-model-provider-list .pd-model-settings-notice") === null', 'No configured group or empty-state notice renders while unconfigured custom providers are listed');
   await review.assert('document.querySelector("[data-action=add-provider]").disabled === false', 'Add provider remains enabled with no configured providers');
-  await review.screenshot('08-empty-configured-providers');
+  await review.screenshot('08-unconfigured-custom-providers');
   await review.click('[data-action="add-provider"]');
   await waitForTemplates();
   await review.assert(`Boolean(document.querySelector(${JSON.stringify(`${templatesDialog} [data-template="custom"]`)})) && Boolean(document.querySelector(${JSON.stringify(`${templatesDialog} .pd-model-template-grid [data-template]`)}))`, 'The empty configured list still offers custom creation and provider templates');
@@ -394,6 +400,20 @@ export default async function runScenarios(review) {
   await review.screenshot('09-all-unconfigured-providers');
   await review.click(`${templatesDialog} .pd-model-dialog-header button`);
   await noOpenModelDialog();
+
+  // Unconfigured custom providers can be selected in the sidebar and deleted from the detail pane.
+  await review.click('[data-provider="created-during-chat"]');
+  await review.waitFor('document.querySelector(".pd-model-provider-option.is-selected")?.dataset.provider === "created-during-chat"');
+  await review.assert('document.querySelector(".pd-model-provider-detail").textContent.includes("无可用凭据")', 'The detail pane explains the missing credential');
+  await review.assert('Boolean(document.querySelector("[data-action=remove-provider]")) && document.querySelector("[data-action=remove-provider]").disabled === false', 'An unconfigured custom provider offers an enabled delete action');
+  await review.click('[data-action="remove-provider"]');
+  await review.waitFor('Boolean(document.querySelector("dialog[open] [data-action=confirm-remove]"))');
+  await review.screenshot('08-unconfigured-provider-delete');
+  await review.click('dialog[open] [data-action="confirm-remove"]');
+  await review.waitFor('!window.__modelReview.providers.some(provider=>provider.provider==="created-during-chat")');
+  await review.waitFor('document.querySelector("[data-provider=created-during-chat]") === null');
+  await noOpenModelDialog();
+  await review.assert(`document.querySelectorAll("[data-provider]").length === ${unconfiguredCustomCount - 1}`, 'Deleting an unconfigured custom provider removes it from the sidebar list');
 
   // Builtin providers join the configured list with a key and can import their
   // live model list, pinning a custom catalog entry for the provider.

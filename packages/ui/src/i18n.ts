@@ -814,7 +814,7 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'settings.discardTitle': { 'zh-CN': '舍弃未保存的修改？', 'en-US': 'Discard unsaved changes?' },
   'settings.discardDescription': { 'zh-CN': '离开此处会丢失当前草稿。你可以继续编辑并保存，或舍弃修改后离开。', 'en-US': 'Leaving will lose your draft. Continue editing to save it, or discard your changes and leave.' },
   'settings.providersConfigured': { 'zh-CN': '已配置', 'en-US': 'Configured' },
-  'settings.providersUnconfigured': { 'zh-CN': '未配置的供应商', 'en-US': 'Unconfigured providers' },
+  'settings.providersUnconfigured': { 'zh-CN': '未配置', 'en-US': 'Unconfigured' },
   'settings.providersUnconfiguredHint': { 'zh-CN': '配置凭据后，模型才会出现在对话的模型选择列表中。', 'en-US': 'Configure credentials to make these models available in the conversation model picker.' },
   'settings.credentials': { 'zh-CN': '提供商凭据', 'en-US': 'Provider credentials' },
   'settings.shortcuts': { 'zh-CN': '快捷键', 'en-US': 'Keyboard shortcuts' },
