@@ -101,13 +101,16 @@ function propfindValue(xml: string, property: string): string | null {
 	return match && match[1] ? match[1] : null;
 }
 
-/** Creates each missing directory segment (405 = already exists), then PUTs the file. */
+/** Creates each missing directory segment below the server address (405 = already exists), then PUTs the file. */
 export async function webdavUpload(target: WebdavTarget, bytes: Uint8Array): Promise<{ lastModified: string | null }> {
 	const base = new URL(target.url);
 	const { fileUrl } = webdavUrls(target);
-	const segments = [...base.pathname.split('/').filter(Boolean), ...target.remotePath.split('/').filter(Boolean)];
+	// The server address is the WebDAV mount point and must already exist —
+	// Jianguoyun answers MKCOL on /dav/ itself with 403 — so only the
+	// directories of the remote path are created, never the address segments.
+	const segments = target.remotePath.split('/').filter(Boolean);
 	segments.pop(); // The file itself is not a directory.
-	let current = base.origin;
+	let current = `${base.origin}${['', ...base.pathname.split('/').filter(Boolean).map(encodeSegment)].join('/')}`;
 	for (const segment of segments) {
 		current = `${current}/${encodeSegment(segment)}`;
 		try {
