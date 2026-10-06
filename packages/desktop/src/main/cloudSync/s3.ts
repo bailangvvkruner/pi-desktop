@@ -89,7 +89,7 @@ async function s3Request(url: URL, target: S3Target, method: 'GET' | 'PUT' | 'HE
 	return fetch(url, {
 		method,
 		headers,
-		body: body as BodyInit | undefined,
+		body,
 		signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
 		redirect: 'manual',
 	});

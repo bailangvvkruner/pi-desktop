@@ -36,7 +36,7 @@ async function webdavRequest(method: string, url: string, target: WebdavTarget, 
 	return fetch(url, {
 		method,
 		headers: { authorization: basicAuth(target), ...headers },
-		body: body as BodyInit | undefined,
+		body,
 		signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
 		redirect: 'manual',
 	});
