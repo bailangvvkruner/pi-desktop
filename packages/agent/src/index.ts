@@ -2276,11 +2276,12 @@ export class AgentService {
 		if (modelPrefsJson !== null && (typeof modelPrefsJson !== 'string' || modelPrefsJson.length > 1_000_000)) throw new Error('备份中的 model-prefs.json 无效');
 		const service = this.requireActive();
 		if (this.transition || this.credentialOperation || this.trimOperation) throw new Error('会话正在切换或设置正在更新，请稍后再恢复备份');
+		let result: { providers: number; models: number; credentials: number } | undefined;
 		const contexts = [...this.contexts.values()];
 		const releases: (() => void)[] = [];
 		try { for (const context of contexts) releases.push(context.lockProviderConfiguration(false)); }
 		catch (error) { for (const release of releases) release(); throw error; }
-		const operation = Promise.resolve().then(async () => {
+		const operation: Promise<void> = Promise.resolve().then(async () => {
 			const directory = service.agentDirectory;
 			// A wholesale restore must not rip providers out from under live turns.
 			for (const context of contexts) {
@@ -2297,14 +2298,13 @@ export class AgentService {
 				const selected = context.getSnapshot();
 				if (previousIds.has(selected.modelProvider) && !nextIds.has(selected.modelProvider)) throw new Error(`会话仍在使用将删除的供应商 ${selected.modelProvider}，请先切换模型`);
 			}
-			const counts = await restoreProviderBackupFiles(directory, { modelsJson, authJson, modelPrefsJson });
+			result = await restoreProviderBackupFiles(directory, { modelsJson, authJson, modelPrefsJson });
 			// Refresh every provider whose existence changed, mirroring single saves.
 			for (const provider of [...previousIds].filter((id) => !nextIds.has(id))) await this.refreshCustomProviderContexts(contexts, provider, false);
 			for (const provider of nextIds) await this.refreshCustomProviderContexts(contexts, provider);
-			return counts;
 		});
 		this.providerOperation = operation;
-		try { return await operation; }
+		try { await operation; return result!; }
 		finally {
 			for (const release of releases) release();
 			if (this.providerOperation === operation) this.providerOperation = null;

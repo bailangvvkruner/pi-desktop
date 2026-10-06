@@ -20,7 +20,7 @@ export interface CloudSyncIpc {
 export function registerCloudSyncIpc(agent: AgentHostService, requireTrustedSender: (event: IpcMainInvokeEvent) => unknown): CloudSyncIpc {
 	const service = createCloudSyncService({
 		userDataPath: app.getPath('userData'),
-		appVersion: app.getVersion(),
+		appVersion: typeof app.getVersion === 'function' ? app.getVersion() : '',
 		agent,
 		onChanged: (state) => broadcastToRenderers(CLOUD_SYNC_FEATURE_CHANNELS.changed, state),
 	});

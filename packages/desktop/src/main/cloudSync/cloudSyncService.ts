@@ -44,7 +44,7 @@ export interface CloudSyncServiceDeps {
 	userDataPath: string;
 	appVersion: string;
 	agent: {
-		restoreProviderBackup(files: BackupFileSet): Promise<{ providers: number; models: number; credentials: number }>;
+		restoreProviderBackup(files: { modelsJson: string; authJson: string | null; modelPrefsJson: string | null }): Promise<{ providers: number; models: number; credentials: number }>;
 	};
 	/** Broadcasts state updates to every renderer window. */
 	onChanged: (state: UiCloudSyncState) => void;
@@ -131,7 +131,7 @@ export function createCloudSyncService(deps: CloudSyncServiceDeps): CloudSyncSer
 		if (!config) return false;
 		if (config.kind === 'webdav') return !!config.webdav?.url.trim() && !!config.webdav?.username.trim() && !!store.decrypt(config.webdav?.password ?? '');
 		if (config.kind === 's3') return !!config.s3?.bucket.trim() && !!config.s3?.accessKeyId.trim() && !!store.decrypt(config.s3?.secretAccessKey ?? '');
-		return !!config.r2?.accountId.trim() && !!config.r2?.bucket.trim() && !!store.r2?.accessKeyId.trim() && !!store.decrypt(config.r2?.secretAccessKey ?? '');
+		return !!config.r2?.accountId.trim() && !!config.r2?.bucket.trim() && !!config.r2?.accessKeyId.trim() && !!store.decrypt(config.r2?.secretAccessKey ?? '');
 	};
 
 	const toUiConfig = (config: StoredCloudSyncConfig | null): UiCloudSyncConfig | null => {
@@ -198,7 +198,7 @@ export function createCloudSyncService(deps: CloudSyncServiceDeps): CloudSyncSer
 			lastError: stored?.kind === kind ? stored.lastError : null,
 		};
 		if (kind === 'webdav') {
-			const webdav = isRecord(draft.webdav) ? draft.webdav : {};
+			const webdav: Record<string, unknown> = isRecord(draft.webdav) ? draft.webdav : {};
 			const url = requireText(webdav.url, '服务器地址', 2000);
 			const parsed = new URL(url);
 			if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('服务器地址必须是 http(s):// 开头');
@@ -209,7 +209,7 @@ export function createCloudSyncService(deps: CloudSyncServiceDeps): CloudSyncSer
 			return { ...base, webdav: { url, username, password } };
 		}
 		if (kind === 's3') {
-			const s3 = isRecord(draft.s3) ? draft.s3 : {};
+			const s3: Record<string, unknown> = isRecord(draft.s3) ? draft.s3 : {};
 			const endpoint = typeof s3.endpoint === 'string' ? s3.endpoint.trim() : '';
 			if (endpoint) {
 				const parsed = new URL(endpoint);
@@ -224,7 +224,7 @@ export function createCloudSyncService(deps: CloudSyncServiceDeps): CloudSyncSer
 				: (stored?.kind === 's3' && stored.s3 ? stored.s3.secretAccessKey : '');
 			return { ...base, s3: { endpoint, region, bucket, accessKeyId, secretAccessKey } };
 		}
-		const r2 = isRecord(draft.r2) ? draft.r2 : {};
+		const r2: Record<string, unknown> = isRecord(draft.r2) ? draft.r2 : {};
 		const accountId = requireText(r2.accountId, 'Cloudflare 账户 ID', 200);
 		const bucket = requireText(r2.bucket, '存储桶名称', 255);
 		if (!/^[a-z0-9][a-z0-9.-]{1,253}[a-z0-9]$/.test(bucket)) throw new Error('存储桶名称无效');
@@ -364,7 +364,11 @@ export function createCloudSyncService(deps: CloudSyncServiceDeps): CloudSyncSer
 		const downloaded = webdav ? await webdavDownload(webdav) : await s3Download(s3!);
 		if (!downloaded) throw new Error('云端没有备份可下载');
 		const envelope = parseEnvelope(downloaded.bytes, downloaded.lastModified);
-		const counts = await deps.agent.restoreProviderBackup(envelope.files);
+		const counts = await deps.agent.restoreProviderBackup({
+			modelsJson: envelope.files['models.json'],
+			authJson: envelope.files['auth.json'],
+			modelPrefsJson: envelope.files['model-prefs.json'],
+		});
 		return { ...counts, uploadedAt: envelope.uploadedAt ?? null };
 	});
 

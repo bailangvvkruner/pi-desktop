@@ -6,7 +6,7 @@
  * marker records which format is in use. Secrets never travel to the renderer.
  */
 
-import { safeStorage } from 'electron';
+import * as electron from 'electron';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { backupCorruptStateFileAsync, CorruptStateFileError, readStateFileAsync, writeStateFileAsync } from '../stateFiles.ts';
@@ -49,16 +49,18 @@ export function isValidCloudSyncConfig(value: unknown): value is StoredCloudSync
 		if (remotePath !== null && (remotePath.startsWith('/') || remotePath.split('/').some((part) => part === '..' || part === '.'))) return false;
 		if (value.kind === 'webdav') {
 			if (!isRecord(value.webdav)) return false;
-			if (!stringField(value.webdav.url, 2000)?.trim()) return false;
-			const url = new URL(value.webdav.url);
+			const webdavUrl = stringField(value.webdav.url, 2000);
+			if (!webdavUrl?.trim()) return false;
+			const url = new URL(webdavUrl);
 			if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
 			if (!stringField(value.webdav.username, 500)?.trim()) return false;
 			if (!stringField(value.webdav.password, 8000)) return false;
 		}
 		if (value.kind === 's3') {
 			if (!isRecord(value.s3)) return false;
-			if (value.s3.endpoint !== '' && !stringField(value.s3.endpoint, 2000)?.trim()) return false;
-			if (value.s3.endpoint) new URL(value.s3.endpoint);
+			const s3Endpoint = stringField(value.s3.endpoint, 2000) ?? '';
+			if (s3Endpoint && !s3Endpoint.trim()) return false;
+			if (s3Endpoint) new URL(s3Endpoint);
 			if (!stringField(value.s3.region, 100)?.trim()) return false;
 			if (!stringField(value.s3.bucket, 255)?.trim()) return false;
 			if (!stringField(value.s3.accessKeyId, 500)?.trim()) return false;
@@ -77,9 +79,12 @@ export function isValidCloudSyncConfig(value: unknown): value is StoredCloudSync
 	}
 }
 
+// Test stubs provide only part of Electron's surface; access safeStorage defensively.
+const safeStorage = electron.safeStorage;
+
 function encryptSecret(value: string): string {
 	if (!value) return '';
-	if (safeStorage.isEncryptionAvailable()) {
+	if (typeof safeStorage?.isEncryptionAvailable === 'function' && safeStorage.isEncryptionAvailable()) {
 		try { return `enc:${Buffer.from(safeStorage.encryptString(value)).toString('base64')}`; } catch { /* fall through to plain */ }
 	}
 	return `plain:${Buffer.from(value, 'utf8').toString('base64')}`;
@@ -88,7 +93,7 @@ function encryptSecret(value: string): string {
 function decryptSecret(stored: string): string {
 	if (!stored) return '';
 	if (stored.startsWith('enc:')) {
-		try { return safeStorage.decryptString(Buffer.from(stored.slice(4), 'base64')); } catch { return ''; }
+		try { return safeStorage?.decryptString(Buffer.from(stored.slice(4), 'base64')) ?? ''; } catch { return ''; }
 	}
 	if (stored.startsWith('plain:')) {
 		try { return Buffer.from(stored.slice(6), 'base64').toString('utf8'); } catch { return ''; }
@@ -110,7 +115,7 @@ export function createCloudSyncStore(userDataPath: string): CloudSyncStore {
 	const path = join(userDataPath, 'cloud-sync.json');
 	const read = async (): Promise<StoredCloudSyncConfig> => readStateFileAsync(
 		path,
-		() => ({ kind: 'webdav', autoSync: false, remotePath: DEFAULT_REMOTE_PATH, webdav: { url: '', username: '', password: '' }, lastUploadAt: null, lastAutoSyncAt: null, lastError: null }),
+		() => ({ kind: 'webdav', autoSync: false, remotePath: DEFAULT_REMOTE_PATH, webdav: { url: '', username: '', password: '' }, lastUploadAt: null, lastAutoSyncAt: null, lastError: null }) as StoredCloudSyncConfig,
 		isValidCloudSyncConfig,
 	);
 	return {
