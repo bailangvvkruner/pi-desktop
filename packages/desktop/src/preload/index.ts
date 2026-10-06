@@ -5,7 +5,7 @@ import { WORKBENCH_FEATURE_CHANNELS } from '@pidesktop/shared/workbenchFeatures'
 import { DATA_FEATURE_CHANNELS } from '@pidesktop/shared/dataFeatures';
 import { INPUT_FEATURE_CHANNELS } from '@pidesktop/shared/inputFeatures';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import { CLOUD_SYNC_FEATURE_CHANNELS, IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiAppCommand, type UiAutomationSnapshot, type UiCloudSyncState, type UiExtensionDialogRequest, type UiUpdateState, type WindowChromeState, type WorkspaceChangeEvent, type WorkspaceCommandEvent } from '@pidesktop/shared';
+import { CLOUD_SYNC_FEATURE_CHANNELS, DEBUG_API_CHANNELS, IPC_CHANNELS, type AgentBridge, type AgentEventEnvelope, type UiAppCommand, type UiAutomationSnapshot, type UiCloudSyncState, type UiDebugApiConfig, type UiDebugApiState, type UiExtensionDialogRequest, type UiUpdateState, type WindowChromeState, type WorkspaceChangeEvent, type WorkspaceCommandEvent } from '@pidesktop/shared';
 import { unwrapIpcError } from './ipcErrors';
 
 /**
@@ -137,6 +137,8 @@ const bridge: AgentBridge = {
 	uploadCloudSyncBackup: () => invoke(CLOUD_SYNC_FEATURE_CHANNELS.upload),
 	inspectCloudSyncBackup: () => invoke(CLOUD_SYNC_FEATURE_CHANNELS.inspect),
 	restoreCloudSyncBackup: () => invoke(CLOUD_SYNC_FEATURE_CHANNELS.restore),
+	getDebugApiState: () => invoke(DEBUG_API_CHANNELS.getState) as Promise<UiDebugApiState>,
+	setDebugApiConfig: (config: UiDebugApiConfig) => invoke(DEBUG_API_CHANNELS.setConfig, config) as Promise<UiDebugApiState>,
 	onCloudSyncChanged: (listener) => {
 		const wrapped = (_event: Electron.IpcRendererEvent, state: UiCloudSyncState) => listener(state);
 		ipcRenderer.on(CLOUD_SYNC_FEATURE_CHANNELS.changed, wrapped);

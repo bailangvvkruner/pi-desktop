@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { backupCorruptStateFileAsync, CorruptStateFileError, readStateFileAsync, writeStateFileAsync } from '../stateFiles.ts';
 import type { UiCloudSyncKind } from '@pidesktop/shared';
 
-export const DEFAULT_REMOTE_PATH = 'providers-backup.json';
+export const DEFAULT_REMOTE_PATH = 'pi-desktop/providers-backup.json';
 
 /** The on-disk shape; secrets are stored encrypted/encoded. */
 export interface StoredCloudSyncConfig {

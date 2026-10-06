@@ -1,6 +1,7 @@
 import { MCP_FEATURE_CHANNELS, PLUGIN_UPDATE_CHANNELS } from '@pidesktop/shared';
 import { registerManagementIpc } from './managementIpc';
 import { registerCloudSyncIpc } from './cloudSyncIpc';
+import { registerDebugApiIpc } from './debugApiIpc';
 /**
  * IPC wiring: renderer ⇄ main ⇄ AgentService.
  *
@@ -73,6 +74,7 @@ let workbenchService: WorkbenchService | null = null;
 let workbenchFeatures: ReturnType<typeof registerWorkbenchFeatureIpc> | null = null;
 let managementFeatures: ReturnType<typeof registerManagementIpc> | null = null;
 let cloudSync: ReturnType<typeof registerCloudSyncIpc> | null = null;
+let debugApi: ReturnType<typeof registerDebugApiIpc> | null = null;
 let inputFeatures: ReturnType<typeof registerInputAttachmentIpc> | null = null;
 let disposingServices = false;
 let serviceShutdown: Promise<void> | null = null;
@@ -708,6 +710,12 @@ export function registerIpc(options: {
 	});
 	managementFeatures = registerManagementIpc(agentService, listWorkspaces);
 	cloudSync = registerCloudSyncIpc(agentService, requirePluginSender);
+debugApi = registerDebugApiIpc({
+	settingsPath: desktopSettingsPath(),
+	cloudSync: () => cloudSync?.service ?? null,
+	appVersion: () => app.getVersion(),
+	requireTrustedSender: (event) => { requirePluginSender(event); },
+});
 	const automations = createAutomationService({
 		filePath: join(app.getPath('userData'), 'automations.json'),
 		execute: (task, signal, dispatch) => automationExecutor.execute(task, signal, dispatch),
@@ -1349,6 +1357,8 @@ export function disposeServices(): Promise<void> {
 		// Flush a pending auto-sync upload before the agent host goes away.
 		await cloudSync?.dispose();
 		cloudSync = null;
+		await debugApi?.dispose();
+		debugApi = null;
 		const results = await Promise.allSettled([agentService.dispose(), workbenchService?.dispose(), workbenchFeatures?.dispose(), automationService?.dispose()]);
 		// A failed service must not let app.quit interrupt another service's
 		// cleanup or metadata that was queued by its final activity events.
