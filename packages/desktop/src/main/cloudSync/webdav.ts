@@ -3,6 +3,8 @@
  * Hand-rolled with global fetch so the desktop adds no new dependencies.
  */
 
+import { recordCloudRequest } from './requestLog.ts';
+
 const REQUEST_TIMEOUT_MS = 30_000;
 
 export interface WebdavTarget {
@@ -15,17 +17,30 @@ export interface WebdavTarget {
 /** Returns the directory URL and the backup-file URL for a target. */
 export function webdavUrls(target: WebdavTarget): { dirUrl: string; fileUrl: string } {
 	const base = new URL(target.url);
-	// Strip duplicate slashes and encode each remote path segment, keeping "/".
 	const baseSegments = base.pathname.split('/').filter(Boolean).map(encodeSegment);
-	const fileSegments = target.remotePath.split('/').filter(Boolean).map(encodeSegment);
+	const fileSegments = webdavFileSegments(target.remotePath);
 	const dirPath = ['', ...baseSegments, ...fileSegments.slice(0, -1)].join('/');
 	const filePath = ['', ...baseSegments, ...fileSegments].join('/');
 	const origin = base.origin;
 	return { dirUrl: `${origin}${dirPath}`, fileUrl: `${origin}${filePath}` };
 }
 
+/**
+ * Jianguoyun (and several other servers) reject files placed directly in the
+ * WebDAV mount root, so a bare file name is stored inside a default
+ * subdirectory instead.
+ */
+function webdavFileSegments(remotePath: string): string[] {
+	const segments = remotePath.split('/').filter(Boolean).map(encodeSegment);
+	return segments.length === 1 ? ['pi-desktop', ...segments] : segments;
+}
+
 function encodeSegment(segment: string): string {
-	return segment.split('/').map((part) => encodeURIComponent(part)).join('/');
+	// Server addresses are often pasted with percent-encoded characters; decode
+	// first so already-encoded paths are not double-encoded.
+	return segment.split('/').map((part) => {
+		try { return encodeURIComponent(decodeURIComponent(part)); } catch { return encodeURIComponent(part); }
+	}).join('/');
 }
 
 function basicAuth(target: WebdavTarget): string {
@@ -33,13 +48,21 @@ function basicAuth(target: WebdavTarget): string {
 }
 
 async function webdavRequest(method: string, url: string, target: WebdavTarget, body?: Uint8Array | string, headers: Record<string, string> = {}): Promise<Response> {
-	return fetch(url, {
-		method,
-		headers: { authorization: basicAuth(target), ...headers },
-		body,
-		signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-		redirect: 'manual',
-	});
+	const started = Date.now();
+	try {
+		const response = await fetch(url, {
+			method,
+			headers: { authorization: basicAuth(target), ...headers },
+			body,
+			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+			redirect: 'manual',
+		});
+		recordCloudRequest({ time: new Date().toISOString(), kind: 'webdav', method, url, status: response.status, ms: Date.now() - started, error: null });
+		return response;
+	} catch (error) {
+		recordCloudRequest({ time: new Date().toISOString(), kind: 'webdav', method, url, status: null, ms: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
+		throw error;
+	}
 }
 
 function describeNetworkError(error: unknown, url: string): string {
@@ -108,7 +131,8 @@ export async function webdavUpload(target: WebdavTarget, bytes: Uint8Array): Pro
 	// The server address is the WebDAV mount point and must already exist —
 	// Jianguoyun answers MKCOL on /dav/ itself with 403 — so only the
 	// directories of the remote path are created, never the address segments.
-	const segments = target.remotePath.split('/').filter(Boolean);
+	// Bare file names are stored inside the default "pi-desktop" directory.
+	const segments = webdavFileSegments(target.remotePath);
 	segments.pop(); // The file itself is not a directory.
 	let current = `${base.origin}${['', ...base.pathname.split('/').filter(Boolean).map(encodeSegment)].join('/')}`;
 	for (const segment of segments) {

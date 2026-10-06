@@ -4,6 +4,7 @@
  */
 
 import { createHash, createHmac } from 'node:crypto';
+import { recordCloudRequest } from './requestLog.ts';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const EMPTY_PAYLOAD_SHA256 = createHash('sha256').update('').digest('hex');
@@ -86,13 +87,22 @@ async function s3Request(url: URL, target: S3Target, method: 'GET' | 'PUT' | 'HE
 		.update(stringToSign, 'utf8')
 		.digest('hex');
 	headers.authorization = `AWS4-HMAC-SHA256 Credential=${target.accessKeyId}/${scope}, SignedHeaders=${canonicalNames.join(';')}, Signature=${signature}`;
-	return fetch(url, {
-		method,
-		headers,
-		body,
-		signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-		redirect: 'manual',
-	});
+	const started = Date.now();
+	const requestUrl = url.toString();
+	try {
+		const response = await fetch(url, {
+			method,
+			headers,
+			body,
+			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+			redirect: 'manual',
+		});
+		recordCloudRequest({ time: new Date().toISOString(), kind: 's3', method, url: requestUrl, status: response.status, ms: Date.now() - started, error: null });
+		return response;
+	} catch (error) {
+		recordCloudRequest({ time: new Date().toISOString(), kind: 's3', method, url: requestUrl, status: null, ms: Date.now() - started, error: error instanceof Error ? error.message : String(error) });
+		throw error;
+	}
 }
 
 function describeNetworkError(error: unknown, url: URL): string {
