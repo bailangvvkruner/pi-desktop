@@ -795,6 +795,8 @@ export const translations: Record<string, { 'zh-CN': string; 'en-US': string }> 
   'metrics.cacheWrite': { 'zh-CN': '写', 'en-US': 'W' },
   'settings.notifications': { 'zh-CN': '系统通知', 'en-US': 'System notifications' },
 	'settings.debugApi': { 'zh-CN': 'AI 调试接口', 'en-US': 'AI debug API' },
+	'settings.cloudBackup': { 'zh-CN': '云备份', 'en-US': 'Cloud backup' },
+	'settings.cloudBackupDescription': { 'zh-CN': '将模型提供商配置备份到 WebDAV / S3 / R2 云端，支持自动同步、查看云端备份与恢复。', 'en-US': 'Back up provider configurations to WebDAV / S3 / R2 with auto-sync, cloud inspection and restore.' },
 	'settings.debugApiDescription': { 'zh-CN': '在 127.0.0.1 上开放一个仅供本机访问的 HTTP 调试端口，方便 AI 助手远程诊断正在运行的应用；默认仅提供端口，可选开启鉴权。', 'en-US': 'Expose a loopback-only HTTP debug endpoint (127.0.0.1) so an AI assistant can diagnose the running app; choose a port, optionally require a token.' },
 	'settings.debugApiPort': { 'zh-CN': '端口', 'en-US': 'Port' },
 	'settings.debugApiStart': { 'zh-CN': '启动', 'en-US': 'Start' },
