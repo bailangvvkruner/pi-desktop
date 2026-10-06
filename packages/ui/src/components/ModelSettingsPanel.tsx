@@ -4,6 +4,7 @@ import type { UiCustomProviderModel, UiDiscoveredProviderModel, UiDiscoverProvid
 import { useChatStore } from '../store';
 import { useT, type Translate } from '../i18n';
 import type { ModelManagementTarget } from '../modelManagement';
+import { CloudSyncPanel } from './CloudSyncPanel';
 import { Icon } from './Icons';
 import { HoverTooltip } from './HoverTooltip';
 import './modelSettingsPanel.css';
@@ -619,6 +620,7 @@ export function ModelSettingsPanel({ initialTarget, renderCredential, onDraftSta
 				{feedback && <p className="pd-model-settings-feedback pd-model-detail-feedback" role="status">{feedback}</p>}
 			</div>
 		</div>
+		<CloudSyncPanel disabled={!canChange} />
 		{editor && <ModelSettingsDialog view={editor.kind} title={t(editor.kind === 'model' ? editor.model ? 'settings.customModelEdit' : 'settings.customModelAdd' : editor.kind === 'discover' ? 'settings.providerFetchModels' : editor.kind === 'edit' ? 'settings.providerSettingsTitle' : 'settings.providerAdd')} busy={saving} onClose={closeEditor}>
 			{error && <div className="pd-settings-error" role="alert">{error}</div>}
 			{editor.kind === 'templates' ? <section className="pd-model-template-picker" data-template-picker>
